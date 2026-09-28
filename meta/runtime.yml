@@ -1,0 +1,3 @@
+---
+# Controller baseline; verified Windows combinations belong in docs/status.md.
+requires_ansible: '>=2.21.0'

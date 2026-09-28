@@ -1,0 +1,42 @@
+[tool.black]
+line-length = 88
+
+[tool.isort]
+profile = "black"
+line_length = 88
+
+[tool.pylint.main]
+load-plugins = ["pylint.extensions.docparams"]
+
+[tool.pylint.basic]
+no-docstring-rgx = "^_|^test_"
+
+[tool.pylint.parameter-documentation]
+accept-no-param-doc = false
+accept-no-raise-doc = false
+accept-no-return-doc = false
+accept-no-yields-doc = false
+default-docstring-type = "sphinx"
+
+[tool.mypy]
+strict = true
+pretty = true
+show_error_codes = true
+warn_unreachable = true
+
+[tool.pytest.ini_options]
+addopts = ["--strict-config", "--strict-markers"]
+testpaths = ["tests/unit"]
+
+[tool.codespell]
+check-filenames = true
+quiet-level = 2
+
+[tool.rumdl.MD013]
+line-length = 80
+code-blocks = false
+tables = false
+
+[tool.rumdl.MD060]
+enabled = true
+style = "aligned"

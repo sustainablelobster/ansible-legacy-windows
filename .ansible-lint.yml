@@ -1,0 +1,5 @@
+---
+# The locked linter predates the ansible-core release in the Nix package set.
+# Extend its known versions so it can validate our declared controller baseline.
+supported_ansible_also:
+  - '2.21'

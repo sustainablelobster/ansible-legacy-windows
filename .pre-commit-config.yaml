@@ -1,0 +1,165 @@
+---
+minimum_pre_commit_version: '4.4.0'
+default_install_hook_types: [pre-commit]
+default_stages: [pre-commit]
+
+# Revisions pin upstream hook definitions; flake.lock pins tool executables.
+# Unsupported-language hooks use those executables without extra environments.
+# Controller version arguments match ansible-core's Requires-Python minimum.
+# Recheck them when updating Ansible; they do not select an interpreter.
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: check-added-large-files
+        language: unsupported
+      - id: check-case-conflict
+        language: unsupported
+      - id: check-executables-have-shebangs
+        language: unsupported
+      - id: check-illegal-windows-names
+      - id: check-merge-conflict
+        language: unsupported
+      - id: check-shebang-scripts-are-executable
+        language: unsupported
+      - id: check-symlinks
+        language: unsupported
+      - id: destroyed-symlinks
+        language: unsupported
+      - id: fix-byte-order-marker
+        language: unsupported
+      - id: check-json
+        language: unsupported
+        files: (\.json$|^flake\.lock$)
+        types: [file]
+      - id: check-toml
+        language: unsupported
+      - id: check-yaml
+        language: unsupported
+      - id: detect-private-key
+        language: unsupported
+      - id: trailing-whitespace
+        language: unsupported
+      - id: end-of-file-fixer
+        language: unsupported
+      - id: mixed-line-ending
+        language: unsupported
+        args: [--fix=lf]
+
+  - repo: https://github.com/NixOS/nixfmt
+    rev: v1.5.0
+    hooks:
+      - id: nixfmt
+        language: unsupported
+
+  - repo: https://github.com/PyCQA/isort
+    rev: 7.0.0
+    hooks:
+      - id: isort
+        language: unsupported
+
+  - repo: https://github.com/psf/black-pre-commit-mirror
+    rev: 25.1.0
+    hooks:
+      - id: black
+        alias: black-target
+        name: Format Windows target Python
+        language: unsupported
+        files: ^plugins/(modules|module_utils)/.*\.py$
+        args: [--target-version, py34]
+      - id: black
+        alias: black-controller
+        name: Format controller Python
+        language: unsupported
+        files: ^plugins/(?!modules/|module_utils/).*\.py$
+        args: [--target-version, py312]
+      - id: black
+        alias: black-development
+        name: Format development Python
+        language: unsupported
+        files: ^(scripts|tests)/.*\.py$
+
+  - repo: https://github.com/PyCQA/pylint
+    rev: v4.0.5
+    hooks:
+      - id: pylint
+        alias: pylint-target
+        name: Lint Windows target Python
+        language: unsupported
+        files: ^plugins/(modules|module_utils)/.*\.py$
+        args: [--py-version, '3.4']
+      - id: pylint
+        alias: pylint-controller
+        name: Lint controller Python
+        language: unsupported
+        files: ^plugins/(?!modules/|module_utils/).*\.py$
+        args: [--py-version, '3.12']
+      - id: pylint
+        alias: pylint-development
+        name: Lint development Python
+        language: unsupported
+        files: ^(scripts|tests)/.*\.py$
+
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.20.1
+    hooks:
+      - id: mypy
+        alias: mypy-controller
+        name: Type-check controller Python
+        language: unsupported
+        files: ^plugins/(?!modules/|module_utils/).*\.py$
+        args: [--python-version, '3.12']
+      - id: mypy
+        alias: mypy-development
+        name: Type-check development Python
+        language: unsupported
+        files: ^(scripts|tests)/.*\.py$
+        args: []
+
+  - repo: https://github.com/netromdk/vermin
+    rev: v1.8.0
+    hooks:
+      - id: vermin
+        name: Check Windows target Python compatibility
+        language: unsupported
+        files: ^plugins/(modules|module_utils)/.*\.py$
+        args: [-t=3.4-, --violations]
+
+  - repo: https://github.com/adrienverge/yamllint
+    rev: v1.37.1
+    hooks:
+      - id: yamllint
+        language: unsupported
+        args: [--strict, --config-file, .yamllint.yml]
+
+  - repo: https://github.com/ansible/ansible-lint
+    rev: v25.8.2
+    hooks:
+      - id: ansible-lint
+        language: unsupported
+        # Use Nix's executable wrapper and its installed dependencies.
+        entry: ansible-lint
+        args: [--offline]
+        additional_dependencies: []
+
+  - repo: https://github.com/rvben/rumdl-pre-commit
+    rev: v0.1.94
+    hooks:
+      - id: rumdl
+        language: unsupported
+        args: [--config, pyproject.toml]
+
+  - repo: https://github.com/codespell-project/codespell
+    rev: v2.4.2
+    hooks:
+      - id: codespell
+        language: unsupported
+
+  - repo: local
+    hooks:
+      - id: justfile
+        name: Check Justfile format and syntax
+        entry: just _lint-justfile
+        language: unsupported
+        files: ^justfile$
+        pass_filenames: false
