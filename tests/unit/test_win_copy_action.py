@@ -8,6 +8,7 @@ import json
 import ntpath
 import os
 import zipfile
+from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Callable
@@ -681,17 +682,30 @@ def test_diff_no_log_redacts_content_and_check_mode_does_not_transfer_it(
     _assert_clean(state)
 
 
+@pytest.mark.parametrize("reverse", [False, True])
 def test_archive_lists_sibling_directories_before_their_descendants(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, reverse: bool
 ) -> None:
     source = tmp_path / "tree"
     (source / "first" / "nested").mkdir(parents=True)
     (source / "second").mkdir()
+    original_scandir = os.scandir
+
+    def _ordered_scandir(path: str) -> Any:
+        if path != str(source):
+            return original_scandir(path)
+        with original_scandir(path) as entries:
+            children = sorted(entries, key=lambda entry: entry.name, reverse=reverse)
+        return nullcontext(children)
+
+    monkeypatch.setattr(os, "scandir", _ordered_scandir)
     action, state = _action(
         monkeypatch, tmp_path, {"src": str(source) + "/", "dest": _DEST}
     )
     assert action.run()["changed"] is True
-    assert list(state.archives[0]) == ["first/", "second/", "first/nested/"]
+    archive_paths = list(state.archives[0])
+    assert set(archive_paths[:2]) == {"first/", "second/"}
+    assert archive_paths[2:] == ["first/nested/"]
     _assert_clean(state)
 
 
