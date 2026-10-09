@@ -21,9 +21,6 @@ defaults:
   run:
     shell: bash
 
-env:
-  PRE_COMMIT_HOME: ${{ github.workspace }}/tmp/codex/cache/pre-commit
-
 jobs:
   lint:
     name: Lint
@@ -33,6 +30,14 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # Privileged cache extraction must not create directories in the checkout.
+      - name: Prepare runner-owned work directories
+        run: |
+          mkdir -p "$RUNNER_TEMP/pre-commit" "$RUNNER_TEMP/legacy-windows-ci"
+          printf 'PRE_COMMIT_HOME=%s\n' "$RUNNER_TEMP/pre-commit" \
+            >> "$GITHUB_ENV"
+          printf 'CI_OUTPUT_DIR=%s\n' "$RUNNER_TEMP/legacy-windows-ci" \
+            >> "$GITHUB_ENV"
       - uses: >-
           cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24
         # v31.11.1
@@ -64,6 +69,14 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # Privileged cache extraction must not create directories in the checkout.
+      - name: Prepare runner-owned work directories
+        run: |
+          mkdir -p "$RUNNER_TEMP/pre-commit" "$RUNNER_TEMP/legacy-windows-ci"
+          printf 'PRE_COMMIT_HOME=%s\n' "$RUNNER_TEMP/pre-commit" \
+            >> "$GITHUB_ENV"
+          printf 'CI_OUTPUT_DIR=%s\n' "$RUNNER_TEMP/legacy-windows-ci" \
+            >> "$GITHUB_ENV"
       - uses: >-
           cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24
         # v31.11.1
@@ -78,20 +91,26 @@ jobs:
           save: false
       - name: Run all unit and controller tests
         run: |
-          mkdir -p tmp/codex/ci
           nix --extra-experimental-features 'nix-command flakes' \
             develop --no-write-lock-file path:. --command \
-            pytest -ra --junitxml=tmp/codex/ci/pytest.xml
+            pytest -ra --junitxml="$CI_OUTPUT_DIR/pytest.xml"
+      - name: Find the test report
+        id: report
+        if: ${{ !cancelled() }}
+        run: |
+          if [[ -f "$CI_OUTPUT_DIR/pytest.xml" ]]; then
+            printf 'available=true\n' >> "$GITHUB_OUTPUT"
+          fi
       - name: Retain test results, including failures and skips
         if: >-
           ${{ !cancelled()
-          && hashFiles('tmp/codex/ci/pytest.xml') != '' }}
+          && steps.report.outputs.available == 'true' }}
         uses: >-
           actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         # v7.0.2
         with:
           name: unit-results-${{ github.run_attempt }}
-          path: tmp/codex/ci/pytest.xml
+          path: ${{ env.CI_OUTPUT_DIR }}/pytest.xml
           if-no-files-found: error
           retention-days: 30
 
@@ -108,6 +127,14 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # Privileged cache extraction must not create directories in the checkout.
+      - name: Prepare runner-owned work directories
+        run: |
+          mkdir -p "$RUNNER_TEMP/pre-commit" "$RUNNER_TEMP/legacy-windows-ci"
+          printf 'PRE_COMMIT_HOME=%s\n' "$RUNNER_TEMP/pre-commit" \
+            >> "$GITHUB_ENV"
+          printf 'CI_OUTPUT_DIR=%s\n' "$RUNNER_TEMP/legacy-windows-ci" \
+            >> "$GITHUB_ENV"
       - uses: >-
           cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24
         # v31.11.1
@@ -140,20 +167,22 @@ jobs:
             tag_args=(--tag "$GITHUB_REF_NAME")
           fi
           "${nix_dev[@]}" python scripts/ci_release.py package \
-            --artifact "${archives[0]}" --output-dir tmp/codex/ci/package \
+            --artifact "${archives[0]}" --output-dir "$CI_OUTPUT_DIR/package" \
             "${tag_args[@]}"
       - name: Retain only the verified release package
         id: upload
+        env:
+          RELEASE_FILENAME: ${{ steps.package.outputs.filename }}
         uses: >-
           actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         # v7.0.2
         with:
           name: collection-package-${{ github.run_attempt }}
           path: |
-            tmp/codex/ci/package/${{ steps.package.outputs.filename }}
-            tmp/codex/ci/package/SHA256SUMS
-            tmp/codex/ci/package/release-notes.txt
-            tmp/codex/ci/package/release-manifest.json
+            ${{ env.CI_OUTPUT_DIR }}/package/${{ env.RELEASE_FILENAME }}
+            ${{ env.CI_OUTPUT_DIR }}/package/SHA256SUMS
+            ${{ env.CI_OUTPUT_DIR }}/package/release-notes.txt
+            ${{ env.CI_OUTPUT_DIR }}/package/release-manifest.json
           if-no-files-found: error
           retention-days: 30
 
@@ -178,6 +207,13 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Prepare runner-owned work directories
+        run: |
+          mkdir -p "$RUNNER_TEMP/pre-commit" "$RUNNER_TEMP/legacy-windows-ci"
+          printf 'PRE_COMMIT_HOME=%s\n' "$RUNNER_TEMP/pre-commit" \
+            >> "$GITHUB_ENV"
+          printf 'CI_OUTPUT_DIR=%s\n' "$RUNNER_TEMP/legacy-windows-ci" \
+            >> "$GITHUB_ENV"
       - uses: >-
           cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24
         # v31.11.1
@@ -187,7 +223,7 @@ jobs:
         # v8.0.2
         with:
           artifact-ids: ${{ needs.package.outputs.artifact-id }}
-          path: tmp/codex/ci/package
+          path: ${{ env.CI_OUTPUT_DIR }}/package
           merge-multiple: true
           digest-mismatch: error
       - name: Publish the verified archive without rebuilding
@@ -198,4 +234,4 @@ jobs:
           nix --extra-experimental-features 'nix-command flakes' \
             develop --no-write-lock-file path:. --command \
             python scripts/ci_release.py publish \
-            --package-dir tmp/codex/ci/package --sha256 "$EXPECTED_SHA256"
+            --package-dir "$CI_OUTPUT_DIR/package" --sha256 "$EXPECTED_SHA256"

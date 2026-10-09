@@ -73,10 +73,11 @@ Windows integration remains a separate, explicitly invoked workflow below.
 
 The workflow caches Nix dependencies and pre-commit environments using hashes
 of the locked toolchain and hook configuration. Only trusted branch pushes save
-caches; test outcomes are never cached. Superseded branch and pull-request runs
-are canceled, but tag runs and active publication are not. Explicit test reports
-and the verified package bundle are retained for 30 days. Private inventories
-and whole workspaces are not uploaded.
+caches; test outcomes are never cached. Pre-commit caches, test reports and
+release bundles use directories under `RUNNER_TEMP`, outside the checkout.
+Superseded branch and pull-request runs are canceled, but tag runs and active
+publication are not. Explicit test reports and the verified package bundle are
+retained for 30 days. Private inventories and whole workspaces are not uploaded.
 
 ### Repository setup
 
@@ -144,15 +145,17 @@ Use only authorized hosts. Prepare a private inventory using the
 [connection example](../README.md#connect-and-run-a-task). Choose a playbook
 whose prerequisites and mutations fit the target; inspect its variables first.
 Integration playbooks target the `legacy_windows` inventory group. Use that
-group name instead of `windows` in the README example inventory.
+group name instead of `windows` in the README example inventory. Keep the
+inventory outside the checkout and replace `/path/to/private/inventory.yml`
+below with its location.
 
 Install into a dedicated directory and keep it unchanged until the test and
 cleanup finish:
 
 ```console
-mkdir -p tmp/codex/evidence tmp/codex/artifacts
-ansible-galaxy collection install . --offline --no-deps --force --collections-path tmp/codex/collections/integration
-ANSIBLE_COLLECTIONS_PATH="$PWD/tmp/codex/collections/integration" ansible-playbook -i tmp/codex/inventories/inventory.yml tests/integration/release_smoke.yml --limit legacy_windows
+integration_collections="$(mktemp -d)"
+ansible-galaxy collection install . --offline --no-deps --force --collections-path "$integration_collections"
+ANSIBLE_COLLECTIONS_PATH="$integration_collections" ansible-playbook -i /path/to/private/inventory.yml tests/integration/release_smoke.yml --limit legacy_windows
 ```
 
 The release smoke exercises connectivity, commands, temporary paths,
@@ -167,10 +170,16 @@ Hold access through cleanup and connection closure. Servicing tests need a
 restorable baseline appropriate to their changes. Do not substitute fake
 providers or controller checks for Windows execution.
 
-Keep agent-created inventories, logs, captures, snapshots and working files
-under `tmp/codex/`. This directory is private and excluded from archives.
-Preserve failed captures and recovery records. Historical development records
-are not product restrictions or release requirements.
+After tests and target cleanup finish, remove the disposable installation:
+
+```console
+rm -rf -- "$integration_collections"
+```
+
+Keep inventories, connection settings, logs, captures and snapshots outside the
+checkout and collection archives. Preserve failed captures and recovery records.
+Historical development records are not product restrictions or release
+requirements.
 
 ## Code and compatibility
 
