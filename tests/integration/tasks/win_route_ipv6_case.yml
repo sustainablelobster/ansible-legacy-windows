@@ -1,0 +1,98 @@
+---
+- name: '{{ route_ipv6_case.name }}'
+  block:
+    - name: Exercise the normal public route request
+      sustainablelobster.legacy_windows.win_route:
+        destination: '{{ route_ipv6_record.prefix }}'
+        gateway: >-
+          {{ route_ipv6_case.gateway | default(route_ipv6_record.gateway) }}
+        metric: 319
+        state: '{{ route_ipv6_case.state | default("present") }}'
+      check_mode: '{{ route_ipv6_case.check | default(false) }}'
+      register: route_ipv6_result
+  rescue:
+    - name: Require only the declared genuine native failure
+      ansible.builtin.assert:
+        that:
+          - route_ipv6_case.failed | default(false)
+          - route_ipv6_result is failed
+          - not route_ipv6_result.changed
+          - "'Failed to create a new route:' in route_ipv6_result.msg"
+
+- name: Read actual native active persistent and configuration state
+  sustainablelobster.legacy_windows.win_command:
+    argv: ['{{ ansible_python_interpreter }}', '-',
+           '{{ route_ipv6_workspace.path }}', observe]
+    stdin: '{{ route_ipv6_script }}'
+  register: route_ipv6_observed
+  changed_when: false
+
+- name: Retain public fields and native observations before any gate
+  ansible.builtin.set_fact:
+    route_ipv6_outcome:
+      name: '{{ route_ipv6_case.name }}'
+      case: '{{ route_ipv6_case }}'
+      result: '{{ route_ipv6_result }}'
+      before: '{{ route_ipv6_previous }}'
+      after: '{{ route_ipv6_observed.stdout | from_json }}'
+      validated: false
+
+- name: Save raw public observations before validating them
+  ansible.builtin.copy:
+    dest: '{{ route_evidence_dir }}/ipv6-observations.json'
+    mode: '0600'
+    content: '{{ (route_ipv6_results + [route_ipv6_outcome]) | to_nice_json }}'
+  delegate_to: localhost
+  vars:
+    ansible_connection: local
+    ansible_shell_type: sh
+    ansible_python_interpreter: '{{ ansible_playbook_python }}'
+  changed_when: false
+
+- name: Require public predictions native ownership and unchanged other routes
+  vars:
+    actual: '{{ route_ipv6_observed.stdout | from_json }}'
+    owned: >-
+      {{ actual.persistent |
+      selectattr('prefix','equalto',route_ipv6_record.prefix) | list }}
+    active_owned: >-
+      {{ actual.active |
+      selectattr('prefix','equalto',route_ipv6_record.prefix) | list }}
+  ansible.builtin.assert:
+    that:
+      - route_ipv6_result.changed == route_ipv6_case.changed
+      - >-
+        (route_ipv6_result is failed) ==
+        (route_ipv6_case.failed | default(false))
+      - owned | length == route_ipv6_case.count
+      - active_owned | length == route_ipv6_case.count
+      - owned | length == 0 or owned[0].index == 0
+      - active_owned | length == 0 or
+        active_owned[0].index == route_ipv6_record.index
+      - owned | length == 0 or owned[0].gateway == route_ipv6_record.gateway
+      - active_owned | length == 0 or
+        active_owned[0].gateway == route_ipv6_record.gateway
+      - >-
+        owned | length == 0 or
+        ('add route prefix=' ~ route_ipv6_record.prefix ~ ' interface="' ~
+        route_ipv6_record.interface_name ~ '" metric=0 nexthop=' ~
+        route_ipv6_record.gateway) in actual.configuration
+      - owned | length == 0 or owned[0].metric == 0
+      - (actual.active |
+        rejectattr('prefix','equalto',route_ipv6_record.prefix) | list) ==
+        route_ipv6_record.initial.active
+      - (actual.persistent |
+        rejectattr('prefix','equalto',route_ipv6_record.prefix) | list) ==
+        route_ipv6_record.initial.persistent
+      - route_ipv6_case.changed and
+        not (route_ipv6_case.check | default(false)) or
+        actual == route_ipv6_previous
+      - route_ipv6_case.state | default('present') != 'absent' or
+        route_ipv6_result.msg == 'No route to remove'
+
+- name: Record successful public and independent native validation
+  ansible.builtin.set_fact:
+    route_ipv6_results: >-
+      {{ route_ipv6_results +
+      [route_ipv6_outcome | combine({"validated": true})] }}
+    route_ipv6_previous: '{{ route_ipv6_observed.stdout | from_json }}'

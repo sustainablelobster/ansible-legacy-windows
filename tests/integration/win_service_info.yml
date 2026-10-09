@@ -1,0 +1,379 @@
+---
+# SPDX-License-Identifier: GPL-3.0-or-later
+- name: Verify read-only service information on Windows Python 3.4.4
+  hosts: legacy_windows
+  gather_facts: false
+  vars:
+    service_fields:
+      - checkpoint
+      - controls_accepted
+      - dependencies
+      - dependency_of
+      - description
+      - desktop_interact
+      - display_name
+      - error_control
+      - failure_actions
+      - failure_actions_on_non_crash_failure
+      - failure_command
+      - failure_reboot_msg
+      - failure_reset_period_sec
+      - launch_protection
+      - load_order_group
+      - name
+      - path
+      - pre_shutdown_timeout_ms
+      - preferred_node
+      - process_id
+      - required_privileges
+      - service_exit_code
+      - service_flags
+      - service_type
+      - sid_info
+      - start_mode
+      - state
+      - triggers
+      - username
+      - wait_hint_ms
+      - win32_exit_code
+    optional_fields:
+      - {name: failure_actions_on_non_crash_failure, level: 4}
+      - {name: sid_info, level: 5}
+      - {name: required_privileges, level: 6}
+      - {name: pre_shutdown_timeout_ms, level: 7}
+      - {name: triggers, level: 8}
+      - {name: preferred_node, level: 9}
+      - {name: launch_protection, level: 12}
+    observations: '{{ native_before.stdout | from_json }}'
+    observation_code: |
+      import ctypes, glob, json, os, sys, tempfile
+      assert sys.version_info[:3] == (3, 4, 4)
+      library = ctypes.WinDLL('advapi32', use_last_error=True)
+      pointer = ctypes.c_void_p
+      dword = ctypes.c_uint32
+      count = ctypes.POINTER(dword)
+      library.OpenSCManagerW.argtypes = [
+          ctypes.c_wchar_p, ctypes.c_wchar_p, dword]
+      library.OpenSCManagerW.restype = pointer
+      library.OpenServiceW.argtypes = [pointer, ctypes.c_wchar_p, dword]
+      library.OpenServiceW.restype = pointer
+      library.CloseServiceHandle.argtypes = [pointer]
+      library.CloseServiceHandle.restype = ctypes.c_int
+      library.QueryServiceConfigW.argtypes = [pointer, pointer, dword, count]
+      library.QueryServiceConfigW.restype = ctypes.c_int
+      library.QueryServiceConfig2W.argtypes = [
+          pointer, dword, pointer, dword, count]
+      library.QueryServiceConfig2W.restype = ctypes.c_int
+
+      class Config(ctypes.Structure):
+          _fields_ = [('service_type', dword), ('start_type', dword),
+              ('error_control', dword), ('path', ctypes.c_wchar_p),
+              ('load_order_group', ctypes.c_wchar_p), ('tag_id', dword),
+              ('dependencies', pointer), ('username', ctypes.c_wchar_p),
+              ('display_name', ctypes.c_wchar_p)]
+
+      manager = library.OpenSCManagerW(None, None, 1)
+      if not manager:
+          raise ctypes.WinError(ctypes.get_last_error())
+      service = None
+      try:
+          service = library.OpenServiceW(manager, 'RpcSs', 1)
+          if not service:
+              raise ctypes.WinError(ctypes.get_last_error())
+          needed = dword()
+          assert not library.QueryServiceConfigW(service, None, 0,
+              ctypes.byref(needed))
+          assert ctypes.get_last_error() == 122
+          buffer = ctypes.create_string_buffer(needed.value)
+          if not library.QueryServiceConfigW(service, buffer, len(buffer),
+                  ctypes.byref(needed)):
+              raise ctypes.WinError(ctypes.get_last_error())
+          config = Config.from_buffer(buffer)
+          base = {name: getattr(config, name) for name, kind in Config._fields_
+              if name != 'dependencies'}
+          levels = {}
+          for level in (3, 4, 5, 6, 7, 8, 9, 12):
+              needed = dword()
+              success = library.QueryServiceConfig2W(service, level, None, 0,
+                  ctypes.byref(needed))
+              error = 0 if success else ctypes.get_last_error()
+              if error == 122:
+                  optional = ctypes.create_string_buffer(needed.value)
+                  success = library.QueryServiceConfig2W(service, level,
+                      optional, len(optional), ctypes.byref(needed))
+                  error = 0 if success else ctypes.get_last_error()
+              levels[str(level)] = error
+      finally:
+          try:
+              if service:
+                  assert library.CloseServiceHandle(service)
+          finally:
+              assert library.CloseServiceHandle(manager)
+      print(json.dumps({'python': list(sys.version_info[:3]),
+          'base_configuration': base, 'config_levels': levels,
+          'task_directories': sorted(glob.glob(os.path.join(
+              tempfile.gettempdir(), 'ansible-tmp-*')))}))
+  tasks:
+    - name: Inspect the runtime and service query availability independently
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import base64;
+        exec(base64.b64decode('{{ observation_code | b64encode }}'))""
+      register: native_before
+      changed_when: false
+      check_mode: false
+
+    - name: Require the intended runtime and known query outcomes
+      ansible.builtin.assert:
+        that:
+          - observations.python == [3, 4, 4]
+          - >-
+            observations.config_levels.values() |
+            difference([0, 87, 124]) | length == 0
+          - observations.base_configuration.start_type == 2
+
+    - name: Exercise service queries and expected failures
+      block:
+        - name: Read an exact ordinary service  # noqa: args[module]
+          # The payload consumes WANT_JSON, not an AnsibleModule argument spec.
+          sustainablelobster.legacy_windows.win_service_info:
+            name: RpcSs
+          register: rpc
+
+        - name: Repeat the exact query  # noqa: args[module]
+          # The repeated result validates this WANT_JSON request.
+          sustainablelobster.legacy_windows.win_service_info:
+            name: RpcSs
+          register: repeated
+
+        - name: Read in check mode  # noqa: args[module]
+          # Check-mode assertions validate this WANT_JSON request.
+          sustainablelobster.legacy_windows.win_service_info:
+            name: RpcSs
+          check_mode: true
+          diff: true
+          register: checked
+
+        - name: Verify complete stable results and unchanged reads
+          ansible.builtin.assert:
+            that:
+              - rpc.exists
+              - rpc.services | length == 1
+              - rpc.services[0].name == 'RpcSs'
+              - rpc.services[0].keys() | sort == service_fields | sort
+              - repeated.services == rpc.services
+              - checked.services == rpc.services
+              - repeated.warnings | default([]) == rpc.warnings | default([])
+              - checked.warnings | default([]) == rpc.warnings | default([])
+              - rpc is not changed
+              - repeated is not changed
+              - checked is not changed
+              - checked.diff is not defined
+
+        - name: Require nulls and named warnings only for unavailable fields
+          ansible.builtin.assert:
+            that:
+              - >-
+                observations.config_levels[item.level | string] in
+                ([0, 87, 124] if item.name == 'preferred_node' else [0, 124])
+              - >-
+                observations.config_levels[item.level | string] != 124 or
+                rpc.services[0][item.name] is none
+              - >-
+                observations.config_levels[item.level | string] != 124 or
+                item.name in (rpc.warnings | default([]) | join(' '))
+              - >-
+                observations.config_levels[item.level | string] != 0 or
+                rpc.services[0][item.name] is not none
+          loop: '{{ optional_fields }}'
+          loop_control:
+            label: '{{ item.name }}'
+
+        - name: Check delayed-mode availability and the normal no-NUMA result
+          ansible.builtin.assert:
+            that:
+              - observations.config_levels['3'] in [0, 124]
+              - >-
+                observations.config_levels['3'] != 124 or
+                rpc.services[0].start_mode is none
+              - >-
+                observations.config_levels['3'] != 124 or
+                'start_mode' in (rpc.warnings | default([]) | join(' '))
+              - >-
+                observations.config_levels['3'] != 0 or
+                rpc.services[0].start_mode in ['auto', 'delayed']
+              - >-
+                observations.config_levels['9'] != 87 or
+                rpc.services[0].preferred_node is none
+              - >-
+                observations.config_levels['9'] != 87 or
+                'preferred_node' not in (rpc.warnings | default([]) | join(' '))
+
+        - name: Resolve equivalent selectors  # noqa: args[module]
+          # Selection assertions validate these WANT_JSON requests.
+          sustainablelobster.legacy_windows.win_service_info:
+            name: '{{ item }}'
+          loop:
+            - rpcss
+            - '{{ rpc.services[0].display_name }}'
+            - RpcS?
+            - '[Q-S]pcSs'
+          register: equivalent_queries
+
+        - name: Verify each equivalent selection returns the same service
+          ansible.builtin.assert:
+            that:
+              - item is not changed
+              - item.exists
+              - item.services == rpc.services
+          loop: '{{ equivalent_queries.results }}'
+          loop_control:
+            label: '{{ item.item }}'
+
+        - name: Read a driver by its exact key  # noqa: args[module]
+          # Driver-result assertions validate this WANT_JSON request.
+          sustainablelobster.legacy_windows.win_service_info:
+            name: Tcpip
+          register: driver
+
+        - name: Verify the exact driver fallback retains the complete schema
+          ansible.builtin.assert:
+            that:
+              - driver is not changed
+              - driver.exists
+              - driver.services | length == 1
+              - driver.services[0].name == 'Tcpip'
+              - driver.services[0].service_type == 'kernel_driver'
+              - driver.services[0].keys() | sort == service_fields | sort
+
+        - name: Query absent selectors  # noqa: args[module]
+          # Empty-result assertions validate these WANT_JSON requests.
+          sustainablelobster.legacy_windows.win_service_info:
+            name: '{{ item }}'
+          loop:
+            - __legacy_windows_service_info_absent__
+            - __legacy_windows_service_info_absent__*
+          register: absent_queries
+
+        - name: Verify empty selections are successful and unchanged
+          ansible.builtin.assert:
+            that:
+              - item is not changed
+              - not item.exists
+              - item.services == []
+              - item.warnings | default([]) == []
+          loop: '{{ absent_queries.results }}'
+          loop_control:
+            label: '{{ item.item }}'
+
+        - name: Enumerate with omitted and empty names  # noqa: args[module]
+          # Full-result assertions validate these WANT_JSON requests.
+          sustainablelobster.legacy_windows.win_service_info:
+            name: '{{ item.name | default(omit) }}'
+          loop:
+            - {id: omitted}
+            - {id: explicit_null, name: null}
+            - {id: empty, name: ''}
+          loop_control:
+            label: '{{ item.id }}'
+          register: all_queries
+
+        - name: Verify full selections include ordinary services but not drivers
+          # Services can change state between reads; do not freeze their values.
+          ansible.builtin.assert:
+            that:
+              - item is not changed
+              - item.exists
+              - item.services | length > 0
+              - "'RpcSs' in (item.services | map(attribute='name') | list)"
+              - "'Tcpip' not in (item.services | map(attribute='name') | list)"
+          loop: '{{ all_queries.results }}'
+          loop_control:
+            label: '{{ item.item.id }}'
+
+        - name: Verify every enumerated service has all return fields
+          ansible.builtin.assert:
+            that:
+              - item.keys() | sort == service_fields | sort
+          loop: >-
+            {{ all_queries.results | map(attribute="services") | flatten }}
+          loop_control:
+            label: '{{ item.name }}'
+
+        - name: Verify malformed patterns fail without partial results
+          block:
+            - name: Submit malformed patterns  # noqa: args[module]
+              # Rescue assertions validate these intentionally invalid requests.
+              sustainablelobster.legacy_windows.win_service_info:
+                name: '{{ item }}'
+              loop: ['[', '[z-a]', '[@-[]']
+              register: malformed
+
+            - name: Reject unexpected success for malformed patterns
+              ansible.builtin.fail:
+                msg: Malformed service patterns unexpectedly succeeded
+          rescue:
+            - name: Assert every pattern failure and its unchanged result
+              ansible.builtin.assert:
+                that:
+                  - malformed.results | length == 3
+                  - item is failed
+                  - item is not changed
+                  - >-
+                    item.msg is search(
+                    'Unhandled exception while executing module: ')
+                  - item.exists is not defined
+                  - item.services is not defined
+              loop: '{{ malformed.results }}'
+              loop_control:
+                label: '{{ item.item }}'
+
+        - name: Verify unsupported arguments fail before selection
+          block:
+            - name: Submit an unsupported argument  # noqa: args[module]
+              # Invalid input must reach the payload's own argument validation.
+              sustainablelobster.legacy_windows.win_service_info:
+                name: RpcSs
+                unexpected_option: true
+              register: invalid_option
+
+            - name: Reject unexpected success for an unsupported argument
+              ansible.builtin.fail:
+                msg: Unsupported service option unexpectedly succeeded
+          rescue:
+            - name: Assert the unsupported argument failure
+              ansible.builtin.assert:
+                that:
+                  - invalid_option is failed
+                  - invalid_option is not changed
+                  - invalid_option.msg is search('Unsupported parameters')
+                  - invalid_option.exists is not defined
+                  - invalid_option.services is not defined
+
+        - name: Recover after the failures  # noqa: args[module]
+          # Complete-result assertions validate this WANT_JSON request.
+          sustainablelobster.legacy_windows.win_service_info:
+            name: RpcSs
+          register: recovered
+
+        - name: Verify complete recovery
+          ansible.builtin.assert:
+            that:
+              - recovered is not changed
+              - recovered.exists
+              - recovered.services == rpc.services
+              - recovered.warnings | default([]) == rpc.warnings | default([])
+      always:
+        - name: Inspect configuration and task directories after the queries
+          ansible.builtin.raw: >-
+            cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+            "import base64;
+            exec(base64.b64decode('{{ observation_code | b64encode }}'))""
+          register: native_after
+          changed_when: false
+          check_mode: false
+
+        - name: Verify stable configuration and staged-file cleanup
+          ansible.builtin.assert:
+            that:
+              - (native_after.stdout | from_json) == observations

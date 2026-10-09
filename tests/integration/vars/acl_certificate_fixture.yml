@@ -1,0 +1,456 @@
+---
+acl_certificate_fixture: |
+  # Copyright 2026 Joe Lustri
+  # SPDX-License-Identifier: GPL-3.0-or-later
+  """Own temporary certificate keys and inspect their native DACLs."""
+
+  import binascii
+  import contextlib
+  import ctypes
+  import json
+  import os
+  import struct
+  import sys
+  import uuid
+
+  assert sys.version_info[:3] == (3, 4, 4)
+  WORKSPACE, OPERATION = sys.argv[1:3]
+  STATE = os.path.join(WORKSPACE, "acl-certificates.json")
+  POINTER, DWORD, BOOL = ctypes.c_void_p, ctypes.c_uint32, ctypes.c_int32
+  CRYPT = ctypes.WinDLL("crypt32", use_last_error=True)
+  SECURITY = ctypes.WinDLL("advapi32", use_last_error=True)
+  KERNEL = ctypes.WinDLL("kernel32", use_last_error=True)
+  CAPI_PROVIDER = "Microsoft Enhanced Cryptographic Provider v1.0"
+  CNG_PROVIDER = "Microsoft Software Key Storage Provider"
+  CNG = None
+  if sys.getwindowsversion().major >= 6:
+      CNG = ctypes.WinDLL("ncrypt", use_last_error=True)
+
+
+  class Blob(ctypes.Structure):
+      _fields_ = [("size", DWORD), ("data", POINTER)]
+
+
+  class KeyProviderInfo(ctypes.Structure):
+      _fields_ = [
+          ("container", ctypes.c_wchar_p),
+          ("provider", ctypes.c_wchar_p), ("provider_type", DWORD),
+          ("flags", DWORD), ("parameter_count", DWORD),
+          ("parameters", POINTER), ("key_specification", DWORD),
+      ]
+
+
+  class CertificateContext(ctypes.Structure):
+      _fields_ = [
+          ("encoding", DWORD), ("encoded", POINTER), ("size", DWORD),
+          ("info", POINTER), ("store", POINTER),
+      ]
+
+
+  def bind(library, name, result, arguments):
+      function = getattr(library, name)
+      function.restype, function.argtypes = result, arguments
+      return function
+
+
+  open_store = bind(CRYPT, "CertOpenStore", POINTER,
+                    [POINTER, DWORD, POINTER, DWORD, ctypes.c_wchar_p])
+  close_store = bind(CRYPT, "CertCloseStore", BOOL, [POINTER, DWORD])
+  create_certificate = bind(
+      CRYPT, "CertCreateSelfSignCertificate", POINTER,
+      [POINTER, POINTER, DWORD] + [POINTER] * 5,
+  )
+  encode_subject = bind(CRYPT, "CertStrToNameW", BOOL,
+                        [DWORD, ctypes.c_wchar_p, DWORD] + [POINTER] * 4)
+  add_certificate = bind(CRYPT, "CertAddCertificateContextToStore", BOOL,
+                         [POINTER, POINTER, DWORD, POINTER])
+  find_certificate = bind(CRYPT, "CertFindCertificateInStore", POINTER,
+                          [POINTER, DWORD, DWORD, DWORD, POINTER, POINTER])
+  free_certificate = bind(CRYPT, "CertFreeCertificateContext", BOOL, [POINTER])
+  delete_certificate = bind(CRYPT, "CertDeleteCertificateFromStore", BOOL,
+                            [POINTER])
+  get_property = bind(CRYPT, "CertGetCertificateContextProperty", BOOL,
+                      [POINTER, DWORD, POINTER, POINTER])
+  acquire_provider = bind(SECURITY, "CryptAcquireContextW", BOOL,
+                          [POINTER, ctypes.c_wchar_p, ctypes.c_wchar_p,
+                           DWORD, DWORD])
+  release_provider = bind(SECURITY, "CryptReleaseContext", BOOL,
+                          [POINTER, DWORD])
+  generate_key = bind(SECURITY, "CryptGenKey", BOOL,
+                      [POINTER, DWORD, DWORD, POINTER])
+  destroy_key = bind(SECURITY, "CryptDestroyKey", BOOL, [POINTER])
+  get_provider_property = bind(SECURITY, "CryptGetProvParam", BOOL,
+                               [POINTER, DWORD, POINTER, POINTER, DWORD])
+  set_provider_property = bind(SECURITY, "CryptSetProvParam", BOOL,
+                               [POINTER, DWORD, POINTER, DWORD])
+  get_control = bind(SECURITY, "GetSecurityDescriptorControl", BOOL,
+                     [POINTER] * 3)
+  get_dacl = bind(SECURITY, "GetSecurityDescriptorDacl", BOOL, [POINTER] * 4)
+  get_ace = bind(SECURITY, "GetAce", BOOL, [POINTER, DWORD, POINTER])
+  to_sddl = bind(
+      SECURITY, "ConvertSecurityDescriptorToStringSecurityDescriptorW",
+      BOOL, [POINTER, DWORD, DWORD, POINTER, POINTER],
+  )
+  sid_to_string = bind(SECURITY, "ConvertSidToStringSidW", BOOL,
+                       [POINTER, POINTER])
+  local_free = bind(KERNEL, "LocalFree", POINTER, [POINTER])
+  if CNG is not None:
+      open_cng_provider = bind(CNG, "NCryptOpenStorageProvider", ctypes.c_int32,
+                               [POINTER, ctypes.c_wchar_p, DWORD])
+      create_cng_key = bind(
+          CNG, "NCryptCreatePersistedKey", ctypes.c_int32,
+          [POINTER, POINTER, ctypes.c_wchar_p, ctypes.c_wchar_p, DWORD, DWORD],
+      )
+      finalize_cng_key = bind(CNG, "NCryptFinalizeKey", ctypes.c_int32,
+                              [POINTER, DWORD])
+      open_cng_key = bind(CNG, "NCryptOpenKey", ctypes.c_int32,
+                          [POINTER, POINTER, ctypes.c_wchar_p, DWORD, DWORD])
+      delete_cng_key = bind(CNG, "NCryptDeleteKey", ctypes.c_int32,
+                            [POINTER, DWORD])
+      free_cng = bind(CNG, "NCryptFreeObject", ctypes.c_int32, [POINTER])
+      get_cng_property = bind(
+          CNG, "NCryptGetProperty", ctypes.c_int32,
+          [POINTER, ctypes.c_wchar_p, POINTER, DWORD, POINTER, DWORD],
+      )
+      set_cng_property = bind(
+          CNG, "NCryptSetProperty", ctypes.c_int32,
+          [POINTER, ctypes.c_wchar_p, POINTER, DWORD, DWORD],
+      )
+
+
+  def require(result):
+      if not result:
+          raise ctypes.WinError(ctypes.get_last_error())
+
+
+  def checked(error):
+      if error:
+          raise ctypes.WinError(ctypes.c_int32(error).value)
+
+
+  def hex_bytes(data):
+      return binascii.hexlify(data).decode("ascii")
+
+
+  def save(state):
+      with open(STATE, "w") as stream:
+          json.dump(state, stream)
+
+
+  @contextlib.contextmanager
+  def key_context(entry, state=None):
+      provider, key = POINTER(), POINTER()
+      creating = state is not None
+      if entry["kind"] == "capi":
+          require(acquire_provider(
+              ctypes.byref(provider), entry["container"], CAPI_PROVIDER,
+              1, 0x40 | (8 if creating else 0),
+          ))
+          try:
+              if creating:
+                  entry["key_created"] = True
+                  save(state)
+                  require(generate_key(
+                      provider, 0x2400, 2048 << 16, ctypes.byref(key)
+                  ))
+              yield provider
+          finally:
+              try:
+                  if key:
+                      require(destroy_key(key))
+              finally:
+                  require(release_provider(provider, 0))
+      else:
+          checked(open_cng_provider(
+              ctypes.byref(provider), CNG_PROVIDER, 0
+          ))
+          try:
+              if creating:
+                  checked(create_cng_key(
+                      provider, ctypes.byref(key), "RSA", entry["container"],
+                      0, 0,
+                  ))
+                  entry["key_created"] = True
+                  save(state)
+                  bits = DWORD(2048)
+                  checked(set_cng_property(
+                      key, "Length", ctypes.byref(bits), 4, 0
+                  ))
+                  checked(finalize_cng_key(key, 0x40))
+              else:
+                  checked(open_cng_key(
+                      provider, ctypes.byref(key), entry["container"],
+                      0, 0x40,
+                  ))
+              yield key
+          finally:
+              try:
+                  if key:
+                      checked(free_cng(key))
+              finally:
+                  checked(free_cng(provider))
+
+
+  def key_descriptor(entry, restore=False):
+      with key_context(entry) as key:
+          if restore:
+              data = binascii.unhexlify(entry["original_descriptor"])
+              buffer = ctypes.create_string_buffer(data)
+              if entry["kind"] == "capi":
+                  require(set_provider_property(key, 8, buffer, 4))
+              else:
+                  checked(set_cng_property(
+                      key, "Security Descr", buffer, len(data), 0x44
+                  ))
+              return None
+          size = DWORD()
+          if entry["kind"] == "capi":
+              require(get_provider_property(
+                  key, 8, None, ctypes.byref(size), 7
+              ))
+              buffer = ctypes.create_string_buffer(size.value)
+              require(get_provider_property(
+                  key, 8, buffer, ctypes.byref(size), 7
+              ))
+          else:
+              checked(get_cng_property(
+                  key, "Security Descr", None, 0, ctypes.byref(size), 0x47
+              ))
+              buffer = ctypes.create_string_buffer(size.value)
+              checked(get_cng_property(
+                  key, "Security Descr", buffer, size.value,
+                  ctypes.byref(size), 0x47,
+              ))
+          return buffer.raw[:size.value]
+
+
+  def find(store, thumbprint):
+      digest = ctypes.create_string_buffer(binascii.unhexlify(thumbprint))
+      selector = Blob(20, ctypes.cast(digest, POINTER))
+      certificate = find_certificate(
+          store, 0x10001, 0, 0x10000, ctypes.byref(selector), None
+      )
+      if not certificate and ctypes.get_last_error() & 0xffffffff != 0x80092004:
+          raise ctypes.WinError(ctypes.get_last_error())
+      return certificate
+
+
+  def encoded_certificate(certificate):
+      native = ctypes.cast(
+          certificate, ctypes.POINTER(CertificateContext)
+      ).contents
+      return hex_bytes(ctypes.string_at(native.encoded, native.size))
+
+
+  def key_identity(certificate):
+      size = DWORD()
+      require(get_property(certificate, 2, None, ctypes.byref(size)))
+      buffer = ctypes.create_string_buffer(size.value)
+      require(get_property(certificate, 2, buffer, ctypes.byref(size)))
+      info = ctypes.cast(buffer, ctypes.POINTER(KeyProviderInfo)).contents
+      return {
+          "container": info.container, "provider": info.provider,
+          "provider_type": info.provider_type,
+          "key_specification": info.key_specification,
+      }
+
+
+  def descriptor_text(descriptor, flags):
+      text = POINTER()
+      require(to_sddl(descriptor, 1, flags, ctypes.byref(text), None))
+      try:
+          return ctypes.wstring_at(text)
+      finally:
+          local_free(text)
+
+
+  def observe_entry(store, entry):
+      certificate = find(store, entry["thumbprint"])
+      assert certificate, entry["thumbprint"]
+      try:
+          der = encoded_certificate(certificate)
+          certificate_identity = key_identity(certificate)
+          assert certificate_identity["container"] == entry["container"]
+      finally:
+          require(free_certificate(certificate))
+      descriptor = key_descriptor(entry)
+      buffer = ctypes.create_string_buffer(descriptor)
+      control, revision = ctypes.c_uint16(), DWORD()
+      require(get_control(
+          buffer, ctypes.byref(control), ctypes.byref(revision)
+      ))
+      present, defaulted, dacl = BOOL(), BOOL(), POINTER()
+      require(get_dacl(buffer, ctypes.byref(present), ctypes.byref(dacl),
+                       ctypes.byref(defaulted)))
+      entries = []
+      if present.value and dacl:
+          count = ctypes.c_uint16.from_address(dacl.value + 4).value
+          for index in range(count):
+              ace, sid = POINTER(), POINTER()
+              require(get_ace(dacl, index, ctypes.byref(ace)))
+              size = ctypes.c_uint16.from_address(ace.value + 2).value
+              raw = ctypes.string_at(ace, size)
+              kind, flags = struct.unpack_from("BB", raw)
+              identity = None
+              if kind in (0, 1, 2, 3):
+                  require(sid_to_string(ace.value + 8, ctypes.byref(sid)))
+                  try:
+                      identity = ctypes.wstring_at(sid)
+                  finally:
+                      local_free(sid)
+              entries.append({
+                  "type": kind, "flags": flags,
+                  "mask": struct.unpack_from("<I", raw, 4)[0],
+                  "sid": identity, "raw": list(bytearray(raw)),
+              })
+      return {
+          "protected": bool(control.value & 0x1000), "aces": entries,
+          "descriptor": hex_bytes(descriptor),
+          "owner": descriptor_text(buffer, 1),
+          "group": descriptor_text(buffer, 2),
+          "sddl": descriptor_text(buffer, 7), "der": der,
+          "key_identity": certificate_identity,
+      }
+
+
+  def setup_entry(store, state, kind):
+      entry = {
+          "kind": kind, "container": "legacy-windows-acl-" + uuid.uuid4().hex,
+          "key_created": False, "certificate_added": False,
+      }
+      state["entries"].append(entry)
+      save(state)
+      with key_context(entry, state) as key:
+          subject = "CN=" + entry["container"]
+          size = DWORD()
+          require(encode_subject(
+              1, subject, 3, None, None, ctypes.byref(size), None
+          ))
+          name = ctypes.create_string_buffer(size.value)
+          require(encode_subject(
+              1, subject, 3, None, name, ctypes.byref(size), None
+          ))
+          blob = Blob(size.value, ctypes.cast(name, POINTER))
+          provider = KeyProviderInfo(
+              entry["container"],
+              CAPI_PROVIDER if kind == "capi" else CNG_PROVIDER,
+              1 if kind == "capi" else 0, 0, 0, None,
+              2 if kind == "capi" else 0,
+          )
+          certificate = create_certificate(
+              key, ctypes.byref(blob), 0, ctypes.byref(provider),
+              None, None, None, None,
+          )
+          require(certificate)
+          try:
+              digest, size = ctypes.create_string_buffer(20), DWORD(20)
+              require(get_property(certificate, 3, digest, ctypes.byref(size)))
+              entry["thumbprint"] = hex_bytes(digest.raw).upper()
+              entry["der"] = encoded_certificate(certificate)
+              entry["path"] = "Cert:\\CurrentUser\\My\\" + entry["thumbprint"]
+              save(state)
+              require(add_certificate(store, certificate, 1, None))
+              entry["certificate_added"] = True
+              save(state)
+          finally:
+              require(free_certificate(certificate))
+      entry["original_descriptor"] = hex_bytes(key_descriptor(entry))
+      entry["baseline"] = observe_entry(store, entry)
+      save(state)
+
+
+  def remove_key(entry):
+      if entry["kind"] == "capi":
+          provider = POINTER()
+          require(acquire_provider(
+              ctypes.byref(provider), entry["container"], CAPI_PROVIDER,
+              1, 0x50,
+          ))
+          # CRYPT_DELETEKEYSET leaves its output handle undefined.
+      else:
+          provider, key = POINTER(), POINTER()
+          checked(open_cng_provider(ctypes.byref(provider), CNG_PROVIDER, 0))
+          try:
+              checked(open_cng_key(
+                  provider, ctypes.byref(key), entry["container"], 0, 0x40
+              ))
+              checked(delete_cng_key(key, 0x40))
+              key = None
+          finally:
+              try:
+                  if key:
+                      checked(free_cng(key))
+              finally:
+                  checked(free_cng(provider))
+
+
+  def cleanup(store, state):
+      for entry in reversed(state["entries"]):
+          if entry["key_created"] and "original_descriptor" in entry:
+              key_descriptor(entry, restore=True)
+          if entry["certificate_added"]:
+              certificate = find(store, entry["thumbprint"])
+              if certificate:
+                  try:
+                      assert encoded_certificate(certificate) == entry["der"]
+                  except BaseException:
+                      require(free_certificate(certificate))
+                      raise
+                  # This API frees the context even when deletion fails.
+                  require(delete_certificate(certificate))
+              entry["certificate_added"] = False
+              save(state)
+              remaining = find(store, entry["thumbprint"])
+              if remaining:
+                  require(free_certificate(remaining))
+                  raise AssertionError(
+                      "Owned certificate remains after cleanup"
+                  )
+          if entry["key_created"]:
+              remove_key(entry)
+              entry["key_created"] = False
+              save(state)
+              try:
+                  with key_context(entry):
+                      raise AssertionError("Owned key remains after cleanup")
+              except OSError as error:
+                  if error.winerror & 0xffffffff != 0x80090016:
+                      raise
+
+
+  assert OPERATION in ("setup", "observe", "cleanup"), OPERATION
+  if OPERATION == "cleanup" and not os.path.exists(STATE):
+      print(json.dumps({"cleaned": True}))
+      sys.exit(0)
+  if OPERATION == "setup":
+      assert not os.path.exists(STATE), "Certificate fixture already exists"
+      state = {"entries": [], "cng_available": CNG is not None}
+      save(state)
+  else:
+      with open(STATE) as stream:
+          state = json.load(stream)
+  flags = 0x10000 | 0x4000 | (0x8000 if OPERATION == "observe" else 0)
+  store = open_store(10, 0, None, flags, "My")
+  require(store)
+  try:
+      if OPERATION == "cleanup":
+          cleanup(store, state)
+          print(json.dumps({"cleaned": True}))
+      else:
+          if OPERATION == "setup":
+              setup_entry(store, state, "capi")
+              if CNG is not None:
+                  setup_entry(store, state, "cng")
+          paths, snapshot = {}, {}
+          for entry in state["entries"]:
+              paths[entry["kind"]] = entry["path"]
+              actual = observe_entry(store, entry)
+              for field in ("owner", "group", "der", "key_identity"):
+                  assert actual[field] == entry["baseline"][field], field
+              snapshot[entry["path"]] = actual
+          print(json.dumps({
+              "paths": paths, "snapshot": snapshot,
+              "cng_available": state["cng_available"],
+          }))
+  finally:
+      require(close_store(store, 0))

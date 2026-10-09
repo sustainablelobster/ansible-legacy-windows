@@ -1,0 +1,374 @@
+---
+optional_feature_wmi_source: >-
+  {{ lookup('file', playbook_dir +
+  '/../../plugins/module_utils/legacy_windows_wmi.py') }}
+optional_feature_program: |
+  {{ optional_feature_wmi_source }}
+  {{ optional_feature_fixture }}
+optional_feature_fixture: |
+  # SPDX-License-Identifier: GPL-3.0-or-later
+  # Journal complete feature state before servicing; retain it until recovery.
+  import binascii
+  import ctypes
+  import hashlib
+  import json
+  import os
+  import re
+  import subprocess
+  import sys
+  import time
+  import winreg
+
+  workspace = os.path.abspath(sys.argv[1])
+  operation = sys.argv[2]
+  journal_path = os.path.join(workspace, 'optional-feature-recovery.json')
+  root = os.environ['SystemRoot']
+  tool = os.path.join(root, 'Sysnative', 'dism.exe')
+  if not os.path.isfile(tool):
+      tool = os.path.join(root, 'System32', 'dism.exe')
+  supported = os.path.isfile(tool)
+  pending_paths = (
+      r'SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing'
+      r'\RebootPending',
+      r'SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update'
+      r'\RebootRequired')
+  targets = ('TelnetClient', 'TFTP')
+  extra_name = 'Microsoft-RemoteDesktopConnection'
+  binary_paths = tuple(os.path.join(root, folder, name)
+      for folder in ('System32', 'SysWOW64')
+      for name in ('telnet.exe', 'tftp.exe'))
+
+  def service_snapshot():
+      with WmiConnection() as connection:
+          rows = connection.query('SELECT * FROM Win32_Service',
+              ['Name', 'DisplayName', 'StartMode', 'State', 'PathName',
+               'StartName'])
+      for row in rows:
+          if (row['Name'] != 'TrustedInstaller' and
+                  'bvsshserver' not in (row['PathName'] or '').lower()):
+              # Other services may run or stop independently while DISM reads.
+              # Retain their configurations, not unrelated transient activity.
+              del row['State']
+      return {row['Name']: row for row in rows}
+
+  def pending():
+      result = {}
+      for path in pending_paths:
+          try:
+              key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, path)
+          except FileNotFoundError:
+              result[path] = None
+              continue
+          with key:
+              values = {}
+              for index in range(winreg.QueryInfoKey(key)[1]):
+                  name, value, kind = winreg.EnumValue(key, index)
+                  if isinstance(value, bytes):
+                      value = {'hex': binascii.hexlify(value).decode('ascii')}
+                  values[name] = [value, kind]
+              result[path] = values
+      return result
+
+  def binaries():
+      result = {}
+      for path in binary_paths:
+          try:
+              with open(path, 'rb') as stream:
+                  digest = hashlib.sha256(stream.read()).hexdigest()
+          except FileNotFoundError:
+              digest = None
+          result[path] = digest
+      return result
+
+  def dism(arguments):
+      command = [tool, '/Online', '/English', '/NoRestart',
+          '/LogPath:' + os.path.join(workspace, 'dism-fixture.log'),
+          '/ScratchDir:' + workspace] + arguments
+      with subprocess.Popen(command, stdout=subprocess.PIPE,
+                             stderr=subprocess.PIPE) as process:
+          stdout, stderr = process.communicate()
+          result = {'rc': process.returncode,
+              'stdout': stdout.decode('mbcs', errors='replace'),
+              'stderr': stderr.decode('mbcs', errors='replace')}
+      if result['rc'] not in (0, 3010):
+          raise OSError('Fixture DISM failed: ' + json.dumps(result))
+      return result
+
+  def inventory():
+      if not supported:
+          return None
+      raw = dism(['/Get-Features', '/Format:List'])
+      names = re.findall(r'^Feature Name\s*:\s*(.*?)\s*$',
+                         raw['stdout'], re.MULTILINE)
+      states = re.findall(r'^State\s*:\s*(.*?)\s*$',
+                          raw['stdout'], re.MULTILINE)
+      if (not names or len(names) != len(states) or
+              len(set(names)) != len(names)):
+          raise ValueError('No complete unique feature inventory')
+      return dict(zip(names, states))
+
+  def native_features(names):
+      if not supported:
+          return []
+      if not os.path.isfile(os.path.join(root, 'System32', 'DismApi.dll')):
+          features = inventory()
+          states = {'Disabled': 2, 'Disabled with Payload Removed': 3,
+                    'Enabled': 4, 'Disable Pending': 1, 'Enable Pending': 5}
+          rows = []
+          for name in names:
+              matches = [key for key in features if key.lower() == name.lower()]
+              if matches:
+                  actual = matches[0]
+                  if features[actual] not in states:
+                      raise ValueError('Unmeasured native selected state')
+                  rows.append({'requested': name, 'status': 0, 'name': actual,
+                               'state': states[features[actual]]})
+              else:
+                  rows.append({'requested': name, 'status': 0x800f080c})
+          return rows
+      # The SDK packs DISM structures at four bytes. Read only Info's
+      # documented name/state prefix; the remaining fields are not needed.
+      class FeatureInfo(ctypes.Structure):
+          _pack_ = 4
+          _fields_ = [('name', ctypes.c_wchar_p), ('state', ctypes.c_int32)]
+      pointer = ctypes.POINTER(FeatureInfo)
+      unsigned, signed = ctypes.c_uint32, ctypes.c_int32
+      library = ctypes.WinDLL(os.path.join(root, 'System32', 'DismApi.dll'))
+      library.DismInitialize.argtypes = [signed, ctypes.c_wchar_p,
+                                        ctypes.c_wchar_p]
+      library.DismInitialize.restype = signed
+      library.DismOpenSession.argtypes = [ctypes.c_wchar_p, ctypes.c_wchar_p,
+          ctypes.c_wchar_p, ctypes.POINTER(unsigned)]
+      library.DismOpenSession.restype = signed
+      library.DismGetFeatureInfo.argtypes = [unsigned, ctypes.c_wchar_p,
+          ctypes.c_wchar_p, signed, ctypes.POINTER(pointer)]
+      library.DismGetFeatureInfo.restype = signed
+      library.DismDelete.argtypes = [ctypes.c_void_p]
+      library.DismDelete.restype = signed
+      library.DismCloseSession.argtypes = [unsigned]
+      library.DismCloseSession.restype = signed
+      library.DismShutdown.argtypes = []
+      library.DismShutdown.restype = signed
+      def check(code, call):
+          if code:
+              raise OSError(call + ': {0:08x}'.format(code & 0xffffffff))
+      check(library.DismInitialize(0,
+          os.path.join(workspace, 'dism-api.log'), workspace), 'DismInitialize')
+      session = unsigned()
+      opened = False
+      rows = []
+      try:
+          check(library.DismOpenSession(
+              'DISM_{53BFAE52-B167-4E2F-A258-0A37B57FF845}', None, None,
+              ctypes.byref(session)), 'DismOpenSession')
+          opened = True
+          for name in names:
+              info = pointer()
+              try:
+                  code = library.DismGetFeatureInfo(session, name, None, 0,
+                      ctypes.byref(info)) & 0xffffffff
+                  row = {'requested': name, 'status': code}
+                  if not code:
+                      row.update(name=info[0].name, state=info[0].state)
+                  elif code != 0x800f080c:
+                      check(code, 'DismGetFeatureInfo')
+                  rows.append(row)
+              finally:
+                  if info:
+                      check(library.DismDelete(info), 'DismDelete')
+      finally:
+          try:
+              if opened:
+                  check(library.DismCloseSession(session), 'DismCloseSession')
+          finally:
+              check(library.DismShutdown(), 'DismShutdown')
+      return rows
+
+  def requested_names(value):
+      if value is None:
+          return []
+      return value.split(',') if isinstance(value, str) else value
+
+  def snapshot(scope='catalogue', names=None):
+      features = inventory() if scope == 'catalogue' else None
+      requested = requested_names(names) + list(targets)
+      rows = native_features((requested if scope == 'selected' else []) +
+                             [extra_name])
+      result = {'features': features, 'native_extra': rows[-1:] or None,
+                'pending': pending(), 'binaries': binaries(),
+                'services': service_snapshot()}
+      if scope == 'selected':
+          states = {2: 'Disabled', 3: 'Disabled with Payload Removed',
+                    4: 'Enabled', 1: 'Disable Pending', 5: 'Enable Pending'}
+          result['native_requested'] = rows[:-1]
+          result['features'] = {}
+          for row in rows[:-1]:
+              if not row['status']:
+                  if row['state'] not in states:
+                      raise ValueError('Unmeasured native selected state')
+                  result['features'][row['name']] = states[row['state']]
+      return result
+
+  def write_journal(record):
+      with open(journal_path, 'w', encoding='utf-8') as stream:
+          json.dump(record, stream, sort_keys=True)
+          stream.flush()
+          os.fsync(stream.fileno())
+
+  def journal():
+      with open(journal_path, encoding='utf-8') as stream:
+          record = json.load(stream)
+      if record['workspace'] != workspace or record['targets'] != list(targets):
+          raise ValueError('Journal does not own this feature workspace')
+      return record
+
+  def restore_installer(original):
+      before = original.get('TrustedInstaller')
+      current = service_snapshot().get('TrustedInstaller')
+      if before is None or current == before:
+          return
+      if (before['State'] != 'Stopped' or current is None or
+              {key: value for key, value in current.items()
+               if key != 'State'} !=
+              {key: value for key, value in before.items() if key != 'State'}):
+          raise ValueError('Unmodeled servicing service change')
+      library = ctypes.WinDLL('advapi32', use_last_error=True)
+      pointer = ctypes.c_void_p
+      library.OpenSCManagerW.argtypes = [ctypes.c_wchar_p,
+          ctypes.c_wchar_p, ctypes.c_uint32]
+      library.OpenSCManagerW.restype = pointer
+      library.OpenServiceW.argtypes = [pointer, ctypes.c_wchar_p,
+                                      ctypes.c_uint32]
+      library.OpenServiceW.restype = pointer
+      library.ControlService.argtypes = [pointer, ctypes.c_uint32, pointer]
+      library.ControlService.restype = ctypes.c_int
+      library.CloseServiceHandle.argtypes = [pointer]
+      library.CloseServiceHandle.restype = ctypes.c_int
+      manager = library.OpenSCManagerW(None, None, 1)
+      if not manager:
+          raise ctypes.WinError(ctypes.get_last_error())
+      handle = None
+      try:
+          handle = library.OpenServiceW(manager, 'TrustedInstaller', 0x20)
+          if not handle:
+              raise ctypes.WinError(ctypes.get_last_error())
+          status = (ctypes.c_uint32 * 7)()
+          if not library.ControlService(handle, 1, status):
+              raise ctypes.WinError(ctypes.get_last_error())
+          for attempt in range(40):
+              if service_snapshot().get('TrustedInstaller') == before:
+                  return
+              time.sleep(.25)
+          raise ValueError('Servicing service did not restore '
+                           'its original state')
+      finally:
+          if handle:
+              library.CloseServiceHandle(handle)
+          library.CloseServiceHandle(manager)
+
+  def setup():
+      if os.path.exists(journal_path):
+          raise ValueError('Recovery journal must not be overwritten')
+      original = {'features': None, 'native_extra': None, 'pending': pending(),
+                  'binaries': binaries(), 'services': service_snapshot()}
+      record = {'workspace': workspace, 'targets': list(targets),
+                'before': original, 'complete': False}
+      write_journal(record)
+      original['features'] = inventory()
+      original['native_extra'] = native_features([extra_name]) or None
+      if supported:
+          features = original['features']
+          if any('pending' in state.lower() for state in features.values()):
+              raise ValueError('Fixture requires stable feature states')
+          if any(value is not None for value in original['pending'].values()):
+              raise ValueError('Fixture requires no original reboot request')
+          if any(features.get(name) != 'Disabled' for name in targets):
+              raise ValueError('Fixture needs staged disabled owned features')
+      record['complete'] = True
+      write_journal(record)
+      source = os.path.join(workspace, 'source with spaces')
+      os.mkdir(source)
+      source_file = os.path.join(workspace, 'source-file')
+      with open(source_file, 'w', encoding='utf-8') as stream:
+          stream.write('Journal-owned literal source file')
+      return {'journaled': True, 'supported': supported,
+              'snapshot': original, 'anchor': dict(original,
+                  services=service_snapshot()), 'source': source,
+              'source_file': source_file,
+              'missing_source': os.path.join(workspace, 'missing-source')}
+
+  def cleanup():
+      if not os.path.exists(journal_path):
+          return {'restored': True, 'journal_absent': True}
+      record = journal()
+      original = record['before']
+      actions = []
+      before_recovery = None
+      if record['complete'] and supported:
+          before_recovery = snapshot()
+          current = before_recovery['features']
+          if set(current) != set(original['features']):
+              raise ValueError('Feature inventory names changed unexpectedly')
+          disable, enable, remove = [], [], []
+          for name, initial in original['features'].items():
+              if current[name] == initial:
+                  continue
+              if initial == 'Disabled':
+                  disable.append(name)
+              elif initial == 'Disabled with Payload Removed':
+                  remove.append(name)
+              elif initial == 'Enabled':
+                  enable.append(name)
+              else:
+                  raise ValueError('Unmodeled original feature state')
+          # Older DISM restores staged features without the newer All switch.
+          enable_options = ['/Enable-Feature']
+          if enable:
+              help_output = dism(['/Enable-Feature', '/?'])['stdout']
+              if re.search(r'(?i)/All(?=[:\s\]])', help_output):
+                  enable_options.append('/All')
+          for names, options in ((disable, ['/Disable-Feature']),
+              (remove, ['/Disable-Feature', '/Remove']),
+              (enable, enable_options)):
+              if names:
+                  actions.append(dism(options +
+                      ['/FeatureName:' + name for name in names]))
+          after = snapshot() if actions else dict(before_recovery)
+          if (after['features'] != original['features'] or
+                  after['pending'] != original['pending']):
+              if any('pending' in state.lower()
+                  for state in after['features'].values()) or any(
+                  value is not None for value in after['pending'].values()):
+                  return {'restored': False, 'requires_reboot': True,
+                          'after': after, 'actions': actions,
+                          'before_recovery': before_recovery}
+              raise ValueError('Feature/reboot state does not match journal')
+      else:
+          after = {'features': None, 'native_extra': None, 'pending': pending(),
+                   'binaries': binaries(), 'services': service_snapshot()}
+      restore_installer(original['services'])
+      after['services'] = service_snapshot()
+      expected = (original if record['complete'] else
+                  dict(original, features=None, native_extra=None))
+      if after != expected:
+          raise ValueError('Original feature/service/file state differs')
+      os.remove(journal_path)
+      return {'restored': True, 'requires_reboot': False,
+              'after': after, 'actions': actions,
+              'before_recovery': before_recovery,
+              'setup_incomplete': not record['complete']}
+
+  def main():
+      if sys.version_info[:3] != (3, 4, 4):
+          raise ValueError('Fixture requires actual Python 3.4.4')
+      if operation == 'setup':
+          return setup()
+      if operation == 'observe':
+          journal()
+          return snapshot(sys.argv[3], json.loads(sys.argv[4]))
+      if operation == 'cleanup':
+          return cleanup()
+      raise ValueError('Unknown fixture operation')
+
+  if __name__ == '__main__':
+      print(json.dumps(main(), sort_keys=True))

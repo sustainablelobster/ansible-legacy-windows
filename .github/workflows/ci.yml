@@ -1,0 +1,201 @@
+---
+name: CI
+
+'on':
+  pull_request:
+  push:
+    branches: [main, v1]
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: >-
+    ci-${{ github.workflow }}-${{ github.event_name }}-${{
+    github.event_name == 'pull_request' && github.event.number || github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  PRE_COMMIT_HOME: ${{ github.workspace }}/tmp/codex/cache/pre-commit
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: >-
+          cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24
+        # v31.11.1
+      - uses: >-
+          nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569
+        # v7.0.2; only a trusted branch run of this job saves dependencies.
+        with:
+          primary-key: >-
+            nix-${{ runner.os }}-${{
+            hashFiles('flake.lock', 'flake.nix', '.pre-commit-config.yaml') }}
+          paths: ${{ env.PRE_COMMIT_HOME }}
+          save: >-
+            ${{ github.repository ==
+            'sustainablelobster/ansible-legacy-windows'
+            && github.event_name == 'push'
+            && (github.ref == 'refs/heads/main'
+            || github.ref == 'refs/heads/v1') }}
+      - name: Run maintained lint checks
+        run: |
+          nix --extra-experimental-features 'nix-command flakes' \
+            develop --no-write-lock-file path:. --command just lint
+          git diff --exit-code
+
+  unit:
+    name: Unit tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: >-
+          cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24
+        # v31.11.1
+      - uses: >-
+          nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569
+        # v7.0.2
+        with:
+          primary-key: >-
+            nix-${{ runner.os }}-${{
+            hashFiles('flake.lock', 'flake.nix', '.pre-commit-config.yaml') }}
+          paths: ${{ env.PRE_COMMIT_HOME }}
+          save: false
+      - name: Run all unit and controller tests
+        run: |
+          mkdir -p tmp/codex/ci
+          nix --extra-experimental-features 'nix-command flakes' \
+            develop --no-write-lock-file path:. --command \
+            pytest -ra --junitxml=tmp/codex/ci/pytest.xml
+      - name: Retain test results, including failures and skips
+        if: >-
+          ${{ !cancelled()
+          && hashFiles('tmp/codex/ci/pytest.xml') != '' }}
+        uses: >-
+          actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        # v7.0.2
+        with:
+          name: unit-results-${{ github.run_attempt }}
+          path: tmp/codex/ci/pytest.xml
+          if-no-files-found: error
+          retention-days: 30
+
+  package:
+    name: Package
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    outputs:
+      filename: ${{ steps.package.outputs.filename }}
+      version: ${{ steps.package.outputs.version }}
+      sha256: ${{ steps.package.outputs.sha256 }}
+      artifact-id: ${{ steps.upload.outputs.artifact-id }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: >-
+          cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24
+        # v31.11.1
+      - uses: >-
+          nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569
+        # v7.0.2
+        with:
+          primary-key: >-
+            nix-${{ runner.os }}-${{
+            hashFiles('flake.lock', 'flake.nix', '.pre-commit-config.yaml') }}
+          paths: ${{ env.PRE_COMMIT_HOME }}
+          save: false
+      - name: Build and verify the exact collection archive
+        id: package
+        run: |
+          nix_dev=(nix --extra-experimental-features 'nix-command flakes'
+            develop --no-write-lock-file path:. --command)
+          "${nix_dev[@]}" just build
+          shopt -s nullglob
+          archives=(dist/sustainablelobster-legacy_windows-*.tar.gz)
+          if (( ${#archives[@]} != 1 )); then
+            echo 'Expected exactly one collection archive.' >&2
+            exit 1
+          fi
+          "${nix_dev[@]}" python scripts/check_collection.py \
+            --artifact "${archives[0]}"
+          tag_args=()
+          if [[ "$GITHUB_EVENT_NAME" == push \
+              && "$GITHUB_REF_TYPE" == tag ]]; then
+            tag_args=(--tag "$GITHUB_REF_NAME")
+          fi
+          "${nix_dev[@]}" python scripts/ci_release.py package \
+            --artifact "${archives[0]}" --output-dir tmp/codex/ci/package \
+            "${tag_args[@]}"
+      - name: Retain only the verified release package
+        id: upload
+        uses: >-
+          actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        # v7.0.2
+        with:
+          name: collection-package-${{ github.run_attempt }}
+          path: |
+            tmp/codex/ci/package/${{ steps.package.outputs.filename }}
+            tmp/codex/ci/package/SHA256SUMS
+            tmp/codex/ci/package/release-notes.txt
+            tmp/codex/ci/package/release-manifest.json
+          if-no-files-found: error
+          retention-days: 30
+
+  publish:
+    name: Publish GitHub release
+    needs: [lint, unit, package]
+    if: >-
+      github.repository == 'sustainablelobster/ansible-legacy-windows'
+      && github.event_name == 'push'
+      && startsWith(github.ref, 'refs/tags/v')
+      && needs.lint.result == 'success'
+      && needs.unit.result == 'success'
+      && needs.package.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    concurrency:
+      group: release-${{ github.repository }}-${{ github.ref }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: >-
+          cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24
+        # v31.11.1
+      - name: Download the package verified by this run
+        uses: >-
+          actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        # v8.0.2
+        with:
+          artifact-ids: ${{ needs.package.outputs.artifact-id }}
+          path: tmp/codex/ci/package
+          merge-multiple: true
+          digest-mismatch: error
+      - name: Publish the verified archive without rebuilding
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_SHA256: ${{ needs.package.outputs.sha256 }}
+        run: |
+          nix --extra-experimental-features 'nix-command flakes' \
+            develop --no-write-lock-file path:. --command \
+            python scripts/ci_release.py publish \
+            --package-dir tmp/codex/ci/package --sha256 "$EXPECTED_SHA256"

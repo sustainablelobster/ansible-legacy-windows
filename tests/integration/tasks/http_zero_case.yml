@@ -1,0 +1,32 @@
+---
+- name: Bind the exact public request for this zero-timeout observation
+  vars:
+    request_url: >-
+      {{ 'http://legacy-windows-http-zero.invalid/fixture'
+         if http_zero_case.connection_failure | default('') == 'dns'
+         else 'http://127.0.0.1:' +
+              (get_url_setup_data.server.refused_port | string) + '/fixture'
+         if http_zero_case.connection_failure | default('') == 'refused'
+         else get_url_setup_data.file if http_zero_case.file | default(false)
+         else get_url_setup_data.http + http_zero_case.path }}
+    common: '{{ {"url_timeout": 0, "use_proxy": false} }}'
+    request: >-
+      {{ {'url': request_url, 'dest': get_url_workspace.path +
+          '\output\result.bin'} if http_zero_case.module == 'get_url'
+          else {'url': request_url, 'return_content': true}
+          if http_zero_case.module == 'uri'
+          else {'path': request_url, 'provider': 'registry'} }}
+  ansible.builtin.set_fact:
+    http_zero_params: >-
+      {{ common | combine(request) |
+         combine(http_zero_case.params | default({})) }}
+
+- name: Observe exactly the selected native and released public calls
+  ansible.builtin.include_tasks: http_zero_call.yml
+  loop: >-
+    {{ ['original'] if http_zero_mode == 'source'
+       else ['native'] if http_zero_mode == 'native'
+       else ['native', 'original'] }}
+  loop_control:
+    loop_var: http_zero_side
+    label: '{{ http_zero_side }}'

@@ -1,0 +1,377 @@
+---
+get_url_cases:
+  - name: Download absent destination
+    changed: true
+  - name: Repeat identical content remains unchanged
+    fixture_payload: true
+  - name: Check absent destination downloads without creating it
+    check: true
+    changed: true
+  - name: Check different destination predicts replacement
+    contents: old content
+    check: true
+    changed: true
+  - name: Force false ignores older remote file
+    contents: old content
+    params: {force: false}
+  - name: Force false downloads newer remote file
+    contents: old content
+    mtime: 946684799
+    params: {force: false}
+    changed: true
+  - name: Explicit expected digest matches destination without a request
+    fixture_payload: true
+    no_requests: true
+    params:
+      force: false
+      checksum: '{{ get_url_setup_data.hashes.sha1 }}'
+  - name: Digest mismatch forces download even if remote date is older
+    contents: old content
+    params:
+      force: false
+      checksum: '{{ get_url_setup_data.hashes.sha1 }}'
+    changed: true
+  - name: Bad expected digest preserves destination and partial metadata
+    contents: old content
+    params: {checksum: '0000000000000000000000000000000000000000'}
+    failed: true
+    elapsed: 0
+  - name: SHA256 checksum list is matched by resource basename
+    params:
+      checksum_algorithm: sha256
+      checksum_url: '{{ get_url_setup_data.http }}/checksum/sha256'
+    changed: true
+  - name: Missing checksum record fails before downloading
+    params:
+      checksum_url: '{{ get_url_setup_data.http }}/checksum-missing'
+    failed: true
+    elapsed: 0
+  - name: Local file resource
+    params: {url: '{{ get_url_setup_data.file }}'}
+    changed: true
+  - name: Directory destination derives URL basename
+    params: {dest: '{{ get_url_workspace.path }}\output'}
+    changed: true
+  - name: Percent encoded slash remains encoded on the wire
+    params: {url: '{{ get_url_setup_data.http }}/path%2Fpayload.bin'}
+    changed: true
+    request_path: /path%2Fpayload.bin
+  - name: Basic challenge uses explicit fixture credentials
+    params:
+      url: '{{ get_url_setup_data.http }}/auth'
+      url_username: fixture
+      url_password: secret
+    changed: true
+  - name: Preemptive Basic works without an authentication challenge
+    params:
+      url: '{{ get_url_setup_data.http }}/auth-hidden'
+      url_username: fixture
+      url_password: secret
+      force_basic_auth: true
+    changed: true
+  - name: Missing credentials produce complete HTTP failure
+    params: {url: '{{ get_url_setup_data.http }}/auth'}
+    failed: true
+  - name: HTTP not found preserves an existing destination
+    contents: old content
+    params: {url: '{{ get_url_setup_data.http }}/status/404'}
+    failed: true
+  - name: Redirects follow the safe GET policy
+    params: {url: '{{ get_url_setup_data.http }}/redirect/2'}
+    changed: true
+  - name: No redirects retains the redirect response
+    params:
+      url: '{{ get_url_setup_data.http }}/redirect/2'
+      follow_redirects: none
+    changed: true
+  - name: Zero maximum redirects retains the redirect response
+    params:
+      url: '{{ get_url_setup_data.http }}/redirect/2'
+      maximum_redirection: 0
+    changed: true
+  - name: Redirect limit returns a complete failure
+    params:
+      url: '{{ get_url_setup_data.http }}/redirect/2'
+      maximum_redirection: 1
+    failed: true
+  - name: Missing parent folder fails without network access
+    params: {dest: '{{ get_url_workspace.path }}\absent\result.bin'}
+    failed: true
+  - name: Missing directory with trailing separator fails early
+    params: {dest: '{{ get_url_workspace.path }}\absent\'}
+    failed: true
+  - name: Check mode still downloads and verifies expected checksum
+    params:
+      checksum_algorithm: sha512
+      checksum: '{{ get_url_setup_data.hashes.sha512 }}'
+    check: true
+    changed: true
+  - name: Timeout alias is honored
+    params:
+      url: '{{ get_url_setup_data.http }}/delay/2'
+      timeout: 1
+    failed: true
+    timeout_error_form: true
+  - name: Native custom and reserved headers reach the service
+    params:
+      headers: {X-Fixture: custom, Accept: application/octet-stream}
+      http_agent: fixture-agent
+    expected_headers:
+      x-fixture: custom
+      accept: application/octet-stream
+      user-agent: fixture-agent
+    changed: true
+  - name: User Agent header supplies default agent
+    params: {headers: {User-Agent: header-agent}}
+    expected_headers: {user-agent: header-agent}
+    changed: true
+  - name: Explicit agent wins with the complete source warning
+    params:
+      headers: {User-Agent: header-agent}
+      http_agent: explicit-agent
+    expected_headers: {user-agent: explicit-agent}
+    changed: true
+  - name: HEAD method writes the empty response body
+    params: {method: HEAD}
+    request_methods: [HEAD]
+    changed: true
+  - name: Safe policy does not follow POST redirects
+    params: {url: '{{ get_url_setup_data.http }}/redirect/2', method: POST}
+    request_methods: [POST]
+    changed: true
+  - name: All policy follows redirects while preserving source POST method
+    params:
+      url: '{{ get_url_setup_data.http }}/redirect/2'
+      method: POST
+      follow_redirects: all
+    request_methods: [POST, POST, POST]
+    changed: true
+  - name: Redirects discard explicit Authorization headers
+    params:
+      url: '{{ get_url_setup_data.http }}/redirect/2'
+      headers: {Authorization: fixture-authorization}
+    request_methods: [GET, GET, GET]
+    drop_redirect_auth: true
+    changed: true
+  - name: Lowercase known HTTP method retains safe redirect behavior
+    params: {url: '{{ get_url_setup_data.http }}/redirect/2', method: get}
+    request_methods: [GET, GET, GET]
+    changed: true
+  - name: Range header uses the source byte-range binding
+    params: {headers: {Range: '5'}}
+    expected_headers: {range: 'bytes=5-'}
+    changed: true
+  - name: Missing Last Modified date uses source metadata behavior
+    contents: old content
+    params:
+      url: '{{ get_url_setup_data.http }}/no-last-modified'
+      force: false
+    changed: true
+  - name: Explicit proxy routes an otherwise unreachable URL
+    params:
+      url: http://download.fixture.invalid/payload.bin
+      use_proxy: true
+      proxy_url: '{{ get_url_setup_data.http }}'
+    request_path: http://download.fixture.invalid/payload.bin
+    changed: true
+  - name: Explicit proxy credentials answer a Basic challenge
+    params:
+      url: http://download.fixture.invalid/proxy-auth
+      use_proxy: true
+      proxy_url: '{{ get_url_setup_data.http }}'
+      proxy_username: fixture
+      proxy_password: secret
+    expected_headers: {proxy-authorization: Basic Zml4dHVyZTpzZWNyZXQ=}
+    changed: true
+  - name: Proxy without credentials returns complete failure
+    params:
+      url: http://download.fixture.invalid/proxy-auth
+      use_proxy: true
+      proxy_url: '{{ get_url_setup_data.http }}'
+    failed: true
+  - name: Windows drive path is a file URI
+    params: {url: '{{ get_url_workspace.path }}\source.bin'}
+    changed: true
+  - name: Windows drive path checksum source is read before destination changes
+    contents: >-
+      {{ get_url_setup_data.hashes.sha1 }}  ./payload.bin
+    params:
+      checksum_url: '{{ get_url_workspace.path }}\output\result.bin'
+    changed: true
+  - name: Force false local file metadata skips older source without a request
+    contents: old content
+    no_requests: true
+    params: {url: '{{ get_url_setup_data.file }}', force: false}
+  - name: Force false local file metadata downloads newer source
+    contents: old content
+    mtime: 946684799
+    params: {url: '{{ get_url_setup_data.file }}', force: false}
+    changed: true
+  - name: Multiple choices follows the released automatic redirect policy
+    params: {url: '{{ get_url_setup_data.http }}/redirect-status/300'}
+    request_methods: [GET, GET]
+    changed: true
+  - name: Multiple choices remains a response with redirects disabled
+    params:
+      url: '{{ get_url_setup_data.http }}/redirect-status/300'
+      follow_redirects: none
+    request_methods: [GET]
+    changed: true
+  - name: Permanent redirect is unsupported by released automatic redirects
+    params: {url: '{{ get_url_setup_data.http }}/redirect-status/308'}
+    request_methods: [GET]
+    failed: true
+  - name: Permanent redirect remains a response with redirects disabled
+    params:
+      url: '{{ get_url_setup_data.http }}/redirect-status/308'
+      follow_redirects: none
+    request_methods: [GET]
+    changed: true
+  - name: Other unsupported redirect status returns a complete failure
+    params: {url: '{{ get_url_setup_data.http }}/redirect-status/305'}
+    request_methods: [GET]
+    failed: true
+  - name: Automatic redirect without Location returns a complete failure
+    params: {url: '{{ get_url_setup_data.http }}/redirect-missing-location'}
+    request_methods: [GET]
+    failed: true
+  - name: See Other preserves bodyless HEAD at every hop
+    params:
+      url: '{{ get_url_setup_data.http }}/redirect-status/303'
+      method: HEAD
+    request_methods: [HEAD, HEAD]
+    changed: true
+  - name: See Other preserves bodyless POST when all redirects are enabled
+    params:
+      url: '{{ get_url_setup_data.http }}/redirect-status/303'
+      method: POST
+      follow_redirects: all
+    request_methods: [POST, POST]
+    changed: true
+  - name: One header timeout budget covers both delayed redirect hops
+    params:
+      url: '{{ get_url_setup_data.http }}/redirect-delay'
+      url_timeout: 1
+    request_methods: [GET, GET]
+    failed: true
+    timeout_error_form: true
+  - name: Sufficient header timeout permits both delayed redirect hops
+    params:
+      url: '{{ get_url_setup_data.http }}/redirect-delay'
+      url_timeout: 3
+    request_methods: [GET, GET]
+    changed: true
+  - name: Explicit zero content length selects POST See Other upload rewrite
+    params:
+      url: '{{ get_url_setup_data.http }}/redirect-status/303'
+      method: POST
+      follow_redirects: all
+      headers: {Content-Length: 0}
+    request_methods: [POST, GET]
+    absent_headers: [content-length]
+    changed: true
+  - name: Explicit zero content length selects POST Found upload rewrite
+    params:
+      url: '{{ get_url_setup_data.http }}/redirect-status/302'
+      method: POST
+      follow_redirects: all
+      headers: {Content-Length: 0}
+    request_methods: [POST, GET]
+    absent_headers: [content-length]
+    changed: true
+  - name: Explicit zero content length selects POST Moved upload rewrite
+    params:
+      url: '{{ get_url_setup_data.http }}/redirect-status/301'
+      method: POST
+      follow_redirects: all
+      headers: {Content-Length: 0}
+    request_methods: [POST, GET]
+    absent_headers: [content-length]
+    changed: true
+  - name: Explicit zero content length selects Multiple Choices upload rewrite
+    params:
+      url: '{{ get_url_setup_data.http }}/redirect-status/300'
+      method: POST
+      follow_redirects: all
+      headers: {Content-Length: 0}
+    request_methods: [POST, GET]
+    absent_headers: [content-length]
+    changed: true
+  - name: Temporary Redirect retains POST upload mode and length
+    params:
+      url: '{{ get_url_setup_data.http }}/redirect-status/307'
+      method: POST
+      follow_redirects: all
+      headers: {Content-Length: 0}
+    request_methods: [POST, POST]
+    expected_headers: {content-length: '0'}
+    changed: true
+  - name: Explicit zero length cannot enable HEAD upload mode
+    params:
+      url: '{{ get_url_setup_data.http }}/redirect-status/303'
+      method: HEAD
+      headers: {Content-Length: 0}
+    request_methods: [HEAD, HEAD]
+    absent_headers: [content-length]
+    changed: true
+  - name: Explicit zero length cannot enable GET upload mode
+    params:
+      url: '{{ get_url_setup_data.http }}/redirect-status/303'
+      method: GET
+      headers: {Content-Length: 0}
+    request_methods: [GET, GET]
+    absent_headers: [content-length]
+    changed: true
+  - name: Found retains PUT upload mode and length
+    params:
+      url: '{{ get_url_setup_data.http }}/redirect-status/302'
+      method: PUT
+      follow_redirects: all
+      headers: {Content-Length: 0}
+    request_methods: [PUT, PUT]
+    expected_headers: {content-length: '0'}
+    changed: true
+  - name: See Other discards PUT upload mode and length
+    params:
+      url: '{{ get_url_setup_data.http }}/redirect-status/303'
+      method: PUT
+      follow_redirects: all
+      headers: {Content-Length: 0}
+    request_methods: [PUT, GET]
+    absent_headers: [content-length]
+    changed: true
+  - name: Upload rewrite binds header names case insensitively
+    params:
+      url: '{{ get_url_setup_data.http }}/redirect-status/303'
+      method: POST
+      follow_redirects: all
+      headers:
+        cOnTeNt-LeNgTh: 0
+        Content-Type: application/octet-stream
+        X-Fixture: upload-rewrite
+    request_methods: [POST, GET]
+    absent_headers: [content-length]
+    expected_headers:
+      content-type: application/octet-stream
+      x-fixture: upload-rewrite
+    changed: true
+get_url_tls_cases:
+  - name: HTTPS downloads using explicitly disabled certificate validation
+    params:
+      url: '{{ get_url_setup_data.https }}/payload.bin'
+      validate_certs: false
+    changed: true
+  - name: HTTPS repeated identical content is unchanged
+    fixture_payload: true
+    params:
+      url: '{{ get_url_setup_data.https }}/payload.bin'
+      validate_certs: false
+  - name: HTTPS check mode downloads without destination writes
+    params:
+      url: '{{ get_url_setup_data.https }}/payload.bin'
+      validate_certs: false
+    changed: true
+    check: true
+  - name: Default validation rejects the owned self-signed certificate
+    params: {url: '{{ get_url_setup_data.https }}/payload.bin'}
+    failed: true

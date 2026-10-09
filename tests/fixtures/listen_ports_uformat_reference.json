@@ -1,0 +1,2759 @@
+{
+  "provenance": {
+    "source": "Unmodified Windows PowerShell Get-Date -UFormat",
+    "powershell": "5.1.26100.7462",
+    "upstream": "ansible.windows 3.8.0",
+    "outside_input_domain": "Eight seven-digit fractional-second probes cannot be supplied by Win32_Process DMTF microsecond dates. They are retained separately, not counted as formatter matches.",
+    "calendar_fields": "Finite calendar/date fields extracted from the same independent reference strings; tests isolate formatting from the native calendar converter.",
+    "culture_metadata": "Native NLS metadata is supplied by the existing file_datetime.json reference fixture."
+  },
+  "cultures": {
+    "ar-SA": {
+      "abbreviated_days": "الأحد الإثنين الثلاثاء الأربعاء الخميس الجمعة السبت",
+      "abbreviated_months": "محرم صفر ربيع الأول ربيع الثاني جمادى الأولى جمادى الثانية رجب شعبان رمضان شوال ذو القعدة ذو الحجة ",
+      "am": "ص",
+      "calendar": "System.Globalization.UmAlQuraCalendar",
+      "date_separator": "/",
+      "days": "الأحد الإثنين الثلاثاء الأربعاء الخميس الجمعة السبت",
+      "decimal_separator": ".",
+      "months": "محرم صفر ربيع الأول ربيع الثاني جمادى الأولى جمادى الثانية رجب شعبان رمضان شوال ذو القعدة ذو الحجة ",
+      "name": "ar-SA",
+      "negative_sign": "-",
+      "pm": "م",
+      "positive_sign": "+",
+      "time_separator": ":"
+    },
+    "en-US": {
+      "abbreviated_days": "Sun Mon Tue Wed Thu Fri Sat",
+      "abbreviated_months": "Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec ",
+      "am": "AM",
+      "calendar": "System.Globalization.GregorianCalendar",
+      "date_separator": "/",
+      "days": "Sunday Monday Tuesday Wednesday Thursday Friday Saturday",
+      "decimal_separator": ".",
+      "months": "January February March April May June July August September October November December ",
+      "name": "en-US",
+      "negative_sign": "-",
+      "pm": "PM",
+      "positive_sign": "+",
+      "time_separator": ":"
+    },
+    "fr-FR": {
+      "abbreviated_days": "dim. lun. mar. mer. jeu. ven. sam.",
+      "abbreviated_months": "janv. févr. mars avr. mai juin juil. août sept. oct. nov. déc. ",
+      "am": "",
+      "calendar": "System.Globalization.GregorianCalendar",
+      "date_separator": "/",
+      "days": "dimanche lundi mardi mercredi jeudi vendredi samedi",
+      "decimal_separator": ",",
+      "months": "janvier février mars avril mai juin juillet août septembre octobre novembre décembre ",
+      "name": "fr-FR",
+      "negative_sign": "-",
+      "pm": "",
+      "positive_sign": "+",
+      "time_separator": ":"
+    },
+    "th-TH": {
+      "abbreviated_days": "อา. จ. อ. พ. พฤ. ศ. ส.",
+      "abbreviated_months": "ม.ค. ก.พ. มี.ค. เม.ย. พ.ค. มิ.ย. ก.ค. ส.ค. ก.ย. ต.ค. พ.ย. ธ.ค. ",
+      "am": "AM",
+      "calendar": "System.Globalization.ThaiBuddhistCalendar",
+      "date_separator": "/",
+      "days": "อาทิตย์ จันทร์ อังคาร พุธ พฤหัสบดี ศุกร์ เสาร์",
+      "decimal_separator": ".",
+      "months": "มกราคม กุมภาพันธ์ มีนาคม เมษายน พฤษภาคม มิถุนายน กรกฎาคม สิงหาคม กันยายน ตุลาคม พฤศจิกายน ธันวาคม ",
+      "name": "th-TH",
+      "negative_sign": "-",
+      "pm": "PM",
+      "positive_sign": "+",
+      "time_separator": ":"
+    }
+  },
+  "calendar_fields": {
+    "en-US:2026-09-03": [
+      2026,
+      9,
+      3,
+      1
+    ],
+    "en-US:1970-01-01": [
+      1970,
+      1,
+      1,
+      1
+    ],
+    "en-US:1969-12-31": [
+      1969,
+      12,
+      31,
+      1
+    ],
+    "en-US:2016-01-01": [
+      2016,
+      1,
+      1,
+      1
+    ],
+    "en-US:2017-01-01": [
+      2017,
+      1,
+      1,
+      1
+    ],
+    "en-US:0001-01-01": [
+      1,
+      1,
+      1,
+      1
+    ],
+    "en-US:9999-12-31": [
+      9999,
+      12,
+      31,
+      1
+    ],
+    "fr-FR:2026-09-03": [
+      2026,
+      9,
+      3,
+      1
+    ],
+    "fr-FR:1970-01-01": [
+      1970,
+      1,
+      1,
+      1
+    ],
+    "fr-FR:1969-12-31": [
+      1969,
+      12,
+      31,
+      1
+    ],
+    "fr-FR:2016-01-01": [
+      2016,
+      1,
+      1,
+      1
+    ],
+    "fr-FR:2017-01-01": [
+      2017,
+      1,
+      1,
+      1
+    ],
+    "fr-FR:0001-01-01": [
+      1,
+      1,
+      1,
+      1
+    ],
+    "fr-FR:9999-12-31": [
+      9999,
+      12,
+      31,
+      1
+    ],
+    "th-TH:2026-09-03": [
+      2569,
+      9,
+      3,
+      1
+    ],
+    "th-TH:1970-01-01": [
+      2513,
+      1,
+      1,
+      1
+    ],
+    "th-TH:1969-12-31": [
+      2512,
+      12,
+      31,
+      1
+    ],
+    "th-TH:2016-01-01": [
+      2559,
+      1,
+      1,
+      1
+    ],
+    "th-TH:2017-01-01": [
+      2560,
+      1,
+      1,
+      1
+    ],
+    "th-TH:0001-01-01": [
+      544,
+      1,
+      1,
+      1
+    ],
+    "th-TH:9999-12-31": [
+      10542,
+      12,
+      31,
+      1
+    ],
+    "ar-SA:2026-09-03": [
+      1448,
+      3,
+      21,
+      1
+    ],
+    "ar-SA:1970-01-01": [
+      1389,
+      10,
+      23,
+      1
+    ],
+    "ar-SA:1969-12-31": [
+      1389,
+      10,
+      22,
+      1
+    ],
+    "ar-SA:2016-01-01": [
+      1437,
+      3,
+      21,
+      1
+    ],
+    "ar-SA:2017-01-01": [
+      1438,
+      4,
+      3,
+      1
+    ]
+  },
+  "offsets": {
+    "2026-09-03": -420,
+    "1970-01-01": -480,
+    "1969-12-31": -480,
+    "2016-01-01": -480,
+    "2017-01-01": -480,
+    "0001-01-01": -420,
+    "9999-12-31": -480
+  },
+  "cases": [
+    {
+      "culture": "en-US",
+      "date": "2026-09-03T04:05:06.1234567",
+      "format": "%c",
+      "value": "Thu Sep  3 04:05:06 2026"
+    },
+    {
+      "culture": "en-US",
+      "date": "2026-09-03T04:05:06.1234567",
+      "format": "%F|%z|%q|%P|%v|%%|%n|%t",
+      "value": "F|z|q|P|v|%|\n|\t"
+    },
+    {
+      "culture": "en-US",
+      "date": "2026-09-03T04:05:06.1234567",
+      "error": "Index was outside the bounds of the array.",
+      "error_type": "System.IndexOutOfRangeException",
+      "format": ""
+    },
+    {
+      "culture": "en-US",
+      "date": "2026-09-03T04:05:06.1234567",
+      "format": "+",
+      "value": ""
+    },
+    {
+      "culture": "en-US",
+      "date": "2026-09-03T04:05:06.1234567",
+      "format": "+%Y",
+      "value": "2026"
+    },
+    {
+      "culture": "en-US",
+      "date": "2026-09-03T04:05:06.1234567",
+      "error": "Index was outside the bounds of the array.",
+      "error_type": "System.IndexOutOfRangeException",
+      "format": "x%"
+    },
+    {
+      "culture": "en-US",
+      "date": "2026-09-03T04:05:06.1234567",
+      "error": "Index was outside the bounds of the array.",
+      "error_type": "System.IndexOutOfRangeException",
+      "format": "%"
+    },
+    {
+      "culture": "en-US",
+      "date": "2026-09-03T04:05:06.1234567",
+      "format": "%%Y",
+      "value": "%Y"
+    },
+    {
+      "culture": "en-US",
+      "date": "2026-09-03T04:05:06.1234567",
+      "error": "Input string was not in a correct format.",
+      "error_type": "System.FormatException",
+      "format": "{x}"
+    },
+    {
+      "culture": "en-US",
+      "date": "2026-09-03T04:05:06.1234567",
+      "format": "{{x}}",
+      "value": "{x}"
+    },
+    {
+      "culture": "en-US",
+      "date": "2026-09-03T04:05:06.1234567",
+      "format": "{0:yyyy}",
+      "value": "2026"
+    },
+    {
+      "culture": "en-US",
+      "date": "2026-09-03T04:05:06.1234567",
+      "error": "Input string was not in a correct format.",
+      "error_type": "System.FormatException",
+      "format": "%Y {"
+    },
+    {
+      "culture": "en-US",
+      "date": "1970-01-01T00:00:00.0000000",
+      "format": "%c",
+      "value": "Thu Jan  1 00:00:00 1970"
+    },
+    {
+      "culture": "en-US",
+      "date": "1970-01-01T00:00:00.0000000",
+      "format": "%A|%a|%B|%b|%h|%C|%D|%d|%e|%H|%I|%j|%k|%l|%M|%m|%p|%R|%r|%S|%s|%T|%X|%u|%U|%V|%G|%g|%W|%w|%x|%y|%Y|%Z",
+      "value": "Thursday|Thu|January|Jan|Jan|19|01/01/70|01| 1|00|12|1|00|12|00|01|AM|00:00|12:00:00 AM|00|0|00:00:00|00:00:00|4|0|1|1970|70|0|4|01/01/70|70|1970|-08"
+    },
+    {
+      "culture": "en-US",
+      "date": "1970-01-01T00:00:00.0000000",
+      "format": "%F|%z|%q|%P|%v|%%|%n|%t",
+      "value": "F|z|q|P|v|%|\n|\t"
+    },
+    {
+      "culture": "en-US",
+      "date": "1970-01-01T00:00:00.0000000",
+      "error": "Index was outside the bounds of the array.",
+      "error_type": "System.IndexOutOfRangeException",
+      "format": ""
+    },
+    {
+      "culture": "en-US",
+      "date": "1970-01-01T00:00:00.0000000",
+      "format": "+",
+      "value": ""
+    },
+    {
+      "culture": "en-US",
+      "date": "1970-01-01T00:00:00.0000000",
+      "format": "+%Y",
+      "value": "1970"
+    },
+    {
+      "culture": "en-US",
+      "date": "1970-01-01T00:00:00.0000000",
+      "error": "Index was outside the bounds of the array.",
+      "error_type": "System.IndexOutOfRangeException",
+      "format": "x%"
+    },
+    {
+      "culture": "en-US",
+      "date": "1970-01-01T00:00:00.0000000",
+      "error": "Index was outside the bounds of the array.",
+      "error_type": "System.IndexOutOfRangeException",
+      "format": "%"
+    },
+    {
+      "culture": "en-US",
+      "date": "1970-01-01T00:00:00.0000000",
+      "format": "%%Y",
+      "value": "%Y"
+    },
+    {
+      "culture": "en-US",
+      "date": "1970-01-01T00:00:00.0000000",
+      "error": "Input string was not in a correct format.",
+      "error_type": "System.FormatException",
+      "format": "{x}"
+    },
+    {
+      "culture": "en-US",
+      "date": "1970-01-01T00:00:00.0000000",
+      "format": "{{x}}",
+      "value": "{x}"
+    },
+    {
+      "culture": "en-US",
+      "date": "1970-01-01T00:00:00.0000000",
+      "format": "{0:yyyy}",
+      "value": "1970"
+    },
+    {
+      "culture": "en-US",
+      "date": "1970-01-01T00:00:00.0000000",
+      "error": "Input string was not in a correct format.",
+      "error_type": "System.FormatException",
+      "format": "%Y {"
+    },
+    {
+      "culture": "en-US",
+      "date": "1969-12-31T23:59:59.9999999",
+      "format": "%c",
+      "value": "Wed Dec 31 23:59:59 1969"
+    },
+    {
+      "culture": "en-US",
+      "date": "1969-12-31T23:59:59.9999999",
+      "format": "%F|%z|%q|%P|%v|%%|%n|%t",
+      "value": "F|z|q|P|v|%|\n|\t"
+    },
+    {
+      "culture": "en-US",
+      "date": "1969-12-31T23:59:59.9999999",
+      "error": "Index was outside the bounds of the array.",
+      "error_type": "System.IndexOutOfRangeException",
+      "format": ""
+    },
+    {
+      "culture": "en-US",
+      "date": "1969-12-31T23:59:59.9999999",
+      "format": "+",
+      "value": ""
+    },
+    {
+      "culture": "en-US",
+      "date": "1969-12-31T23:59:59.9999999",
+      "format": "+%Y",
+      "value": "1969"
+    },
+    {
+      "culture": "en-US",
+      "date": "1969-12-31T23:59:59.9999999",
+      "error": "Index was outside the bounds of the array.",
+      "error_type": "System.IndexOutOfRangeException",
+      "format": "x%"
+    },
+    {
+      "culture": "en-US",
+      "date": "1969-12-31T23:59:59.9999999",
+      "error": "Index was outside the bounds of the array.",
+      "error_type": "System.IndexOutOfRangeException",
+      "format": "%"
+    },
+    {
+      "culture": "en-US",
+      "date": "1969-12-31T23:59:59.9999999",
+      "format": "%%Y",
+      "value": "%Y"
+    },
+    {
+      "culture": "en-US",
+      "date": "1969-12-31T23:59:59.9999999",
+      "error": "Input string was not in a correct format.",
+      "error_type": "System.FormatException",
+      "format": "{x}"
+    },
+    {
+      "culture": "en-US",
+      "date": "1969-12-31T23:59:59.9999999",
+      "format": "{{x}}",
+      "value": "{x}"
+    },
+    {
+      "culture": "en-US",
+      "date": "1969-12-31T23:59:59.9999999",
+      "format": "{0:yyyy}",
+      "value": "1969"
+    },
+    {
+      "culture": "en-US",
+      "date": "1969-12-31T23:59:59.9999999",
+      "error": "Input string was not in a correct format.",
+      "error_type": "System.FormatException",
+      "format": "%Y {"
+    },
+    {
+      "culture": "en-US",
+      "date": "2016-01-01T00:00:00.0000000",
+      "format": "%c",
+      "value": "Fri Jan  1 00:00:00 2016"
+    },
+    {
+      "culture": "en-US",
+      "date": "2016-01-01T00:00:00.0000000",
+      "format": "%A|%a|%B|%b|%h|%C|%D|%d|%e|%H|%I|%j|%k|%l|%M|%m|%p|%R|%r|%S|%s|%T|%X|%u|%U|%V|%G|%g|%W|%w|%x|%y|%Y|%Z",
+      "value": "Friday|Fri|January|Jan|Jan|20|01/01/16|01| 1|00|12|1|00|12|00|01|AM|00:00|12:00:00 AM|00|1451606400|00:00:00|00:00:00|5|0|1|2016|16|0|5|01/01/16|16|2016|-08"
+    },
+    {
+      "culture": "en-US",
+      "date": "2016-01-01T00:00:00.0000000",
+      "format": "%F|%z|%q|%P|%v|%%|%n|%t",
+      "value": "F|z|q|P|v|%|\n|\t"
+    },
+    {
+      "culture": "en-US",
+      "date": "2016-01-01T00:00:00.0000000",
+      "error": "Index was outside the bounds of the array.",
+      "error_type": "System.IndexOutOfRangeException",
+      "format": ""
+    },
+    {
+      "culture": "en-US",
+      "date": "2016-01-01T00:00:00.0000000",
+      "format": "+",
+      "value": ""
+    },
+    {
+      "culture": "en-US",
+      "date": "2016-01-01T00:00:00.0000000",
+      "format": "+%Y",
+      "value": "2016"
+    },
+    {
+      "culture": "en-US",
+      "date": "2016-01-01T00:00:00.0000000",
+      "error": "Index was outside the bounds of the array.",
+      "error_type": "System.IndexOutOfRangeException",
+      "format": "x%"
+    },
+    {
+      "culture": "en-US",
+      "date": "2016-01-01T00:00:00.0000000",
+      "error": "Index was outside the bounds of the array.",
+      "error_type": "System.IndexOutOfRangeException",
+      "format": "%"
+    },
+    {
+      "culture": "en-US",
+      "date": "2016-01-01T00:00:00.0000000",
+      "format": "%%Y",
+      "value": "%Y"
+    },
+    {
+      "culture": "en-US",
+      "date": "2016-01-01T00:00:00.0000000",
+      "error": "Input string was not in a correct format.",
+      "error_type": "System.FormatException",
+      "format": "{x}"
+    },
+    {
+      "culture": "en-US",
+      "date": "2016-01-01T00:00:00.0000000",
+      "format": "{{x}}",
+      "value": "{x}"
+    },
+    {
+      "culture": "en-US",
+      "date": "2016-01-01T00:00:00.0000000",
+      "format": "{0:yyyy}",
+      "value": "2016"
+    },
+    {
+      "culture": "en-US",
+      "date": "2016-01-01T00:00:00.0000000",
+      "error": "Input string was not in a correct format.",
+      "error_type": "System.FormatException",
+      "format": "%Y {"
+    },
+    {
+      "culture": "en-US",
+      "date": "2017-01-01T00:00:00.0000000",
+      "format": "%c",
+      "value": "Sun Jan  1 00:00:00 2017"
+    },
+    {
+      "culture": "en-US",
+      "date": "2017-01-01T00:00:00.0000000",
+      "format": "%A|%a|%B|%b|%h|%C|%D|%d|%e|%H|%I|%j|%k|%l|%M|%m|%p|%R|%r|%S|%s|%T|%X|%u|%U|%V|%G|%g|%W|%w|%x|%y|%Y|%Z",
+      "value": "Sunday|Sun|January|Jan|Jan|20|01/01/17|01| 1|00|12|1|00|12|00|01|AM|00:00|12:00:00 AM|00|1483228800|00:00:00|00:00:00|0|0|1|2017|17|0|0|01/01/17|17|2017|-08"
+    },
+    {
+      "culture": "en-US",
+      "date": "2017-01-01T00:00:00.0000000",
+      "format": "%F|%z|%q|%P|%v|%%|%n|%t",
+      "value": "F|z|q|P|v|%|\n|\t"
+    },
+    {
+      "culture": "en-US",
+      "date": "2017-01-01T00:00:00.0000000",
+      "error": "Index was outside the bounds of the array.",
+      "error_type": "System.IndexOutOfRangeException",
+      "format": ""
+    },
+    {
+      "culture": "en-US",
+      "date": "2017-01-01T00:00:00.0000000",
+      "format": "+",
+      "value": ""
+    },
+    {
+      "culture": "en-US",
+      "date": "2017-01-01T00:00:00.0000000",
+      "format": "+%Y",
+      "value": "2017"
+    },
+    {
+      "culture": "en-US",
+      "date": "2017-01-01T00:00:00.0000000",
+      "error": "Index was outside the bounds of the array.",
+      "error_type": "System.IndexOutOfRangeException",
+      "format": "x%"
+    },
+    {
+      "culture": "en-US",
+      "date": "2017-01-01T00:00:00.0000000",
+      "error": "Index was outside the bounds of the array.",
+      "error_type": "System.IndexOutOfRangeException",
+      "format": "%"
+    },
+    {
+      "culture": "en-US",
+      "date": "2017-01-01T00:00:00.0000000",
+      "format": "%%Y",
+      "value": "%Y"
+    },
+    {
+      "culture": "en-US",
+      "date": "2017-01-01T00:00:00.0000000",
+      "error": "Input string was not in a correct format.",
+      "error_type": "System.FormatException",
+      "format": "{x}"
+    },
+    {
+      "culture": "en-US",
+      "date": "2017-01-01T00:00:00.0000000",
+      "format": "{{x}}",
+      "value": "{x}"
+    },
+    {
+      "culture": "en-US",
+      "date": "2017-01-01T00:00:00.0000000",
+      "format": "{0:yyyy}",
+      "value": "2017"
+    },
+    {
+      "culture": "en-US",
+      "date": "2017-01-01T00:00:00.0000000",
+      "error": "Input string was not in a correct format.",
+      "error_type": "System.FormatException",
+      "format": "%Y {"
+    },
+    {
+      "culture": "en-US",
+      "date": "0001-01-01T00:00:00.0000000",
+      "format": "%c",
+      "value": "Mon Jan  1 00:00:00 0001"
+    },
+    {
+      "culture": "en-US",
+      "date": "0001-01-01T00:00:00.0000000",
+      "format": "%A|%a|%B|%b|%h|%C|%D|%d|%e|%H|%I|%j|%k|%l|%M|%m|%p|%R|%r|%S|%s|%T|%X|%u|%U|%V|%G|%g|%W|%w|%x|%y|%Y|%Z",
+      "value": "Monday|Mon|January|Jan|Jan|0|01/01/01|01| 1|00|12|1|00|12|00|01|AM|00:00|12:00:00 AM|00|-62135596800|00:00:00|00:00:00|1|0|1|0001|01|0|1|01/01/01|01|0001|-07"
+    },
+    {
+      "culture": "en-US",
+      "date": "0001-01-01T00:00:00.0000000",
+      "format": "%F|%z|%q|%P|%v|%%|%n|%t",
+      "value": "F|z|q|P|v|%|\n|\t"
+    },
+    {
+      "culture": "en-US",
+      "date": "0001-01-01T00:00:00.0000000",
+      "error": "Index was outside the bounds of the array.",
+      "error_type": "System.IndexOutOfRangeException",
+      "format": ""
+    },
+    {
+      "culture": "en-US",
+      "date": "0001-01-01T00:00:00.0000000",
+      "format": "+",
+      "value": ""
+    },
+    {
+      "culture": "en-US",
+      "date": "0001-01-01T00:00:00.0000000",
+      "format": "+%Y",
+      "value": "0001"
+    },
+    {
+      "culture": "en-US",
+      "date": "0001-01-01T00:00:00.0000000",
+      "error": "Index was outside the bounds of the array.",
+      "error_type": "System.IndexOutOfRangeException",
+      "format": "x%"
+    },
+    {
+      "culture": "en-US",
+      "date": "0001-01-01T00:00:00.0000000",
+      "error": "Index was outside the bounds of the array.",
+      "error_type": "System.IndexOutOfRangeException",
+      "format": "%"
+    },
+    {
+      "culture": "en-US",
+      "date": "0001-01-01T00:00:00.0000000",
+      "format": "%%Y",
+      "value": "%Y"
+    },
+    {
+      "culture": "en-US",
+      "date": "0001-01-01T00:00:00.0000000",
+      "error": "Input string was not in a correct format.",
+      "error_type": "System.FormatException",
+      "format": "{x}"
+    },
+    {
+      "culture": "en-US",
+      "date": "0001-01-01T00:00:00.0000000",
+      "format": "{{x}}",
+      "value": "{x}"
+    },
+    {
+      "culture": "en-US",
+      "date": "0001-01-01T00:00:00.0000000",
+      "format": "{0:yyyy}",
+      "value": "0001"
+    },
+    {
+      "culture": "en-US",
+      "date": "0001-01-01T00:00:00.0000000",
+      "error": "Input string was not in a correct format.",
+      "error_type": "System.FormatException",
+      "format": "%Y {"
+    },
+    {
+      "culture": "en-US",
+      "date": "9999-12-31T00:00:00.0000000",
+      "format": "%c",
+      "value": "Fri Dec 31 00:00:00 9999"
+    },
+    {
+      "culture": "en-US",
+      "date": "9999-12-31T00:00:00.0000000",
+      "format": "%A|%a|%B|%b|%h|%C|%D|%d|%e|%H|%I|%j|%k|%l|%M|%m|%p|%R|%r|%S|%s|%T|%X|%u|%U|%V|%G|%g|%W|%w|%x|%y|%Y|%Z",
+      "value": "Friday|Fri|December|Dec|Dec|99|12/31/99|31|31|00|12|365|00|12|00|12|AM|00:00|12:00:00 AM|00|253402214400|00:00:00|00:00:00|5|52|53|9999|99|52|5|12/31/99|99|9999|-08"
+    },
+    {
+      "culture": "en-US",
+      "date": "9999-12-31T00:00:00.0000000",
+      "format": "%F|%z|%q|%P|%v|%%|%n|%t",
+      "value": "F|z|q|P|v|%|\n|\t"
+    },
+    {
+      "culture": "en-US",
+      "date": "9999-12-31T00:00:00.0000000",
+      "error": "Index was outside the bounds of the array.",
+      "error_type": "System.IndexOutOfRangeException",
+      "format": ""
+    },
+    {
+      "culture": "en-US",
+      "date": "9999-12-31T00:00:00.0000000",
+      "format": "+",
+      "value": ""
+    },
+    {
+      "culture": "en-US",
+      "date": "9999-12-31T00:00:00.0000000",
+      "format": "+%Y",
+      "value": "9999"
+    },
+    {
+      "culture": "en-US",
+      "date": "9999-12-31T00:00:00.0000000",
+      "error": "Index was outside the bounds of the array.",
+      "error_type": "System.IndexOutOfRangeException",
+      "format": "x%"
+    },
+    {
+      "culture": "en-US",
+      "date": "9999-12-31T00:00:00.0000000",
+      "error": "Index was outside the bounds of the array.",
+      "error_type": "System.IndexOutOfRangeException",
+      "format": "%"
+    },
+    {
+      "culture": "en-US",
+      "date": "9999-12-31T00:00:00.0000000",
+      "format": "%%Y",
+      "value": "%Y"
+    },
+    {
+      "culture": "en-US",
+      "date": "9999-12-31T00:00:00.0000000",
+      "error": "Input string was not in a correct format.",
+      "error_type": "System.FormatException",
+      "format": "{x}"
+    },
+    {
+      "culture": "en-US",
+      "date": "9999-12-31T00:00:00.0000000",
+      "format": "{{x}}",
+      "value": "{x}"
+    },
+    {
+      "culture": "en-US",
+      "date": "9999-12-31T00:00:00.0000000",
+      "format": "{0:yyyy}",
+      "value": "9999"
+    },
+    {
+      "culture": "en-US",
+      "date": "9999-12-31T00:00:00.0000000",
+      "error": "Input string was not in a correct format.",
+      "error_type": "System.FormatException",
+      "format": "%Y {"
+    },
+    {
+      "culture": "fr-FR",
+      "date": "2026-09-03T04:05:06.1234567",
+      "format": "%c",
+      "value": "jeu. sept.  3 04:05:06 2026"
+    },
+    {
+      "culture": "fr-FR",
+      "date": "2026-09-03T04:05:06.1234567",
+      "format": "%F|%z|%q|%P|%v|%%|%n|%t",
+      "value": "F|z|q|P|v|%|\n|\t"
+    },
+    {
+      "culture": "fr-FR",
+      "date": "2026-09-03T04:05:06.1234567",
+      "error": "Index was outside the bounds of the array.",
+      "error_type": "System.IndexOutOfRangeException",
+      "format": ""
+    },
+    {
+      "culture": "fr-FR",
+      "date": "2026-09-03T04:05:06.1234567",
+      "format": "+",
+      "value": ""
+    },
+    {
+      "culture": "fr-FR",
+      "date": "2026-09-03T04:05:06.1234567",
+      "format": "+%Y",
+      "value": "2026"
+    },
+    {
+      "culture": "fr-FR",
+      "date": "2026-09-03T04:05:06.1234567",
+      "error": "Index was outside the bounds of the array.",
+      "error_type": "System.IndexOutOfRangeException",
+      "format": "x%"
+    },
+    {
+      "culture": "fr-FR",
+      "date": "2026-09-03T04:05:06.1234567",
+      "error": "Index was outside the bounds of the array.",
+      "error_type": "System.IndexOutOfRangeException",
+      "format": "%"
+    },
+    {
+      "culture": "fr-FR",
+      "date": "2026-09-03T04:05:06.1234567",
+      "format": "%%Y",
+      "value": "%Y"
+    },
+    {
+      "culture": "fr-FR",
+      "date": "2026-09-03T04:05:06.1234567",
+      "error": "Input string was not in a correct format.",
+      "error_type": "System.FormatException",
+      "format": "{x}"
+    },
+    {
+      "culture": "fr-FR",
+      "date": "2026-09-03T04:05:06.1234567",
+      "format": "{{x}}",
+      "value": "{x}"
+    },
+    {
+      "culture": "fr-FR",
+      "date": "2026-09-03T04:05:06.1234567",
+      "format": "{0:yyyy}",
+      "value": "2026"
+    },
+    {
+      "culture": "fr-FR",
+      "date": "2026-09-03T04:05:06.1234567",
+      "error": "Input string was not in a correct format.",
+      "error_type": "System.FormatException",
+      "format": "%Y {"
+    },
+    {
+      "culture": "fr-FR",
+      "date": "1970-01-01T00:00:00.0000000",
+      "format": "%c",
+      "value": "jeu. janv.  1 00:00:00 1970"
+    },
+    {
+      "culture": "fr-FR",
+      "date": "1970-01-01T00:00:00.0000000",
+      "format": "%A|%a|%B|%b|%h|%C|%D|%d|%e|%H|%I|%j|%k|%l|%M|%m|%p|%R|%r|%S|%s|%T|%X|%u|%U|%V|%G|%g|%W|%w|%x|%y|%Y|%Z",
+      "value": "jeudi|jeu.|janvier|janv.|janv.|19|01/01/70|01| 1|00|12|1|00|12|00|01||00:00|12:00:00 |00|0|00:00:00|00:00:00|4|0|1|1970|70|0|4|01/01/70|70|1970|-08"
+    },
+    {
+      "culture": "fr-FR",
+      "date": "1970-01-01T00:00:00.0000000",
+      "format": "%F|%z|%q|%P|%v|%%|%n|%t",
+      "value": "F|z|q|P|v|%|\n|\t"
+    },
+    {
+      "culture": "fr-FR",
+      "date": "1970-01-01T00:00:00.0000000",
+      "error": "Index was outside the bounds of the array.",
+      "error_type": "System.IndexOutOfRangeException",
+      "format": ""
+    },
+    {
+      "culture": "fr-FR",
+      "date": "1970-01-01T00:00:00.0000000",
+      "format": "+",
+      "value": ""
+    },
+    {
+      "culture": "fr-FR",
+      "date": "1970-01-01T00:00:00.0000000",
+      "format": "+%Y",
+      "value": "1970"
+    },
+    {
+      "culture": "fr-FR",
+      "date": "1970-01-01T00:00:00.0000000",
+      "error": "Index was outside the bounds of the array.",
+      "error_type": "System.IndexOutOfRangeException",
+      "format": "x%"
+    },
+    {
+      "culture": "fr-FR",
+      "date": "1970-01-01T00:00:00.0000000",
+      "error": "Index was outside the bounds of the array.",
+      "error_type": "System.IndexOutOfRangeException",
+      "format": "%"
+    },
+    {
+      "culture": "fr-FR",
+      "date": "1970-01-01T00:00:00.0000000",
+      "format": "%%Y",
+      "value": "%Y"
+    },
+    {
+      "culture": "fr-FR",
+      "date": "1970-01-01T00:00:00.0000000",
+      "error": "Input string was not in a correct format.",
+      "error_type": "System.FormatException",
+      "format": "{x}"
+    },
+    {
+      "culture": "fr-FR",
+      "date": "1970-01-01T00:00:00.0000000",
+      "format": "{{x}}",
+      "value": "{x}"
+    },
+    {
+      "culture": "fr-FR",
+      "date": "1970-01-01T00:00:00.0000000",
+      "format": "{0:yyyy}",
+      "value": "1970"
+    },
+    {
+      "culture": "fr-FR",
+      "date": "1970-01-01T00:00:00.0000000",
+      "error": "Input string was not in a correct format.",
+      "error_type": "System.FormatException",
+      "format": "%Y {"
+    },
+    {
+      "culture": "fr-FR",
+      "date": "1969-12-31T23:59:59.9999999",
+      "format": "%c",
+      "value": "mer. déc. 31 23:59:59 1969"
+    },
+    {
+      "culture": "fr-FR",
+      "date": "1969-12-31T23:59:59.9999999",
+      "format": "%F|%z|%q|%P|%v|%%|%n|%t",
+      "value": "F|z|q|P|v|%|\n|\t"
+    },
+    {
+      "culture": "fr-FR",
+      "date": "1969-12-31T23:59:59.9999999",
+      "error": "Index was outside the bounds of the array.",
+      "error_type": "System.IndexOutOfRangeException",
+      "format": ""
+    },
+    {
+      "culture": "fr-FR",
+      "date": "1969-12-31T23:59:59.9999999",
+      "format": "+",
+      "value": ""
+    },
+    {
+      "culture": "fr-FR",
+      "date": "1969-12-31T23:59:59.9999999",
+      "format": "+%Y",
+      "value": "1969"
+    },
+    {
+      "culture": "fr-FR",
+      "date": "1969-12-31T23:59:59.9999999",
+      "error": "Index was outside the bounds of the array.",
+      "error_type": "System.IndexOutOfRangeException",
+      "format": "x%"
+    },
+    {
+      "culture": "fr-FR",
+      "date": "1969-12-31T23:59:59.9999999",
+      "error": "Index was outside the bounds of the array.",
+      "error_type": "System.IndexOutOfRangeException",
+      "format": "%"
+    },
+    {
+      "culture": "fr-FR",
+      "date": "1969-12-31T23:59:59.9999999",
+      "format": "%%Y",
+      "value": "%Y"
+    },
+    {
+      "culture": "fr-FR",
+      "date": "1969-12-31T23:59:59.9999999",
+      "error": "Input string was not in a correct format.",
+      "error_type": "System.FormatException",
+      "format": "{x}"
+    },
+    {
+      "culture": "fr-FR",
+      "date": "1969-12-31T23:59:59.9999999",
+      "format": "{{x}}",
+      "value": "{x}"
+    },
+    {
+      "culture": "fr-FR",
+      "date": "1969-12-31T23:59:59.9999999",
+      "format": "{0:yyyy}",
+      "value": "1969"
+    },
+    {
+      "culture": "fr-FR",
+      "date": "1969-12-31T23:59:59.9999999",
+      "error": "Input string was not in a correct format.",
+      "error_type": "System.FormatException",
+      "format": "%Y {"
+    },
+    {
+      "culture": "fr-FR",
+      "date": "2016-01-01T00:00:00.0000000",
+      "format": "%c",
+      "value": "ven. janv.  1 00:00:00 2016"
+    },
+    {
+      "culture": "fr-FR",
+      "date": "2016-01-01T00:00:00.0000000",
+      "format": "%A|%a|%B|%b|%h|%C|%D|%d|%e|%H|%I|%j|%k|%l|%M|%m|%p|%R|%r|%S|%s|%T|%X|%u|%U|%V|%G|%g|%W|%w|%x|%y|%Y|%Z",
+      "value": "vendredi|ven.|janvier|janv.|janv.|20|01/01/16|01| 1|00|12|1|00|12|00|01||00:00|12:00:00 |00|1451606400|00:00:00|00:00:00|5|0|1|2016|16|0|5|01/01/16|16|2016|-08"
+    },
+    {
+      "culture": "fr-FR",
+      "date": "2016-01-01T00:00:00.0000000",
+      "format": "%F|%z|%q|%P|%v|%%|%n|%t",
+      "value": "F|z|q|P|v|%|\n|\t"
+    },
+    {
+      "culture": "fr-FR",
+      "date": "2016-01-01T00:00:00.0000000",
+      "error": "Index was outside the bounds of the array.",
+      "error_type": "System.IndexOutOfRangeException",
+      "format": ""
+    },
+    {
+      "culture": "fr-FR",
+      "date": "2016-01-01T00:00:00.0000000",
+      "format": "+",
+      "value": ""
+    },
+    {
+      "culture": "fr-FR",
+      "date": "2016-01-01T00:00:00.0000000",
+      "format": "+%Y",
+      "value": "2016"
+    },
+    {
+      "culture": "fr-FR",
+      "date": "2016-01-01T00:00:00.0000000",
+      "error": "Index was outside the bounds of the array.",
+      "error_type": "System.IndexOutOfRangeException",
+      "format": "x%"
+    },
+    {
+      "culture": "fr-FR",
+      "date": "2016-01-01T00:00:00.0000000",
+      "error": "Index was outside the bounds of the array.",
+      "error_type": "System.IndexOutOfRangeException",
+      "format": "%"
+    },
+    {
+      "culture": "fr-FR",
+      "date": "2016-01-01T00:00:00.0000000",
+      "format": "%%Y",
+      "value": "%Y"
+    },
+    {
+      "culture": "fr-FR",
+      "date": "2016-01-01T00:00:00.0000000",
+      "error": "Input string was not in a correct format.",
+      "error_type": "System.FormatException",
+      "format": "{x}"
+    },
+    {
+      "culture": "fr-FR",
+      "date": "2016-01-01T00:00:00.0000000",
+      "format": "{{x}}",
+      "value": "{x}"
+    },
+    {
+      "culture": "fr-FR",
+      "date": "2016-01-01T00:00:00.0000000",
+      "format": "{0:yyyy}",
+      "value": "2016"
+    },
+    {
+      "culture": "fr-FR",
+      "date": "2016-01-01T00:00:00.0000000",
+      "error": "Input string was not in a correct format.",
+      "error_type": "System.FormatException",
+      "format": "%Y {"
+    },
+    {
+      "culture": "fr-FR",
+      "date": "2017-01-01T00:00:00.0000000",
+      "format": "%c",
+      "value": "dim. janv.  1 00:00:00 2017"
+    },
+    {
+      "culture": "fr-FR",
+      "date": "2017-01-01T00:00:00.0000000",
+      "format": "%A|%a|%B|%b|%h|%C|%D|%d|%e|%H|%I|%j|%k|%l|%M|%m|%p|%R|%r|%S|%s|%T|%X|%u|%U|%V|%G|%g|%W|%w|%x|%y|%Y|%Z",
+      "value": "dimanche|dim.|janvier|janv.|janv.|20|01/01/17|01| 1|00|12|1|00|12|00|01||00:00|12:00:00 |00|1483228800|00:00:00|00:00:00|0|0|1|2017|17|0|0|01/01/17|17|2017|-08"
+    },
+    {
+      "culture": "fr-FR",
+      "date": "2017-01-01T00:00:00.0000000",
+      "format": "%F|%z|%q|%P|%v|%%|%n|%t",
+      "value": "F|z|q|P|v|%|\n|\t"
+    },
+    {
+      "culture": "fr-FR",
+      "date": "2017-01-01T00:00:00.0000000",
+      "error": "Index was outside the bounds of the array.",
+      "error_type": "System.IndexOutOfRangeException",
+      "format": ""
+    },
+    {
+      "culture": "fr-FR",
+      "date": "2017-01-01T00:00:00.0000000",
+      "format": "+",
+      "value": ""
+    },
+    {
+      "culture": "fr-FR",
+      "date": "2017-01-01T00:00:00.0000000",
+      "format": "+%Y",
+      "value": "2017"
+    },
+    {
+      "culture": "fr-FR",
+      "date": "2017-01-01T00:00:00.0000000",
+      "error": "Index was outside the bounds of the array.",
+      "error_type": "System.IndexOutOfRangeException",
+      "format": "x%"
+    },
+    {
+      "culture": "fr-FR",
+      "date": "2017-01-01T00:00:00.0000000",
+      "error": "Index was outside the bounds of the array.",
+      "error_type": "System.IndexOutOfRangeException",
+      "format": "%"
+    },
+    {
+      "culture": "fr-FR",
+      "date": "2017-01-01T00:00:00.0000000",
+      "format": "%%Y",
+      "value": "%Y"
+    },
+    {
+      "culture": "fr-FR",
+      "date": "2017-01-01T00:00:00.0000000",
+      "error": "Input string was not in a correct format.",
+      "error_type": "System.FormatException",
+      "format": "{x}"
+    },
+    {
+      "culture": "fr-FR",
+      "date": "2017-01-01T00:00:00.0000000",
+      "format": "{{x}}",
+      "value": "{x}"
+    },
+    {
+      "culture": "fr-FR",
+      "date": "2017-01-01T00:00:00.0000000",
+      "format": "{0:yyyy}",
+      "value": "2017"
+    },
+    {
+      "culture": "fr-FR",
+      "date": "2017-01-01T00:00:00.0000000",
+      "error": "Input string was not in a correct format.",
+      "error_type": "System.FormatException",
+      "format": "%Y {"
+    },
+    {
+      "culture": "fr-FR",
+      "date": "0001-01-01T00:00:00.0000000",
+      "format": "%c",
+      "value": "lun. janv.  1 00:00:00 0001"
+    },
+    {
+      "culture": "fr-FR",
+      "date": "0001-01-01T00:00:00.0000000",
+      "format": "%A|%a|%B|%b|%h|%C|%D|%d|%e|%H|%I|%j|%k|%l|%M|%m|%p|%R|%r|%S|%s|%T|%X|%u|%U|%V|%G|%g|%W|%w|%x|%y|%Y|%Z",
+      "value": "lundi|lun.|janvier|janv.|janv.|0|01/01/01|01| 1|00|12|1|00|12|00|01||00:00|12:00:00 |00|-62135596800|00:00:00|00:00:00|1|0|1|0001|01|0|1|01/01/01|01|0001|-07"
+    },
+    {
+      "culture": "fr-FR",
+      "date": "0001-01-01T00:00:00.0000000",
+      "format": "%F|%z|%q|%P|%v|%%|%n|%t",
+      "value": "F|z|q|P|v|%|\n|\t"
+    },
+    {
+      "culture": "fr-FR",
+      "date": "0001-01-01T00:00:00.0000000",
+      "error": "Index was outside the bounds of the array.",
+      "error_type": "System.IndexOutOfRangeException",
+      "format": ""
+    },
+    {
+      "culture": "fr-FR",
+      "date": "0001-01-01T00:00:00.0000000",
+      "format": "+",
+      "value": ""
+    },
+    {
+      "culture": "fr-FR",
+      "date": "0001-01-01T00:00:00.0000000",
+      "format": "+%Y",
+      "value": "0001"
+    },
+    {
+      "culture": "fr-FR",
+      "date": "0001-01-01T00:00:00.0000000",
+      "error": "Index was outside the bounds of the array.",
+      "error_type": "System.IndexOutOfRangeException",
+      "format": "x%"
+    },
+    {
+      "culture": "fr-FR",
+      "date": "0001-01-01T00:00:00.0000000",
+      "error": "Index was outside the bounds of the array.",
+      "error_type": "System.IndexOutOfRangeException",
+      "format": "%"
+    },
+    {
+      "culture": "fr-FR",
+      "date": "0001-01-01T00:00:00.0000000",
+      "format": "%%Y",
+      "value": "%Y"
+    },
+    {
+      "culture": "fr-FR",
+      "date": "0001-01-01T00:00:00.0000000",
+      "error": "Input string was not in a correct format.",
+      "error_type": "System.FormatException",
+      "format": "{x}"
+    },
+    {
+      "culture": "fr-FR",
+      "date": "0001-01-01T00:00:00.0000000",
+      "format": "{{x}}",
+      "value": "{x}"
+    },
+    {
+      "culture": "fr-FR",
+      "date": "0001-01-01T00:00:00.0000000",
+      "format": "{0:yyyy}",
+      "value": "0001"
+    },
+    {
+      "culture": "fr-FR",
+      "date": "0001-01-01T00:00:00.0000000",
+      "error": "Input string was not in a correct format.",
+      "error_type": "System.FormatException",
+      "format": "%Y {"
+    },
+    {
+      "culture": "fr-FR",
+      "date": "9999-12-31T00:00:00.0000000",
+      "format": "%c",
+      "value": "ven. déc. 31 00:00:00 9999"
+    },
+    {
+      "culture": "fr-FR",
+      "date": "9999-12-31T00:00:00.0000000",
+      "format": "%A|%a|%B|%b|%h|%C|%D|%d|%e|%H|%I|%j|%k|%l|%M|%m|%p|%R|%r|%S|%s|%T|%X|%u|%U|%V|%G|%g|%W|%w|%x|%y|%Y|%Z",
+      "value": "vendredi|ven.|décembre|déc.|déc.|99|12/31/99|31|31|00|12|365|00|12|00|12||00:00|12:00:00 |00|253402214400|00:00:00|00:00:00|5|52|53|9999|99|52|5|12/31/99|99|9999|-08"
+    },
+    {
+      "culture": "fr-FR",
+      "date": "9999-12-31T00:00:00.0000000",
+      "format": "%F|%z|%q|%P|%v|%%|%n|%t",
+      "value": "F|z|q|P|v|%|\n|\t"
+    },
+    {
+      "culture": "fr-FR",
+      "date": "9999-12-31T00:00:00.0000000",
+      "error": "Index was outside the bounds of the array.",
+      "error_type": "System.IndexOutOfRangeException",
+      "format": ""
+    },
+    {
+      "culture": "fr-FR",
+      "date": "9999-12-31T00:00:00.0000000",
+      "format": "+",
+      "value": ""
+    },
+    {
+      "culture": "fr-FR",
+      "date": "9999-12-31T00:00:00.0000000",
+      "format": "+%Y",
+      "value": "9999"
+    },
+    {
+      "culture": "fr-FR",
+      "date": "9999-12-31T00:00:00.0000000",
+      "error": "Index was outside the bounds of the array.",
+      "error_type": "System.IndexOutOfRangeException",
+      "format": "x%"
+    },
+    {
+      "culture": "fr-FR",
+      "date": "9999-12-31T00:00:00.0000000",
+      "error": "Index was outside the bounds of the array.",
+      "error_type": "System.IndexOutOfRangeException",
+      "format": "%"
+    },
+    {
+      "culture": "fr-FR",
+      "date": "9999-12-31T00:00:00.0000000",
+      "format": "%%Y",
+      "value": "%Y"
+    },
+    {
+      "culture": "fr-FR",
+      "date": "9999-12-31T00:00:00.0000000",
+      "error": "Input string was not in a correct format.",
+      "error_type": "System.FormatException",
+      "format": "{x}"
+    },
+    {
+      "culture": "fr-FR",
+      "date": "9999-12-31T00:00:00.0000000",
+      "format": "{{x}}",
+      "value": "{x}"
+    },
+    {
+      "culture": "fr-FR",
+      "date": "9999-12-31T00:00:00.0000000",
+      "format": "{0:yyyy}",
+      "value": "9999"
+    },
+    {
+      "culture": "fr-FR",
+      "date": "9999-12-31T00:00:00.0000000",
+      "error": "Input string was not in a correct format.",
+      "error_type": "System.FormatException",
+      "format": "%Y {"
+    },
+    {
+      "culture": "th-TH",
+      "date": "2026-09-03T04:05:06.1234567",
+      "format": "%c",
+      "value": "พฤ. ก.ย.  3 04:05:06 2569"
+    },
+    {
+      "culture": "th-TH",
+      "date": "2026-09-03T04:05:06.1234567",
+      "format": "%F|%z|%q|%P|%v|%%|%n|%t",
+      "value": "F|z|q|P|v|%|\n|\t"
+    },
+    {
+      "culture": "th-TH",
+      "date": "2026-09-03T04:05:06.1234567",
+      "error": "Index was outside the bounds of the array.",
+      "error_type": "System.IndexOutOfRangeException",
+      "format": ""
+    },
+    {
+      "culture": "th-TH",
+      "date": "2026-09-03T04:05:06.1234567",
+      "format": "+",
+      "value": ""
+    },
+    {
+      "culture": "th-TH",
+      "date": "2026-09-03T04:05:06.1234567",
+      "format": "+%Y",
+      "value": "2569"
+    },
+    {
+      "culture": "th-TH",
+      "date": "2026-09-03T04:05:06.1234567",
+      "error": "Index was outside the bounds of the array.",
+      "error_type": "System.IndexOutOfRangeException",
+      "format": "x%"
+    },
+    {
+      "culture": "th-TH",
+      "date": "2026-09-03T04:05:06.1234567",
+      "error": "Index was outside the bounds of the array.",
+      "error_type": "System.IndexOutOfRangeException",
+      "format": "%"
+    },
+    {
+      "culture": "th-TH",
+      "date": "2026-09-03T04:05:06.1234567",
+      "format": "%%Y",
+      "value": "%Y"
+    },
+    {
+      "culture": "th-TH",
+      "date": "2026-09-03T04:05:06.1234567",
+      "error": "Input string was not in a correct format.",
+      "error_type": "System.FormatException",
+      "format": "{x}"
+    },
+    {
+      "culture": "th-TH",
+      "date": "2026-09-03T04:05:06.1234567",
+      "format": "{{x}}",
+      "value": "{x}"
+    },
+    {
+      "culture": "th-TH",
+      "date": "2026-09-03T04:05:06.1234567",
+      "format": "{0:yyyy}",
+      "value": "2569"
+    },
+    {
+      "culture": "th-TH",
+      "date": "2026-09-03T04:05:06.1234567",
+      "error": "Input string was not in a correct format.",
+      "error_type": "System.FormatException",
+      "format": "%Y {"
+    },
+    {
+      "culture": "th-TH",
+      "date": "1970-01-01T00:00:00.0000000",
+      "format": "%c",
+      "value": "พฤ. ม.ค.  1 00:00:00 2513"
+    },
+    {
+      "culture": "th-TH",
+      "date": "1970-01-01T00:00:00.0000000",
+      "format": "%A|%a|%B|%b|%h|%C|%D|%d|%e|%H|%I|%j|%k|%l|%M|%m|%p|%R|%r|%S|%s|%T|%X|%u|%U|%V|%G|%g|%W|%w|%x|%y|%Y|%Z",
+      "value": "พฤหัสบดี|พฤ.|มกราคม|ม.ค.|ม.ค.|19|01/01/13|01| 1|00|12|1|00|12|00|01|AM|00:00|12:00:00 AM|00|0|00:00:00|00:00:00|4|0|1|2513|13|0|4|01/01/13|13|2513|-08"
+    },
+    {
+      "culture": "th-TH",
+      "date": "1970-01-01T00:00:00.0000000",
+      "format": "%F|%z|%q|%P|%v|%%|%n|%t",
+      "value": "F|z|q|P|v|%|\n|\t"
+    },
+    {
+      "culture": "th-TH",
+      "date": "1970-01-01T00:00:00.0000000",
+      "error": "Index was outside the bounds of the array.",
+      "error_type": "System.IndexOutOfRangeException",
+      "format": ""
+    },
+    {
+      "culture": "th-TH",
+      "date": "1970-01-01T00:00:00.0000000",
+      "format": "+",
+      "value": ""
+    },
+    {
+      "culture": "th-TH",
+      "date": "1970-01-01T00:00:00.0000000",
+      "format": "+%Y",
+      "value": "2513"
+    },
+    {
+      "culture": "th-TH",
+      "date": "1970-01-01T00:00:00.0000000",
+      "error": "Index was outside the bounds of the array.",
+      "error_type": "System.IndexOutOfRangeException",
+      "format": "x%"
+    },
+    {
+      "culture": "th-TH",
+      "date": "1970-01-01T00:00:00.0000000",
+      "error": "Index was outside the bounds of the array.",
+      "error_type": "System.IndexOutOfRangeException",
+      "format": "%"
+    },
+    {
+      "culture": "th-TH",
+      "date": "1970-01-01T00:00:00.0000000",
+      "format": "%%Y",
+      "value": "%Y"
+    },
+    {
+      "culture": "th-TH",
+      "date": "1970-01-01T00:00:00.0000000",
+      "error": "Input string was not in a correct format.",
+      "error_type": "System.FormatException",
+      "format": "{x}"
+    },
+    {
+      "culture": "th-TH",
+      "date": "1970-01-01T00:00:00.0000000",
+      "format": "{{x}}",
+      "value": "{x}"
+    },
+    {
+      "culture": "th-TH",
+      "date": "1970-01-01T00:00:00.0000000",
+      "format": "{0:yyyy}",
+      "value": "2513"
+    },
+    {
+      "culture": "th-TH",
+      "date": "1970-01-01T00:00:00.0000000",
+      "error": "Input string was not in a correct format.",
+      "error_type": "System.FormatException",
+      "format": "%Y {"
+    },
+    {
+      "culture": "th-TH",
+      "date": "1969-12-31T23:59:59.9999999",
+      "format": "%c",
+      "value": "พ. ธ.ค. 31 23:59:59 2512"
+    },
+    {
+      "culture": "th-TH",
+      "date": "1969-12-31T23:59:59.9999999",
+      "format": "%F|%z|%q|%P|%v|%%|%n|%t",
+      "value": "F|z|q|P|v|%|\n|\t"
+    },
+    {
+      "culture": "th-TH",
+      "date": "1969-12-31T23:59:59.9999999",
+      "error": "Index was outside the bounds of the array.",
+      "error_type": "System.IndexOutOfRangeException",
+      "format": ""
+    },
+    {
+      "culture": "th-TH",
+      "date": "1969-12-31T23:59:59.9999999",
+      "format": "+",
+      "value": ""
+    },
+    {
+      "culture": "th-TH",
+      "date": "1969-12-31T23:59:59.9999999",
+      "format": "+%Y",
+      "value": "2512"
+    },
+    {
+      "culture": "th-TH",
+      "date": "1969-12-31T23:59:59.9999999",
+      "error": "Index was outside the bounds of the array.",
+      "error_type": "System.IndexOutOfRangeException",
+      "format": "x%"
+    },
+    {
+      "culture": "th-TH",
+      "date": "1969-12-31T23:59:59.9999999",
+      "error": "Index was outside the bounds of the array.",
+      "error_type": "System.IndexOutOfRangeException",
+      "format": "%"
+    },
+    {
+      "culture": "th-TH",
+      "date": "1969-12-31T23:59:59.9999999",
+      "format": "%%Y",
+      "value": "%Y"
+    },
+    {
+      "culture": "th-TH",
+      "date": "1969-12-31T23:59:59.9999999",
+      "error": "Input string was not in a correct format.",
+      "error_type": "System.FormatException",
+      "format": "{x}"
+    },
+    {
+      "culture": "th-TH",
+      "date": "1969-12-31T23:59:59.9999999",
+      "format": "{{x}}",
+      "value": "{x}"
+    },
+    {
+      "culture": "th-TH",
+      "date": "1969-12-31T23:59:59.9999999",
+      "format": "{0:yyyy}",
+      "value": "2512"
+    },
+    {
+      "culture": "th-TH",
+      "date": "1969-12-31T23:59:59.9999999",
+      "error": "Input string was not in a correct format.",
+      "error_type": "System.FormatException",
+      "format": "%Y {"
+    },
+    {
+      "culture": "th-TH",
+      "date": "2016-01-01T00:00:00.0000000",
+      "format": "%c",
+      "value": "ศ. ม.ค.  1 00:00:00 2559"
+    },
+    {
+      "culture": "th-TH",
+      "date": "2016-01-01T00:00:00.0000000",
+      "format": "%A|%a|%B|%b|%h|%C|%D|%d|%e|%H|%I|%j|%k|%l|%M|%m|%p|%R|%r|%S|%s|%T|%X|%u|%U|%V|%G|%g|%W|%w|%x|%y|%Y|%Z",
+      "value": "ศุกร์|ศ.|มกราคม|ม.ค.|ม.ค.|20|01/01/59|01| 1|00|12|1|00|12|00|01|AM|00:00|12:00:00 AM|00|1451606400|00:00:00|00:00:00|5|0|1|2559|59|0|5|01/01/59|59|2559|-08"
+    },
+    {
+      "culture": "th-TH",
+      "date": "2016-01-01T00:00:00.0000000",
+      "format": "%F|%z|%q|%P|%v|%%|%n|%t",
+      "value": "F|z|q|P|v|%|\n|\t"
+    },
+    {
+      "culture": "th-TH",
+      "date": "2016-01-01T00:00:00.0000000",
+      "error": "Index was outside the bounds of the array.",
+      "error_type": "System.IndexOutOfRangeException",
+      "format": ""
+    },
+    {
+      "culture": "th-TH",
+      "date": "2016-01-01T00:00:00.0000000",
+      "format": "+",
+      "value": ""
+    },
+    {
+      "culture": "th-TH",
+      "date": "2016-01-01T00:00:00.0000000",
+      "format": "+%Y",
+      "value": "2559"
+    },
+    {
+      "culture": "th-TH",
+      "date": "2016-01-01T00:00:00.0000000",
+      "error": "Index was outside the bounds of the array.",
+      "error_type": "System.IndexOutOfRangeException",
+      "format": "x%"
+    },
+    {
+      "culture": "th-TH",
+      "date": "2016-01-01T00:00:00.0000000",
+      "error": "Index was outside the bounds of the array.",
+      "error_type": "System.IndexOutOfRangeException",
+      "format": "%"
+    },
+    {
+      "culture": "th-TH",
+      "date": "2016-01-01T00:00:00.0000000",
+      "format": "%%Y",
+      "value": "%Y"
+    },
+    {
+      "culture": "th-TH",
+      "date": "2016-01-01T00:00:00.0000000",
+      "error": "Input string was not in a correct format.",
+      "error_type": "System.FormatException",
+      "format": "{x}"
+    },
+    {
+      "culture": "th-TH",
+      "date": "2016-01-01T00:00:00.0000000",
+      "format": "{{x}}",
+      "value": "{x}"
+    },
+    {
+      "culture": "th-TH",
+      "date": "2016-01-01T00:00:00.0000000",
+      "format": "{0:yyyy}",
+      "value": "2559"
+    },
+    {
+      "culture": "th-TH",
+      "date": "2016-01-01T00:00:00.0000000",
+      "error": "Input string was not in a correct format.",
+      "error_type": "System.FormatException",
+      "format": "%Y {"
+    },
+    {
+      "culture": "th-TH",
+      "date": "2017-01-01T00:00:00.0000000",
+      "format": "%c",
+      "value": "อา. ม.ค.  1 00:00:00 2560"
+    },
+    {
+      "culture": "th-TH",
+      "date": "2017-01-01T00:00:00.0000000",
+      "format": "%A|%a|%B|%b|%h|%C|%D|%d|%e|%H|%I|%j|%k|%l|%M|%m|%p|%R|%r|%S|%s|%T|%X|%u|%U|%V|%G|%g|%W|%w|%x|%y|%Y|%Z",
+      "value": "อาทิตย์|อา.|มกราคม|ม.ค.|ม.ค.|20|01/01/60|01| 1|00|12|1|00|12|00|01|AM|00:00|12:00:00 AM|00|1483228800|00:00:00|00:00:00|0|0|1|2560|60|0|0|01/01/60|60|2560|-08"
+    },
+    {
+      "culture": "th-TH",
+      "date": "2017-01-01T00:00:00.0000000",
+      "format": "%F|%z|%q|%P|%v|%%|%n|%t",
+      "value": "F|z|q|P|v|%|\n|\t"
+    },
+    {
+      "culture": "th-TH",
+      "date": "2017-01-01T00:00:00.0000000",
+      "error": "Index was outside the bounds of the array.",
+      "error_type": "System.IndexOutOfRangeException",
+      "format": ""
+    },
+    {
+      "culture": "th-TH",
+      "date": "2017-01-01T00:00:00.0000000",
+      "format": "+",
+      "value": ""
+    },
+    {
+      "culture": "th-TH",
+      "date": "2017-01-01T00:00:00.0000000",
+      "format": "+%Y",
+      "value": "2560"
+    },
+    {
+      "culture": "th-TH",
+      "date": "2017-01-01T00:00:00.0000000",
+      "error": "Index was outside the bounds of the array.",
+      "error_type": "System.IndexOutOfRangeException",
+      "format": "x%"
+    },
+    {
+      "culture": "th-TH",
+      "date": "2017-01-01T00:00:00.0000000",
+      "error": "Index was outside the bounds of the array.",
+      "error_type": "System.IndexOutOfRangeException",
+      "format": "%"
+    },
+    {
+      "culture": "th-TH",
+      "date": "2017-01-01T00:00:00.0000000",
+      "format": "%%Y",
+      "value": "%Y"
+    },
+    {
+      "culture": "th-TH",
+      "date": "2017-01-01T00:00:00.0000000",
+      "error": "Input string was not in a correct format.",
+      "error_type": "System.FormatException",
+      "format": "{x}"
+    },
+    {
+      "culture": "th-TH",
+      "date": "2017-01-01T00:00:00.0000000",
+      "format": "{{x}}",
+      "value": "{x}"
+    },
+    {
+      "culture": "th-TH",
+      "date": "2017-01-01T00:00:00.0000000",
+      "format": "{0:yyyy}",
+      "value": "2560"
+    },
+    {
+      "culture": "th-TH",
+      "date": "2017-01-01T00:00:00.0000000",
+      "error": "Input string was not in a correct format.",
+      "error_type": "System.FormatException",
+      "format": "%Y {"
+    },
+    {
+      "culture": "th-TH",
+      "date": "0001-01-01T00:00:00.0000000",
+      "format": "%c",
+      "value": "จ. ม.ค.  1 00:00:00 0544"
+    },
+    {
+      "culture": "th-TH",
+      "date": "0001-01-01T00:00:00.0000000",
+      "format": "%A|%a|%B|%b|%h|%C|%D|%d|%e|%H|%I|%j|%k|%l|%M|%m|%p|%R|%r|%S|%s|%T|%X|%u|%U|%V|%G|%g|%W|%w|%x|%y|%Y|%Z",
+      "value": "จันทร์|จ.|มกราคม|ม.ค.|ม.ค.|0|01/01/44|01| 1|00|12|1|00|12|00|01|AM|00:00|12:00:00 AM|00|-62135596800|00:00:00|00:00:00|1|0|1|0544|44|0|1|01/01/44|44|0544|-07"
+    },
+    {
+      "culture": "th-TH",
+      "date": "0001-01-01T00:00:00.0000000",
+      "format": "%F|%z|%q|%P|%v|%%|%n|%t",
+      "value": "F|z|q|P|v|%|\n|\t"
+    },
+    {
+      "culture": "th-TH",
+      "date": "0001-01-01T00:00:00.0000000",
+      "error": "Index was outside the bounds of the array.",
+      "error_type": "System.IndexOutOfRangeException",
+      "format": ""
+    },
+    {
+      "culture": "th-TH",
+      "date": "0001-01-01T00:00:00.0000000",
+      "format": "+",
+      "value": ""
+    },
+    {
+      "culture": "th-TH",
+      "date": "0001-01-01T00:00:00.0000000",
+      "format": "+%Y",
+      "value": "0544"
+    },
+    {
+      "culture": "th-TH",
+      "date": "0001-01-01T00:00:00.0000000",
+      "error": "Index was outside the bounds of the array.",
+      "error_type": "System.IndexOutOfRangeException",
+      "format": "x%"
+    },
+    {
+      "culture": "th-TH",
+      "date": "0001-01-01T00:00:00.0000000",
+      "error": "Index was outside the bounds of the array.",
+      "error_type": "System.IndexOutOfRangeException",
+      "format": "%"
+    },
+    {
+      "culture": "th-TH",
+      "date": "0001-01-01T00:00:00.0000000",
+      "format": "%%Y",
+      "value": "%Y"
+    },
+    {
+      "culture": "th-TH",
+      "date": "0001-01-01T00:00:00.0000000",
+      "error": "Input string was not in a correct format.",
+      "error_type": "System.FormatException",
+      "format": "{x}"
+    },
+    {
+      "culture": "th-TH",
+      "date": "0001-01-01T00:00:00.0000000",
+      "format": "{{x}}",
+      "value": "{x}"
+    },
+    {
+      "culture": "th-TH",
+      "date": "0001-01-01T00:00:00.0000000",
+      "format": "{0:yyyy}",
+      "value": "0544"
+    },
+    {
+      "culture": "th-TH",
+      "date": "0001-01-01T00:00:00.0000000",
+      "error": "Input string was not in a correct format.",
+      "error_type": "System.FormatException",
+      "format": "%Y {"
+    },
+    {
+      "culture": "th-TH",
+      "date": "9999-12-31T00:00:00.0000000",
+      "format": "%c",
+      "value": "ศ. ธ.ค. 31 00:00:00 10542"
+    },
+    {
+      "culture": "th-TH",
+      "date": "9999-12-31T00:00:00.0000000",
+      "format": "%A|%a|%B|%b|%h|%C|%D|%d|%e|%H|%I|%j|%k|%l|%M|%m|%p|%R|%r|%S|%s|%T|%X|%u|%U|%V|%G|%g|%W|%w|%x|%y|%Y|%Z",
+      "value": "ศุกร์|ศ.|ธันวาคม|ธ.ค.|ธ.ค.|99|12/31/42|31|31|00|12|365|00|12|00|12|AM|00:00|12:00:00 AM|00|253402214400|00:00:00|00:00:00|5|52|53|10542|42|52|5|12/31/42|42|10542|-08"
+    },
+    {
+      "culture": "th-TH",
+      "date": "9999-12-31T00:00:00.0000000",
+      "format": "%F|%z|%q|%P|%v|%%|%n|%t",
+      "value": "F|z|q|P|v|%|\n|\t"
+    },
+    {
+      "culture": "th-TH",
+      "date": "9999-12-31T00:00:00.0000000",
+      "error": "Index was outside the bounds of the array.",
+      "error_type": "System.IndexOutOfRangeException",
+      "format": ""
+    },
+    {
+      "culture": "th-TH",
+      "date": "9999-12-31T00:00:00.0000000",
+      "format": "+",
+      "value": ""
+    },
+    {
+      "culture": "th-TH",
+      "date": "9999-12-31T00:00:00.0000000",
+      "format": "+%Y",
+      "value": "10542"
+    },
+    {
+      "culture": "th-TH",
+      "date": "9999-12-31T00:00:00.0000000",
+      "error": "Index was outside the bounds of the array.",
+      "error_type": "System.IndexOutOfRangeException",
+      "format": "x%"
+    },
+    {
+      "culture": "th-TH",
+      "date": "9999-12-31T00:00:00.0000000",
+      "error": "Index was outside the bounds of the array.",
+      "error_type": "System.IndexOutOfRangeException",
+      "format": "%"
+    },
+    {
+      "culture": "th-TH",
+      "date": "9999-12-31T00:00:00.0000000",
+      "format": "%%Y",
+      "value": "%Y"
+    },
+    {
+      "culture": "th-TH",
+      "date": "9999-12-31T00:00:00.0000000",
+      "error": "Input string was not in a correct format.",
+      "error_type": "System.FormatException",
+      "format": "{x}"
+    },
+    {
+      "culture": "th-TH",
+      "date": "9999-12-31T00:00:00.0000000",
+      "format": "{{x}}",
+      "value": "{x}"
+    },
+    {
+      "culture": "th-TH",
+      "date": "9999-12-31T00:00:00.0000000",
+      "format": "{0:yyyy}",
+      "value": "10542"
+    },
+    {
+      "culture": "th-TH",
+      "date": "9999-12-31T00:00:00.0000000",
+      "error": "Input string was not in a correct format.",
+      "error_type": "System.FormatException",
+      "format": "%Y {"
+    },
+    {
+      "culture": "ar-SA",
+      "date": "2026-09-03T04:05:06.1234567",
+      "format": "%c",
+      "value": "الخميس ربيع الأول  3 04:05:06 1448"
+    },
+    {
+      "culture": "ar-SA",
+      "date": "2026-09-03T04:05:06.1234567",
+      "format": "%F|%z|%q|%P|%v|%%|%n|%t",
+      "value": "F|z|q|P|v|%|\n|\t"
+    },
+    {
+      "culture": "ar-SA",
+      "date": "2026-09-03T04:05:06.1234567",
+      "error": "Index was outside the bounds of the array.",
+      "error_type": "System.IndexOutOfRangeException",
+      "format": ""
+    },
+    {
+      "culture": "ar-SA",
+      "date": "2026-09-03T04:05:06.1234567",
+      "format": "+",
+      "value": ""
+    },
+    {
+      "culture": "ar-SA",
+      "date": "2026-09-03T04:05:06.1234567",
+      "format": "+%Y",
+      "value": "1448"
+    },
+    {
+      "culture": "ar-SA",
+      "date": "2026-09-03T04:05:06.1234567",
+      "error": "Index was outside the bounds of the array.",
+      "error_type": "System.IndexOutOfRangeException",
+      "format": "x%"
+    },
+    {
+      "culture": "ar-SA",
+      "date": "2026-09-03T04:05:06.1234567",
+      "error": "Index was outside the bounds of the array.",
+      "error_type": "System.IndexOutOfRangeException",
+      "format": "%"
+    },
+    {
+      "culture": "ar-SA",
+      "date": "2026-09-03T04:05:06.1234567",
+      "format": "%%Y",
+      "value": "%Y"
+    },
+    {
+      "culture": "ar-SA",
+      "date": "2026-09-03T04:05:06.1234567",
+      "error": "Input string was not in a correct format.",
+      "error_type": "System.FormatException",
+      "format": "{x}"
+    },
+    {
+      "culture": "ar-SA",
+      "date": "2026-09-03T04:05:06.1234567",
+      "format": "{{x}}",
+      "value": "{x}"
+    },
+    {
+      "culture": "ar-SA",
+      "date": "2026-09-03T04:05:06.1234567",
+      "format": "{0:yyyy}",
+      "value": "1448"
+    },
+    {
+      "culture": "ar-SA",
+      "date": "2026-09-03T04:05:06.1234567",
+      "error": "Input string was not in a correct format.",
+      "error_type": "System.FormatException",
+      "format": "%Y {"
+    },
+    {
+      "culture": "ar-SA",
+      "date": "1970-01-01T00:00:00.0000000",
+      "format": "%c",
+      "value": "الخميس شوال  1 00:00:00 1389"
+    },
+    {
+      "culture": "ar-SA",
+      "date": "1970-01-01T00:00:00.0000000",
+      "format": "%A|%a|%B|%b|%h|%C|%D|%d|%e|%H|%I|%j|%k|%l|%M|%m|%p|%R|%r|%S|%s|%T|%X|%u|%U|%V|%G|%g|%W|%w|%x|%y|%Y|%Z",
+      "value": "الخميس|الخميس|شوال|شوال|شوال|19|10/23/89|23| 1|00|12|1|00|12|00|10|ص|00:00|12:00:00 ص|00|0|00:00:00|00:00:00|4|0|1|1389|89|0|4|10/23/89|89|1389|-08"
+    },
+    {
+      "culture": "ar-SA",
+      "date": "1970-01-01T00:00:00.0000000",
+      "format": "%F|%z|%q|%P|%v|%%|%n|%t",
+      "value": "F|z|q|P|v|%|\n|\t"
+    },
+    {
+      "culture": "ar-SA",
+      "date": "1970-01-01T00:00:00.0000000",
+      "error": "Index was outside the bounds of the array.",
+      "error_type": "System.IndexOutOfRangeException",
+      "format": ""
+    },
+    {
+      "culture": "ar-SA",
+      "date": "1970-01-01T00:00:00.0000000",
+      "format": "+",
+      "value": ""
+    },
+    {
+      "culture": "ar-SA",
+      "date": "1970-01-01T00:00:00.0000000",
+      "format": "+%Y",
+      "value": "1389"
+    },
+    {
+      "culture": "ar-SA",
+      "date": "1970-01-01T00:00:00.0000000",
+      "error": "Index was outside the bounds of the array.",
+      "error_type": "System.IndexOutOfRangeException",
+      "format": "x%"
+    },
+    {
+      "culture": "ar-SA",
+      "date": "1970-01-01T00:00:00.0000000",
+      "error": "Index was outside the bounds of the array.",
+      "error_type": "System.IndexOutOfRangeException",
+      "format": "%"
+    },
+    {
+      "culture": "ar-SA",
+      "date": "1970-01-01T00:00:00.0000000",
+      "format": "%%Y",
+      "value": "%Y"
+    },
+    {
+      "culture": "ar-SA",
+      "date": "1970-01-01T00:00:00.0000000",
+      "error": "Input string was not in a correct format.",
+      "error_type": "System.FormatException",
+      "format": "{x}"
+    },
+    {
+      "culture": "ar-SA",
+      "date": "1970-01-01T00:00:00.0000000",
+      "format": "{{x}}",
+      "value": "{x}"
+    },
+    {
+      "culture": "ar-SA",
+      "date": "1970-01-01T00:00:00.0000000",
+      "format": "{0:yyyy}",
+      "value": "1389"
+    },
+    {
+      "culture": "ar-SA",
+      "date": "1970-01-01T00:00:00.0000000",
+      "error": "Input string was not in a correct format.",
+      "error_type": "System.FormatException",
+      "format": "%Y {"
+    },
+    {
+      "culture": "ar-SA",
+      "date": "1969-12-31T23:59:59.9999999",
+      "format": "%c",
+      "value": "الأربعاء شوال 31 23:59:59 1389"
+    },
+    {
+      "culture": "ar-SA",
+      "date": "1969-12-31T23:59:59.9999999",
+      "format": "%F|%z|%q|%P|%v|%%|%n|%t",
+      "value": "F|z|q|P|v|%|\n|\t"
+    },
+    {
+      "culture": "ar-SA",
+      "date": "1969-12-31T23:59:59.9999999",
+      "error": "Index was outside the bounds of the array.",
+      "error_type": "System.IndexOutOfRangeException",
+      "format": ""
+    },
+    {
+      "culture": "ar-SA",
+      "date": "1969-12-31T23:59:59.9999999",
+      "format": "+",
+      "value": ""
+    },
+    {
+      "culture": "ar-SA",
+      "date": "1969-12-31T23:59:59.9999999",
+      "format": "+%Y",
+      "value": "1389"
+    },
+    {
+      "culture": "ar-SA",
+      "date": "1969-12-31T23:59:59.9999999",
+      "error": "Index was outside the bounds of the array.",
+      "error_type": "System.IndexOutOfRangeException",
+      "format": "x%"
+    },
+    {
+      "culture": "ar-SA",
+      "date": "1969-12-31T23:59:59.9999999",
+      "error": "Index was outside the bounds of the array.",
+      "error_type": "System.IndexOutOfRangeException",
+      "format": "%"
+    },
+    {
+      "culture": "ar-SA",
+      "date": "1969-12-31T23:59:59.9999999",
+      "format": "%%Y",
+      "value": "%Y"
+    },
+    {
+      "culture": "ar-SA",
+      "date": "1969-12-31T23:59:59.9999999",
+      "error": "Input string was not in a correct format.",
+      "error_type": "System.FormatException",
+      "format": "{x}"
+    },
+    {
+      "culture": "ar-SA",
+      "date": "1969-12-31T23:59:59.9999999",
+      "format": "{{x}}",
+      "value": "{x}"
+    },
+    {
+      "culture": "ar-SA",
+      "date": "1969-12-31T23:59:59.9999999",
+      "format": "{0:yyyy}",
+      "value": "1389"
+    },
+    {
+      "culture": "ar-SA",
+      "date": "1969-12-31T23:59:59.9999999",
+      "error": "Input string was not in a correct format.",
+      "error_type": "System.FormatException",
+      "format": "%Y {"
+    },
+    {
+      "culture": "ar-SA",
+      "date": "2016-01-01T00:00:00.0000000",
+      "format": "%c",
+      "value": "الجمعة ربيع الأول  1 00:00:00 1437"
+    },
+    {
+      "culture": "ar-SA",
+      "date": "2016-01-01T00:00:00.0000000",
+      "format": "%A|%a|%B|%b|%h|%C|%D|%d|%e|%H|%I|%j|%k|%l|%M|%m|%p|%R|%r|%S|%s|%T|%X|%u|%U|%V|%G|%g|%W|%w|%x|%y|%Y|%Z",
+      "value": "الجمعة|الجمعة|ربيع الأول|ربيع الأول|ربيع الأول|20|03/21/37|21| 1|00|12|1|00|12|00|03|ص|00:00|12:00:00 ص|00|1451606400|00:00:00|00:00:00|5|0|1|1437|37|0|5|03/21/37|37|1437|-08"
+    },
+    {
+      "culture": "ar-SA",
+      "date": "2016-01-01T00:00:00.0000000",
+      "format": "%F|%z|%q|%P|%v|%%|%n|%t",
+      "value": "F|z|q|P|v|%|\n|\t"
+    },
+    {
+      "culture": "ar-SA",
+      "date": "2016-01-01T00:00:00.0000000",
+      "error": "Index was outside the bounds of the array.",
+      "error_type": "System.IndexOutOfRangeException",
+      "format": ""
+    },
+    {
+      "culture": "ar-SA",
+      "date": "2016-01-01T00:00:00.0000000",
+      "format": "+",
+      "value": ""
+    },
+    {
+      "culture": "ar-SA",
+      "date": "2016-01-01T00:00:00.0000000",
+      "format": "+%Y",
+      "value": "1437"
+    },
+    {
+      "culture": "ar-SA",
+      "date": "2016-01-01T00:00:00.0000000",
+      "error": "Index was outside the bounds of the array.",
+      "error_type": "System.IndexOutOfRangeException",
+      "format": "x%"
+    },
+    {
+      "culture": "ar-SA",
+      "date": "2016-01-01T00:00:00.0000000",
+      "error": "Index was outside the bounds of the array.",
+      "error_type": "System.IndexOutOfRangeException",
+      "format": "%"
+    },
+    {
+      "culture": "ar-SA",
+      "date": "2016-01-01T00:00:00.0000000",
+      "format": "%%Y",
+      "value": "%Y"
+    },
+    {
+      "culture": "ar-SA",
+      "date": "2016-01-01T00:00:00.0000000",
+      "error": "Input string was not in a correct format.",
+      "error_type": "System.FormatException",
+      "format": "{x}"
+    },
+    {
+      "culture": "ar-SA",
+      "date": "2016-01-01T00:00:00.0000000",
+      "format": "{{x}}",
+      "value": "{x}"
+    },
+    {
+      "culture": "ar-SA",
+      "date": "2016-01-01T00:00:00.0000000",
+      "format": "{0:yyyy}",
+      "value": "1437"
+    },
+    {
+      "culture": "ar-SA",
+      "date": "2016-01-01T00:00:00.0000000",
+      "error": "Input string was not in a correct format.",
+      "error_type": "System.FormatException",
+      "format": "%Y {"
+    },
+    {
+      "culture": "ar-SA",
+      "date": "2017-01-01T00:00:00.0000000",
+      "format": "%c",
+      "value": "الأحد ربيع الثاني  1 00:00:00 1438"
+    },
+    {
+      "culture": "ar-SA",
+      "date": "2017-01-01T00:00:00.0000000",
+      "format": "%A|%a|%B|%b|%h|%C|%D|%d|%e|%H|%I|%j|%k|%l|%M|%m|%p|%R|%r|%S|%s|%T|%X|%u|%U|%V|%G|%g|%W|%w|%x|%y|%Y|%Z",
+      "value": "الأحد|الأحد|ربيع الثاني|ربيع الثاني|ربيع الثاني|20|04/03/38|03| 1|00|12|1|00|12|00|04|ص|00:00|12:00:00 ص|00|1483228800|00:00:00|00:00:00|0|0|1|1438|38|0|0|04/03/38|38|1438|-08"
+    },
+    {
+      "culture": "ar-SA",
+      "date": "2017-01-01T00:00:00.0000000",
+      "format": "%F|%z|%q|%P|%v|%%|%n|%t",
+      "value": "F|z|q|P|v|%|\n|\t"
+    },
+    {
+      "culture": "ar-SA",
+      "date": "2017-01-01T00:00:00.0000000",
+      "error": "Index was outside the bounds of the array.",
+      "error_type": "System.IndexOutOfRangeException",
+      "format": ""
+    },
+    {
+      "culture": "ar-SA",
+      "date": "2017-01-01T00:00:00.0000000",
+      "format": "+",
+      "value": ""
+    },
+    {
+      "culture": "ar-SA",
+      "date": "2017-01-01T00:00:00.0000000",
+      "format": "+%Y",
+      "value": "1438"
+    },
+    {
+      "culture": "ar-SA",
+      "date": "2017-01-01T00:00:00.0000000",
+      "error": "Index was outside the bounds of the array.",
+      "error_type": "System.IndexOutOfRangeException",
+      "format": "x%"
+    },
+    {
+      "culture": "ar-SA",
+      "date": "2017-01-01T00:00:00.0000000",
+      "error": "Index was outside the bounds of the array.",
+      "error_type": "System.IndexOutOfRangeException",
+      "format": "%"
+    },
+    {
+      "culture": "ar-SA",
+      "date": "2017-01-01T00:00:00.0000000",
+      "format": "%%Y",
+      "value": "%Y"
+    },
+    {
+      "culture": "ar-SA",
+      "date": "2017-01-01T00:00:00.0000000",
+      "error": "Input string was not in a correct format.",
+      "error_type": "System.FormatException",
+      "format": "{x}"
+    },
+    {
+      "culture": "ar-SA",
+      "date": "2017-01-01T00:00:00.0000000",
+      "format": "{{x}}",
+      "value": "{x}"
+    },
+    {
+      "culture": "ar-SA",
+      "date": "2017-01-01T00:00:00.0000000",
+      "format": "{0:yyyy}",
+      "value": "1438"
+    },
+    {
+      "culture": "ar-SA",
+      "date": "2017-01-01T00:00:00.0000000",
+      "error": "Input string was not in a correct format.",
+      "error_type": "System.FormatException",
+      "format": "%Y {"
+    },
+    {
+      "culture": "ar-SA",
+      "date": "0001-01-01T00:00:00.0000000",
+      "error": "Specified time is not supported in this calendar. It should be between 04/30/1900 00:00:00 (Gregorian date) and 11/16/2077 23:59:59 (Gregorian date), inclusive.\r\nParameter name: time",
+      "error_type": "System.ArgumentOutOfRangeException",
+      "format": "%c"
+    },
+    {
+      "culture": "ar-SA",
+      "date": "0001-01-01T00:00:00.0000000",
+      "error": "Specified time is not supported in this calendar. It should be between 04/30/1900 00:00:00 (Gregorian date) and 11/16/2077 23:59:59 (Gregorian date), inclusive.\r\nParameter name: time",
+      "error_type": "System.ArgumentOutOfRangeException",
+      "format": "%A|%a|%B|%b|%h|%C|%D|%d|%e|%H|%I|%j|%k|%l|%M|%m|%p|%R|%r|%S|%s|%T|%X|%u|%U|%V|%G|%g|%W|%w|%x|%y|%Y|%Z"
+    },
+    {
+      "culture": "ar-SA",
+      "date": "0001-01-01T00:00:00.0000000",
+      "format": "%F|%z|%q|%P|%v|%%|%n|%t",
+      "value": "F|z|q|P|v|%|\n|\t"
+    },
+    {
+      "culture": "ar-SA",
+      "date": "0001-01-01T00:00:00.0000000",
+      "error": "Index was outside the bounds of the array.",
+      "error_type": "System.IndexOutOfRangeException",
+      "format": ""
+    },
+    {
+      "culture": "ar-SA",
+      "date": "0001-01-01T00:00:00.0000000",
+      "format": "+",
+      "value": ""
+    },
+    {
+      "culture": "ar-SA",
+      "date": "0001-01-01T00:00:00.0000000",
+      "error": "Specified time is not supported in this calendar. It should be between 04/30/1900 00:00:00 (Gregorian date) and 11/16/2077 23:59:59 (Gregorian date), inclusive.\r\nParameter name: time",
+      "error_type": "System.ArgumentOutOfRangeException",
+      "format": "+%Y"
+    },
+    {
+      "culture": "ar-SA",
+      "date": "0001-01-01T00:00:00.0000000",
+      "error": "Index was outside the bounds of the array.",
+      "error_type": "System.IndexOutOfRangeException",
+      "format": "x%"
+    },
+    {
+      "culture": "ar-SA",
+      "date": "0001-01-01T00:00:00.0000000",
+      "error": "Index was outside the bounds of the array.",
+      "error_type": "System.IndexOutOfRangeException",
+      "format": "%"
+    },
+    {
+      "culture": "ar-SA",
+      "date": "0001-01-01T00:00:00.0000000",
+      "format": "%%Y",
+      "value": "%Y"
+    },
+    {
+      "culture": "ar-SA",
+      "date": "0001-01-01T00:00:00.0000000",
+      "error": "Input string was not in a correct format.",
+      "error_type": "System.FormatException",
+      "format": "{x}"
+    },
+    {
+      "culture": "ar-SA",
+      "date": "0001-01-01T00:00:00.0000000",
+      "format": "{{x}}",
+      "value": "{x}"
+    },
+    {
+      "culture": "ar-SA",
+      "date": "0001-01-01T00:00:00.0000000",
+      "error": "Specified time is not supported in this calendar. It should be between 04/30/1900 00:00:00 (Gregorian date) and 11/16/2077 23:59:59 (Gregorian date), inclusive.\r\nParameter name: time",
+      "error_type": "System.ArgumentOutOfRangeException",
+      "format": "{0:yyyy}"
+    },
+    {
+      "culture": "ar-SA",
+      "date": "0001-01-01T00:00:00.0000000",
+      "error": "Specified time is not supported in this calendar. It should be between 04/30/1900 00:00:00 (Gregorian date) and 11/16/2077 23:59:59 (Gregorian date), inclusive.\r\nParameter name: time",
+      "error_type": "System.ArgumentOutOfRangeException",
+      "format": "%Y {"
+    },
+    {
+      "culture": "ar-SA",
+      "date": "9999-12-31T00:00:00.0000000",
+      "error": "Specified time is not supported in this calendar. It should be between 04/30/1900 00:00:00 (Gregorian date) and 11/16/2077 23:59:59 (Gregorian date), inclusive.\r\nParameter name: time",
+      "error_type": "System.ArgumentOutOfRangeException",
+      "format": "%c"
+    },
+    {
+      "culture": "ar-SA",
+      "date": "9999-12-31T00:00:00.0000000",
+      "error": "Specified time is not supported in this calendar. It should be between 04/30/1900 00:00:00 (Gregorian date) and 11/16/2077 23:59:59 (Gregorian date), inclusive.\r\nParameter name: time",
+      "error_type": "System.ArgumentOutOfRangeException",
+      "format": "%A|%a|%B|%b|%h|%C|%D|%d|%e|%H|%I|%j|%k|%l|%M|%m|%p|%R|%r|%S|%s|%T|%X|%u|%U|%V|%G|%g|%W|%w|%x|%y|%Y|%Z"
+    },
+    {
+      "culture": "ar-SA",
+      "date": "9999-12-31T00:00:00.0000000",
+      "format": "%F|%z|%q|%P|%v|%%|%n|%t",
+      "value": "F|z|q|P|v|%|\n|\t"
+    },
+    {
+      "culture": "ar-SA",
+      "date": "9999-12-31T00:00:00.0000000",
+      "error": "Index was outside the bounds of the array.",
+      "error_type": "System.IndexOutOfRangeException",
+      "format": ""
+    },
+    {
+      "culture": "ar-SA",
+      "date": "9999-12-31T00:00:00.0000000",
+      "format": "+",
+      "value": ""
+    },
+    {
+      "culture": "ar-SA",
+      "date": "9999-12-31T00:00:00.0000000",
+      "error": "Specified time is not supported in this calendar. It should be between 04/30/1900 00:00:00 (Gregorian date) and 11/16/2077 23:59:59 (Gregorian date), inclusive.\r\nParameter name: time",
+      "error_type": "System.ArgumentOutOfRangeException",
+      "format": "+%Y"
+    },
+    {
+      "culture": "ar-SA",
+      "date": "9999-12-31T00:00:00.0000000",
+      "error": "Index was outside the bounds of the array.",
+      "error_type": "System.IndexOutOfRangeException",
+      "format": "x%"
+    },
+    {
+      "culture": "ar-SA",
+      "date": "9999-12-31T00:00:00.0000000",
+      "error": "Index was outside the bounds of the array.",
+      "error_type": "System.IndexOutOfRangeException",
+      "format": "%"
+    },
+    {
+      "culture": "ar-SA",
+      "date": "9999-12-31T00:00:00.0000000",
+      "format": "%%Y",
+      "value": "%Y"
+    },
+    {
+      "culture": "ar-SA",
+      "date": "9999-12-31T00:00:00.0000000",
+      "error": "Input string was not in a correct format.",
+      "error_type": "System.FormatException",
+      "format": "{x}"
+    },
+    {
+      "culture": "ar-SA",
+      "date": "9999-12-31T00:00:00.0000000",
+      "format": "{{x}}",
+      "value": "{x}"
+    },
+    {
+      "culture": "ar-SA",
+      "date": "9999-12-31T00:00:00.0000000",
+      "error": "Specified time is not supported in this calendar. It should be between 04/30/1900 00:00:00 (Gregorian date) and 11/16/2077 23:59:59 (Gregorian date), inclusive.\r\nParameter name: time",
+      "error_type": "System.ArgumentOutOfRangeException",
+      "format": "{0:yyyy}"
+    },
+    {
+      "culture": "ar-SA",
+      "date": "9999-12-31T00:00:00.0000000",
+      "error": "Specified time is not supported in this calendar. It should be between 04/30/1900 00:00:00 (Gregorian date) and 11/16/2077 23:59:59 (Gregorian date), inclusive.\r\nParameter name: time",
+      "error_type": "System.ArgumentOutOfRangeException",
+      "format": "%Y {"
+    },
+    {
+      "culture": "en-US",
+      "date": "2026-09-03T04:05:06.1234560-07:00",
+      "format": "{0}",
+      "value": "9/3/2026 4:05:06 AM"
+    },
+    {
+      "culture": "en-US",
+      "date": "2026-09-03T04:05:06.1234560-07:00",
+      "format": "{0,30:yyyy}",
+      "value": "                          2026"
+    },
+    {
+      "culture": "en-US",
+      "date": "2026-09-03T04:05:06.1234560-07:00",
+      "format": "{0,-10:yy}",
+      "value": "26        "
+    },
+    {
+      "culture": "en-US",
+      "date": "2026-09-03T04:05:06.1234560-07:00",
+      "format": "{0:yyyy-MM-dd HH:mm:ss.fffffff zzz}",
+      "value": "2026-09-03 04:05:06.1234560 -07:00"
+    },
+    {
+      "culture": "en-US",
+      "date": "2026-09-03T04:05:06.1234560-07:00",
+      "format": "{0:HH:mm:ss.FFFFFFF}",
+      "value": "04:05:06.123456"
+    },
+    {
+      "culture": "en-US",
+      "date": "2026-09-03T04:05:06.1234560-07:00",
+      "format": "{0:gg dddd MMMM}",
+      "value": "A.D. Thursday September"
+    },
+    {
+      "culture": "en-US",
+      "date": "2026-09-03T04:05:06.1234560-07:00",
+      "format": "{{{0:yyyy}}}",
+      "value": "{2026}"
+    },
+    {
+      "culture": "en-US",
+      "date": "2026-09-03T04:05:06.1234560-07:00",
+      "error": "Index (zero based) must be greater than or equal to zero and less than the size of the argument list.",
+      "error_type": "System.FormatException",
+      "format": "{1}"
+    },
+    {
+      "culture": "en-US",
+      "date": "2026-09-03T04:05:06.1234560-07:00",
+      "error": "Input string was not in a correct format.",
+      "error_type": "System.FormatException",
+      "format": "{0:Q}"
+    },
+    {
+      "culture": "en-US",
+      "date": "2026-09-03T04:05:06.1234560-07:00",
+      "error": "Input string was not in a correct format.",
+      "error_type": "System.FormatException",
+      "format": "{0:ffffffff}"
+    },
+    {
+      "culture": "en-US",
+      "date": "2026-09-03T04:05:06.1234560-07:00",
+      "error": "Input string was not in a correct format.",
+      "error_type": "System.FormatException",
+      "format": "{0:yyyy"
+    },
+    {
+      "culture": "en-US",
+      "date": "2026-09-03T04:05:06.1234560-07:00",
+      "format": "{0:d}",
+      "value": "9/3/2026"
+    },
+    {
+      "culture": "en-US",
+      "date": "2026-09-03T04:05:06.1234560-07:00",
+      "format": "{0:D}",
+      "value": "Thursday, September 3, 2026"
+    },
+    {
+      "culture": "en-US",
+      "date": "2026-09-03T04:05:06.1234560-07:00",
+      "format": "{0:f}",
+      "value": "Thursday, September 3, 2026 4:05 AM"
+    },
+    {
+      "culture": "en-US",
+      "date": "2026-09-03T04:05:06.1234560-07:00",
+      "format": "{0:F}",
+      "value": "Thursday, September 3, 2026 4:05:06 AM"
+    },
+    {
+      "culture": "en-US",
+      "date": "2026-09-03T04:05:06.1234560-07:00",
+      "format": "{0:g}",
+      "value": "9/3/2026 4:05 AM"
+    },
+    {
+      "culture": "en-US",
+      "date": "2026-09-03T04:05:06.1234560-07:00",
+      "format": "{0:G}",
+      "value": "9/3/2026 4:05:06 AM"
+    },
+    {
+      "culture": "en-US",
+      "date": "2026-09-03T04:05:06.1234560-07:00",
+      "format": "{0:m}",
+      "value": "September 3"
+    },
+    {
+      "culture": "en-US",
+      "date": "2026-09-03T04:05:06.1234560-07:00",
+      "format": "{0:O}",
+      "value": "2026-09-03T04:05:06.1234560-07:00"
+    },
+    {
+      "culture": "en-US",
+      "date": "2026-09-03T04:05:06.1234560-07:00",
+      "format": "{0:r}",
+      "value": "Thu, 03 Sep 2026 04:05:06 GMT"
+    },
+    {
+      "culture": "en-US",
+      "date": "2026-09-03T04:05:06.1234560-07:00",
+      "format": "{0:s}",
+      "value": "2026-09-03T04:05:06"
+    },
+    {
+      "culture": "en-US",
+      "date": "2026-09-03T04:05:06.1234560-07:00",
+      "format": "{0:t}",
+      "value": "4:05 AM"
+    },
+    {
+      "culture": "en-US",
+      "date": "2026-09-03T04:05:06.1234560-07:00",
+      "format": "{0:T}",
+      "value": "4:05:06 AM"
+    },
+    {
+      "culture": "en-US",
+      "date": "2026-09-03T04:05:06.1234560-07:00",
+      "format": "{0:u}",
+      "value": "2026-09-03 04:05:06Z"
+    },
+    {
+      "culture": "en-US",
+      "date": "2026-09-03T04:05:06.1234560-07:00",
+      "format": "{0:U}",
+      "value": "Thursday, September 3, 2026 11:05:06 AM"
+    },
+    {
+      "culture": "en-US",
+      "date": "2026-09-03T04:05:06.1234560-07:00",
+      "format": "{0:Y}",
+      "value": "September 2026"
+    },
+    {
+      "culture": "th-TH",
+      "date": "2026-09-03T04:05:06.1234560-07:00",
+      "format": "{0:O}",
+      "value": "2026-09-03T04:05:06.1234560-07:00"
+    },
+    {
+      "culture": "th-TH",
+      "date": "2026-09-03T04:05:06.1234560-07:00",
+      "format": "{0:U}",
+      "value": "วันพฤหัสบดีที่ 3 กันยายน 2026 11:05:06"
+    },
+    {
+      "culture": "ar-SA",
+      "date": "2026-09-03T04:05:06.1234560-07:00",
+      "format": "{0:O}",
+      "value": "2026-09-03T04:05:06.1234560-07:00"
+    },
+    {
+      "culture": "ar-SA",
+      "date": "2026-09-03T04:05:06.1234560-07:00",
+      "format": "{0:U}",
+      "value": "03 سبتمبر, 2026 11:05:06 ص"
+    }
+  ],
+  "outside_input_domain": [
+    {
+      "culture": "en-US",
+      "date": "2026-09-03T04:05:06.1234567",
+      "format": "%A|%a|%B|%b|%h|%C|%D|%d|%e|%H|%I|%j|%k|%l|%M|%m|%p|%R|%r|%S|%s|%T|%X|%u|%U|%V|%G|%g|%W|%w|%x|%y|%Y|%Z",
+      "value": "Thursday|Thu|September|Sep|Sep|20|09/03/26|03| 3|04|04|246|04|04|05|09|AM|04:05|04:05:06 AM|06|1788408306.12346|04:05:06|04:05:06|4|35|36|2026|26|35|4|09/03/26|26|2026|-07"
+    },
+    {
+      "culture": "en-US",
+      "date": "1969-12-31T23:59:59.9999999",
+      "format": "%A|%a|%B|%b|%h|%C|%D|%d|%e|%H|%I|%j|%k|%l|%M|%m|%p|%R|%r|%S|%s|%T|%X|%u|%U|%V|%G|%g|%W|%w|%x|%y|%Y|%Z",
+      "value": "Wednesday|Wed|December|Dec|Dec|19|12/31/69|31|31|23|11|365|23|11|59|12|PM|23:59|11:59:59 PM|59|-1E-07|23:59:59|23:59:59|3|52|53|1969|69|52|3|12/31/69|69|1969|-08"
+    },
+    {
+      "culture": "fr-FR",
+      "date": "2026-09-03T04:05:06.1234567",
+      "format": "%A|%a|%B|%b|%h|%C|%D|%d|%e|%H|%I|%j|%k|%l|%M|%m|%p|%R|%r|%S|%s|%T|%X|%u|%U|%V|%G|%g|%W|%w|%x|%y|%Y|%Z",
+      "value": "jeudi|jeu.|septembre|sept.|sept.|20|09/03/26|03| 3|04|04|246|04|04|05|09||04:05|04:05:06 |06|1788408306,12346|04:05:06|04:05:06|4|35|36|2026|26|35|4|09/03/26|26|2026|-07"
+    },
+    {
+      "culture": "fr-FR",
+      "date": "1969-12-31T23:59:59.9999999",
+      "format": "%A|%a|%B|%b|%h|%C|%D|%d|%e|%H|%I|%j|%k|%l|%M|%m|%p|%R|%r|%S|%s|%T|%X|%u|%U|%V|%G|%g|%W|%w|%x|%y|%Y|%Z",
+      "value": "mercredi|mer.|décembre|déc.|déc.|19|12/31/69|31|31|23|11|365|23|11|59|12||23:59|11:59:59 |59|-1E-07|23:59:59|23:59:59|3|52|53|1969|69|52|3|12/31/69|69|1969|-08"
+    },
+    {
+      "culture": "th-TH",
+      "date": "2026-09-03T04:05:06.1234567",
+      "format": "%A|%a|%B|%b|%h|%C|%D|%d|%e|%H|%I|%j|%k|%l|%M|%m|%p|%R|%r|%S|%s|%T|%X|%u|%U|%V|%G|%g|%W|%w|%x|%y|%Y|%Z",
+      "value": "พฤหัสบดี|พฤ.|กันยายน|ก.ย.|ก.ย.|20|09/03/69|03| 3|04|04|246|04|04|05|09|AM|04:05|04:05:06 AM|06|1788408306.12346|04:05:06|04:05:06|4|35|36|2569|69|35|4|09/03/69|69|2569|-07"
+    },
+    {
+      "culture": "th-TH",
+      "date": "1969-12-31T23:59:59.9999999",
+      "format": "%A|%a|%B|%b|%h|%C|%D|%d|%e|%H|%I|%j|%k|%l|%M|%m|%p|%R|%r|%S|%s|%T|%X|%u|%U|%V|%G|%g|%W|%w|%x|%y|%Y|%Z",
+      "value": "พุธ|พ.|ธันวาคม|ธ.ค.|ธ.ค.|19|12/31/12|31|31|23|11|365|23|11|59|12|PM|23:59|11:59:59 PM|59|-1E-07|23:59:59|23:59:59|3|52|53|2512|12|52|3|12/31/12|12|2512|-08"
+    },
+    {
+      "culture": "ar-SA",
+      "date": "2026-09-03T04:05:06.1234567",
+      "format": "%A|%a|%B|%b|%h|%C|%D|%d|%e|%H|%I|%j|%k|%l|%M|%m|%p|%R|%r|%S|%s|%T|%X|%u|%U|%V|%G|%g|%W|%w|%x|%y|%Y|%Z",
+      "value": "الخميس|الخميس|ربيع الأول|ربيع الأول|ربيع الأول|20|03/21/48|21| 3|04|04|246|04|04|05|03|ص|04:05|04:05:06 ص|06|1788408306.12346|04:05:06|04:05:06|4|35|36|1448|48|35|4|03/21/48|48|1448|-07"
+    },
+    {
+      "culture": "ar-SA",
+      "date": "1969-12-31T23:59:59.9999999",
+      "format": "%A|%a|%B|%b|%h|%C|%D|%d|%e|%H|%I|%j|%k|%l|%M|%m|%p|%R|%r|%S|%s|%T|%X|%u|%U|%V|%G|%g|%W|%w|%x|%y|%Y|%Z",
+      "value": "الأربعاء|الأربعاء|شوال|شوال|شوال|19|10/22/89|22|31|23|11|365|23|11|59|10|م|23:59|11:59:59 م|59|-1E-07|23:59:59|23:59:59|3|52|53|1389|89|52|3|10/22/89|89|1389|-08"
+    }
+  ]
+}

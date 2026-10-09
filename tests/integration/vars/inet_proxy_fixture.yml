@@ -1,0 +1,519 @@
+---
+inet_proxy_fixture: |
+  # Copyright 2026 Joe Lustri
+  # SPDX-License-Identifier: GPL-3.0-or-later
+  """Independently journal and recover LAN and owned connection settings."""
+
+  import base64
+  import ctypes
+  import json
+  import os
+  import sys
+  import winreg
+
+  assert sys.version_info[:3] == (3, 4, 4)
+  WORKSPACE, OPERATION = sys.argv[1:3]
+  JOURNAL = os.path.join(WORKSPACE, "inet-proxy-recovery.json")
+  IE_PATH = r"Software\Microsoft\Windows\CurrentVersion\Internet Settings"
+  REGISTRY_VALUES = {
+      "": ("ProxyEnable", "ProxyServer", "ProxyOverride", "AutoConfigURL",
+           "AutoDetect"),
+      "Connections": ("DefaultConnectionSettings", "SavedLegacySettings"),
+  }
+  BASELINE = {"flags": 9, "proxy": None, "bypass": None,
+              "auto_config_url": None}
+  CONNECTION = "LegacyWinINet-" + os.path.basename(WORKSPACE)
+  REGISTRY_VALUES["Connections"] += (CONNECTION,)
+  DWORD, POINTER = ctypes.c_uint32, ctypes.c_void_p
+
+
+  class ProxyInfo(ctypes.Structure):
+      _fields_ = [("access_type", DWORD), ("proxy", POINTER),
+                  ("bypass", POINTER)]
+
+
+  class IEConfig(ctypes.Structure):
+      _fields_ = [("auto_detect", ctypes.c_int32),
+                  ("auto_config_url", POINTER), ("proxy", POINTER),
+                  ("bypass", POINTER)]
+
+
+  class OptionValue(ctypes.Union):
+      _fields_ = [("number", DWORD), ("text", POINTER),
+                  ("filetime", DWORD * 2)]
+
+
+  class ConnectionOption(ctypes.Structure):
+      _fields_ = [("option", DWORD), ("value", OptionValue)]
+
+
+  class ConnectionOptions(ctypes.Structure):
+      _fields_ = [("size", DWORD), ("connection", ctypes.c_wchar_p),
+                  ("count", DWORD), ("error", DWORD),
+                  ("options", ctypes.POINTER(ConnectionOption))]
+
+
+  WINHTTP = ctypes.WinDLL("winhttp", use_last_error=True)
+  WININET = ctypes.WinDLL("wininet", use_last_error=True)
+  ADVAPI = ctypes.WinDLL("advapi32", use_last_error=True)
+  KERNEL = ctypes.WinDLL("kernel32", use_last_error=True)
+
+
+  def bind(library, name, result, arguments):
+      function = getattr(library, name)
+      function.restype, function.argtypes = result, arguments
+      return function
+
+
+  get_proxy = bind(WINHTTP, "WinHttpGetDefaultProxyConfiguration",
+                   ctypes.c_int32, [ctypes.POINTER(ProxyInfo)])
+  get_ie = bind(WINHTTP, "WinHttpGetIEProxyConfigForCurrentUser",
+                ctypes.c_int32, [ctypes.POINTER(IEConfig)])
+  query_option = bind(WININET, "InternetQueryOptionW", ctypes.c_int32,
+                      [POINTER, DWORD, POINTER, ctypes.POINTER(DWORD)])
+  set_option = bind(WININET, "InternetSetOptionW", ctypes.c_int32,
+                    [POINTER, DWORD, POINTER, DWORD])
+  free = bind(KERNEL, "GlobalFree", POINTER, [POINTER])
+  query_value = bind(ADVAPI, "RegQueryValueExW", ctypes.c_int32,
+                     [POINTER, ctypes.c_wchar_p, POINTER, POINTER,
+                      POINTER, POINTER])
+  set_value = bind(ADVAPI, "RegSetValueExW", ctypes.c_int32,
+                   [POINTER, ctypes.c_wchar_p, DWORD, DWORD, POINTER, DWORD])
+  get_security = bind(ADVAPI, "RegGetKeySecurity", ctypes.c_int32,
+                      [POINTER, DWORD, POINTER, POINTER])
+
+
+  def require(success):
+      if not success:
+          raise ctypes.WinError(ctypes.get_last_error())
+
+
+  def require_status(status):
+      if status:
+          raise ctypes.WinError(status)
+
+
+  def read_allocated(structure, fields, success):
+      try:
+          require(success)
+          return {name: ctypes.wstring_at(getattr(structure, name))
+                  if getattr(structure, name) else None for name in fields}
+      finally:
+          for name in fields:
+              if getattr(structure, name):
+                  free(getattr(structure, name))
+
+
+  def read_winhttp():
+      info = ProxyInfo()
+      values = read_allocated(info, ("proxy", "bypass"),
+                              get_proxy(ctypes.byref(info)))
+      values["access_type"] = info.access_type
+      return values
+
+
+  def read_ie():
+      info = IEConfig()
+      values = read_allocated(info, ("proxy", "bypass", "auto_config_url"),
+                              get_ie(ctypes.byref(info)))
+      values["auto_detect"] = bool(info.auto_detect)
+      return values
+
+
+  def connection_options(flag_option, connection):
+      options = (ConnectionOption * 4)()
+      for item, number in zip(options, (flag_option, 2, 3, 4)):
+          item.option = number
+      listing = ConnectionOptions(ctypes.sizeof(ConnectionOptions), connection,
+                                   len(options), 0, options)
+      return listing, options
+
+
+  def read_connection(connection=None):
+      # IE8 introduced FLAGS_UI; FLAGS remains the documented legacy fallback.
+      for flag_option in (10, 1):
+          listing, options = connection_options(flag_option, connection)
+          size = DWORD(ctypes.sizeof(listing))
+          success = query_option(None, 75, ctypes.byref(listing),
+                                 ctypes.byref(size))
+          error = ctypes.get_last_error()
+          try:
+              if success:
+                  values = {name: ctypes.wstring_at(item.value.text)
+                            if item.value.text else None
+                            for name, item in zip(
+                                ("proxy", "bypass", "auto_config_url"),
+                                options[1:])}
+                  values["flags"] = options[0].value.number
+                  return values
+              if flag_option != 10 or error != 87:
+                  raise ctypes.WinError(error)
+          finally:
+              for item in options[1:]:
+                  if item.value.text:
+                      free(item.value.text)
+
+
+  def refresh_ie():
+      require(set_option(None, 39, None, 0))
+      require(set_option(None, 37, None, 0))
+
+
+  def write_connection(values, connection=None):
+      listing, options = connection_options(1, connection)
+      options[0].value.number = values["flags"]
+      strings = [ctypes.c_wchar_p(values[name])
+                 for name in ("proxy", "bypass", "auto_config_url")]
+      for item, string in zip(options[1:], strings):
+          item.value.text = ctypes.cast(string, POINTER)
+      require(set_option(None, 75, ctypes.byref(listing),
+                         ctypes.sizeof(listing)))
+      refresh_ie()
+
+
+  def encoded(data):
+      return base64.b64encode(data).decode("ascii")
+
+
+  def raw_value(handle, name):
+      kind, size = DWORD(), DWORD()
+      status = query_value(handle, name, None, ctypes.byref(kind), None,
+                           ctypes.byref(size))
+      if status == 2:
+          return {"exists": False}
+      require_status(status)
+      data = ctypes.create_string_buffer(size.value)
+      require_status(query_value(handle, name, None, ctypes.byref(kind), data,
+                                 ctypes.byref(size)))
+      return {"exists": True, "type": kind.value,
+              "data": encoded(data.raw[:size.value])}
+
+
+  def registry_snapshot():
+      snapshot = {}
+      access = winreg.KEY_QUERY_VALUE | winreg.KEY_WOW64_64KEY | 0x20000
+      for suffix, names in REGISTRY_VALUES.items():
+          path = IE_PATH + ("\\" + suffix if suffix else "")
+          try:
+              key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, path, 0, access)
+          except FileNotFoundError:
+              snapshot[suffix] = {"exists": False}
+              continue
+          with key:
+              size = DWORD()
+              status = get_security(int(key), 7, None, ctypes.byref(size))
+              if status != 122:
+                  require_status(status)
+              security = ctypes.create_string_buffer(size.value)
+              require_status(get_security(int(key), 7, security,
+                                          ctypes.byref(size)))
+              snapshot[suffix] = {
+                  "exists": True,
+                  "security": encoded(security.raw[:size.value]),
+                  "values": {name: raw_value(int(key), name) for name in names},
+              }
+      return snapshot
+
+
+  def restore_registry(saved):
+      access = winreg.KEY_QUERY_VALUE | winreg.KEY_SET_VALUE
+      access |= winreg.KEY_WOW64_64KEY
+      for suffix, names in REGISTRY_VALUES.items():
+          path = IE_PATH + ("\\" + suffix if suffix else "")
+          original = saved[suffix]
+          try:
+              key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, path, 0, access)
+          except FileNotFoundError:
+              assert not original["exists"], "Original IE key disappeared"
+              continue
+          with key:
+              for name in names:
+                  value = (original["values"][name] if original["exists"]
+                           else {"exists": False})
+                  if raw_value(int(key), name) == value:
+                      continue
+                  if not value["exists"]:
+                      winreg.DeleteValue(key, name)
+                  else:
+                      data = base64.b64decode(value["data"])
+                      buffer = ctypes.create_string_buffer(data)
+                      require_status(set_value(int(key), name, 0, value["type"],
+                                               buffer, len(data)))
+              if not original["exists"]:
+                  assert winreg.QueryInfoKey(key)[:2] == (0, 0), (
+                      "Created IE key contains unexpected entries"
+                  )
+          if not original["exists"]:
+              winreg.DeleteKey(winreg.HKEY_CURRENT_USER, path)
+
+
+  def effective(values):
+      return {"auto_detect": bool(values["flags"] & 8),
+              "auto_config_url": values["auto_config_url"]
+              if values["flags"] & 4 else None,
+              "proxy": values["proxy"] if values["flags"] & 2 else None,
+              "bypass": values["bypass"] if values["flags"] & 2 else None}
+
+
+  class RasEntry(ctypes.Structure):
+      # The SDK's pack-4 Windows XP layout stops before Vista's IPv6 fields.
+      _pack_ = 4
+      _fields_ = [
+          ("size", DWORD), ("options", DWORD), ("country_id", DWORD),
+          ("country_code", DWORD), ("area_code", ctypes.c_wchar * 11),
+          ("phone_number", ctypes.c_wchar * 129), ("alternate_offset", DWORD),
+          ("ipv4_addresses", ctypes.c_ubyte * 20), ("frame_size", DWORD),
+          ("protocols", DWORD), ("framing", DWORD),
+          ("script", ctypes.c_wchar * 260),
+          ("autodial_dll", ctypes.c_wchar * 260),
+          ("autodial_function", ctypes.c_wchar * 260),
+          ("device_type", ctypes.c_wchar * 17),
+          ("device_name", ctypes.c_wchar * 129),
+          ("x25_pad_type", ctypes.c_wchar * 33),
+          ("x25_address", ctypes.c_wchar * 201),
+          ("x25_facilities", ctypes.c_wchar * 201),
+          ("x25_user_data", ctypes.c_wchar * 201),
+          ("channels", DWORD), ("reserved1", DWORD), ("reserved2", DWORD),
+          ("subentries", DWORD), ("dial_mode", DWORD),
+          ("dial_extra_percent", DWORD), ("dial_extra_seconds", DWORD),
+          ("hangup_extra_percent", DWORD), ("hangup_extra_seconds", DWORD),
+          ("idle_disconnect_seconds", DWORD), ("entry_type", DWORD),
+          ("encryption", DWORD), ("authentication", DWORD),
+          ("guid", ctypes.c_ubyte * 16),
+          ("custom_dial_dll", ctypes.c_wchar * 260), ("vpn_strategy", DWORD),
+          ("options2", DWORD), ("options3", DWORD),
+          ("dns_suffix", ctypes.c_wchar * 256), ("tcp_window", DWORD),
+          ("prerequisite_phonebook", ctypes.c_wchar * 260),
+          ("prerequisite_entry", ctypes.c_wchar * 257),
+          ("redial_count", DWORD), ("redial_pause", DWORD),
+      ]
+
+
+  class RasEntryName(ctypes.Structure):
+      _pack_ = 4
+      _fields_ = [("size", DWORD), ("name", ctypes.c_wchar * 257),
+                  ("flags", DWORD), ("phonebook", ctypes.c_wchar * 261)]
+
+
+  class RasDevice(ctypes.Structure):
+      _pack_ = 4
+      _fields_ = [("size", DWORD), ("kind", ctypes.c_wchar * 17),
+                  ("name", ctypes.c_wchar * 129)]
+
+
+  RAS = ctypes.WinDLL("rasapi32", use_last_error=True)
+  validate_entry = bind(RAS, "RasValidateEntryNameW", DWORD,
+                        [ctypes.c_wchar_p, ctypes.c_wchar_p])
+  create_entry = bind(RAS, "RasSetEntryPropertiesW", DWORD,
+                      [ctypes.c_wchar_p, ctypes.c_wchar_p, POINTER,
+                       DWORD, POINTER, DWORD])
+  delete_entry = bind(RAS, "RasDeleteEntryW", DWORD,
+                      [ctypes.c_wchar_p, ctypes.c_wchar_p])
+  get_entry = bind(RAS, "RasGetEntryPropertiesW", DWORD,
+                   [ctypes.c_wchar_p, ctypes.c_wchar_p, POINTER,
+                    ctypes.POINTER(DWORD), POINTER, POINTER])
+  enum_entries = bind(RAS, "RasEnumEntriesW", DWORD,
+                      [ctypes.c_wchar_p, ctypes.c_wchar_p, POINTER,
+                       ctypes.POINTER(DWORD), ctypes.POINTER(DWORD)])
+  enum_devices = bind(RAS, "RasEnumDevicesW", DWORD,
+                      [POINTER, ctypes.POINTER(DWORD), ctypes.POINTER(DWORD)])
+
+
+  def phonebook_entries():
+      entries, count = (RasEntryName * 1)(), DWORD()
+      entries[0].size = ctypes.sizeof(RasEntryName)
+      size = DWORD(ctypes.sizeof(entries))
+      status = enum_entries(None, None, entries, ctypes.byref(size),
+                            ctypes.byref(count))
+      if status == 603:
+          capacity = (size.value + entries[0].size - 1) // entries[0].size
+          entries = (RasEntryName * capacity)()
+          entries[0].size = ctypes.sizeof(RasEntryName)
+          status = enum_entries(None, None, entries, ctypes.byref(size),
+                                ctypes.byref(count))
+      require_status(status)
+      return sorted([{"name": item.name, "path": item.phonebook,
+                      "flags": item.flags} for item in entries[:count.value]],
+                    key=lambda item: (item["path"], item["name"]))
+
+
+  def ras_devices():
+      devices, count = (RasDevice * 1)(), DWORD()
+      devices[0].size = ctypes.sizeof(RasDevice)
+      size = DWORD(ctypes.sizeof(devices))
+      status = enum_devices(devices, ctypes.byref(size), ctypes.byref(count))
+      if status == 603:
+          capacity = (size.value + devices[0].size - 1) // devices[0].size
+          devices = (RasDevice * capacity)()
+          devices[0].size = ctypes.sizeof(RasDevice)
+          status = enum_devices(devices, ctypes.byref(size),
+                                ctypes.byref(count))
+      require_status(status)
+      return [{"kind": item.kind, "name": item.name}
+              for item in devices[:count.value]]
+
+
+  def phonebook_properties(name, path=None):
+      entry = RasEntry()
+      entry.size = ctypes.sizeof(entry)
+      size = DWORD(entry.size)
+      status = get_entry(path, name, ctypes.byref(entry), ctypes.byref(size),
+                         None, None)
+      if status == 603:
+          entry = ctypes.create_string_buffer(size.value)
+          ctypes.cast(entry, ctypes.POINTER(DWORD))[0] = ctypes.sizeof(RasEntry)
+          status = get_entry(path, name, entry, ctypes.byref(size), None, None)
+      require_status(status)
+      return encoded(ctypes.string_at(ctypes.byref(entry), size.value))
+
+
+  def original_entries():
+      return [dict(item, properties=phonebook_properties(
+                  item["name"], item["path"] or None))
+              for item in phonebook_entries() if item["name"] != CONNECTION]
+
+
+  def observe():
+      lan = read_connection()
+      exists = validate_entry(None, CONNECTION) == 183
+      connection = read_connection(CONNECTION) if exists else None
+      return {"winhttp": read_winhttp(), "ie": read_ie(),
+              "lan": lan, "lan_values": effective(lan),
+              "connection": connection,
+              "connection_values": effective(connection) if exists else None,
+              "connection_exists": exists, "registry": registry_snapshot(),
+              "other_entries": original_entries()}
+
+
+  def save_journal(state, mode):
+      with open(JOURNAL, mode) as stream:
+          json.dump(state, stream)
+          stream.flush()
+          os.fsync(stream.fileno())
+
+
+  def read_journal():
+      with open(JOURNAL) as stream:
+          state = json.load(stream)
+      assert state["connection"] == CONNECTION, "Journal names another entry"
+      return state
+
+
+  def backup():
+      assert not os.path.exists(JOURNAL), "Recovery journal already exists"
+      assert validate_entry(None, CONNECTION) == 0, (
+          "Connection name is not free")
+      initial = observe()
+      assert not initial["registry"]["Connections"]["values"][CONNECTION][
+          "exists"], "Named proxy settings already exist"
+      devices = [device for device in ras_devices()
+                 if device["kind"] == "pppoe"]
+      assert devices, "No PPPoE device is available for the fixture"
+      state = {"connection": CONNECTION, "initial": initial,
+               "device": devices[0], "phonebooks": phonebook_files(),
+               "restored": False}
+      save_journal(state, "x")
+      assert read_journal() == state, "Recovery journal verification failed"
+      return state
+
+
+  def setup(state):
+      assert validate_entry(None, CONNECTION) == 0, (
+          "Connection name is not free")
+      entry = RasEntry()
+      entry.size = ctypes.sizeof(entry)
+      entry.device_type = state["device"]["kind"]
+      entry.device_name = state["device"]["name"]
+      entry.entry_type, entry.framing, entry.protocols = 5, 1, 4
+      entry.options, entry.options2 = 0x40010, 0x20
+      require_status(create_entry(None, CONNECTION, ctypes.byref(entry),
+                                  entry.size, None, 0))
+      assert validate_entry(None, CONNECTION) == 183, (
+          "RAS entry was not created")
+      write_connection(BASELINE)
+      write_connection(BASELINE, CONNECTION)
+      snapshot = observe()
+      assert snapshot["lan_values"] == effective(BASELINE), snapshot
+      assert snapshot["connection_values"] == effective(BASELINE), snapshot
+      assert snapshot["winhttp"] == state["initial"]["winhttp"], snapshot
+      assert snapshot["other_entries"] == state["initial"]["other_entries"]
+
+
+  def cleanup(state):
+      initial = state["initial"]
+      status = validate_entry(None, CONNECTION)
+      assert status in (0, 183), (
+          "Owned RAS entry status is unknown: %s" % status)
+      if status == 183:
+          require_status(delete_entry(None, CONNECTION))
+      assert validate_entry(None, CONNECTION) == 0, "Owned RAS entry remains"
+      if read_connection() != initial["lan"]:
+          write_connection(initial["lan"])
+      if registry_snapshot() != initial["registry"]:
+          # Legacy WinINet refresh rewrites the SavedLegacySettings counter.
+          refresh_ie()
+          restore_registry(initial["registry"])
+      assert observe() == initial, "Original IE or phonebook settings differ"
+      cleanup_phonebooks(state["phonebooks"])
+      state["restored"] = True
+      save_journal(state, "w")
+
+
+  def phonebook_files():
+      shell = ctypes.WinDLL("shell32", use_last_error=True)
+      get_folder = bind(shell, "SHGetFolderPathW", ctypes.c_int32,
+                        [POINTER, ctypes.c_int32, POINTER, DWORD,
+                         ctypes.c_wchar_p])
+      files = {}
+      for folder_id in (26, 35):
+          folder = ctypes.create_unicode_buffer(260)
+          require_status(get_folder(None, folder_id, None, 0, folder))
+          directory = os.path.join(folder.value, "Microsoft", "Network",
+                                   "Connections", "Pbk")
+          path = os.path.join(directory, "rasphone.pbk")
+          missing = []
+          for unused in range(3):
+              if not os.path.exists(directory):
+                  missing.append(directory)
+              directory = os.path.dirname(directory)
+          files[path] = {"exists": os.path.exists(path),
+                         "missing_dirs": missing}
+      return files
+
+
+  def cleanup_phonebooks(files):
+      remaining = phonebook_entries()
+      for path, original in files.items():
+          if original["exists"]:
+              continue
+          if os.path.exists(path):
+              assert not any(item["path"].lower() == path.lower()
+                             for item in remaining), (
+                  "New phonebook contains unexpected entries")
+              os.remove(path)
+          assert not os.path.exists(path), "Created phonebook remains"
+          for directory in original["missing_dirs"]:
+              if os.path.isdir(directory) and not os.listdir(directory):
+                  os.rmdir(directory)
+
+
+  assert OPERATION in ("inspect", "setup", "observe", "cleanup"), OPERATION
+  if OPERATION == "inspect":
+      print(json.dumps({"snapshot": observe(), "devices": ras_devices(),
+                        "ras_entry_size": ctypes.sizeof(RasEntry),
+                        "connection": CONNECTION}))
+      sys.exit(0)
+  if OPERATION == "observe":
+      print(json.dumps(observe()))
+      sys.exit(0)
+  if OPERATION == "cleanup" and not os.path.exists(JOURNAL):
+      print(json.dumps({"restored": True, "backup_created": False}))
+      sys.exit(0)
+  if OPERATION == "setup":
+      state = backup()
+      setup(state)
+      print(json.dumps({"snapshot": observe(), "connection": CONNECTION}))
+  else:
+      state = read_journal()
+      cleanup(state)
+      print(json.dumps({"restored": True, "backup_created": True}))

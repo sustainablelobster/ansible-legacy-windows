@@ -1,0 +1,109 @@
+---
+auto_logon_password: Legacy-Fixture-Only-1!
+auto_logon_password_two: Legacy-Fixture-Only-2!
+auto_logon_cases:
+  - name: Predict enabling and removing plaintext credentials
+    params:
+      username: '{{ ansible_user }}'
+      password: '{{ auto_logon_password }}'
+    check: true
+    changed: true
+    state: present
+    password_kind: one
+  - name: Enable automatic logon and remove plaintext credentials
+    params:
+      username: '{{ ansible_user }}'
+      password: '{{ auto_logon_password }}'
+    changed: true
+    state: present
+    password_kind: one
+  - name: Repeat the enabled configuration
+    params:
+      username: '{{ ansible_user }}'
+      password: '{{ auto_logon_password }}'
+    changed: false
+    state: present
+    password_kind: one
+  - name: Predict adding a logon count
+    params:
+      username: '{{ ansible_user }}'
+      password: '{{ auto_logon_password }}'
+      logon_count: 2
+    check: true
+    changed: true
+    state: present
+    password_kind: one
+  - name: Add a bounded logon count
+    params:
+      username: '{{ ansible_user }}'
+      password: '{{ auto_logon_password }}'
+      logon_count: 2
+    changed: true
+    state: present
+    password_kind: one
+  - name: Repeat the bounded logon count
+    params:
+      username: '{{ ansible_user }}'
+      password: '{{ auto_logon_password }}'
+      logon_count: 2
+    changed: false
+    state: present
+    password_kind: one
+  - name: Predict changing password and removing the omitted count
+    params:
+      username: '{{ ansible_user }}'
+      password: '{{ auto_logon_password_two }}'
+    check: true
+    changed: true
+    state: present
+    password_kind: two
+  - name: Change password and remove the omitted count
+    params:
+      username: '{{ ansible_user }}'
+      password: '{{ auto_logon_password_two }}'
+    changed: true
+    state: present
+    password_kind: two
+  - name: Store an empty password distinctly from removing it
+    params:
+      username: '{{ ansible_user }}'
+      password: ''
+    changed: true
+    state: present
+    password_kind: empty
+  - name: Repeat the empty password
+    params:
+      username: '{{ ansible_user }}'
+      password: ''
+    changed: false
+    state: present
+    password_kind: empty
+  - name: Reject a missing username and password
+    params: {}
+    changed: false
+    error: >-
+      state is present but all of the following are missing: username, password
+  - name: Reject an unknown username before removing any state
+    params:
+      state: absent
+      username: LegacyFixtureMissingAutoLogon
+    changed: false
+    error: >-
+      Failed to find a local or domain user with the name
+      'LegacyFixtureMissingAutoLogon'
+  - name: Predict removing automatic logon
+    params:
+      state: absent
+    check: true
+    changed: true
+    state: absent
+  - name: Remove automatic logon
+    params:
+      state: absent
+    changed: true
+    state: absent
+  - name: Repeat removal
+    params:
+      state: absent
+    changed: false
+    state: absent

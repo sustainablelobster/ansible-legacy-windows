@@ -1,0 +1,126 @@
+---
+- name: Reset only the journal-owned inactive scope to identical prerequisites
+  sustainablelobster.legacy_windows.win_command: # noqa: args[module]
+    argv:
+      - "{{ ansible_python_interpreter }}"
+      - "-"
+      - "{{ dhcp_workspace.path }}"
+      - reset
+      - "{{ dhcp_case.seed | default({}) | to_json }}"
+    stdin: "{{ dhcp_lease_fixture }}"
+  register: dhcp_case_before
+  changed_when: true
+  no_log: true
+
+- name: "Manage requested record - {{ dhcp_case.name ~ ' / ' ~ dhcp_phase }}"
+  block:
+    - name: Manage the requested record through the native Python payload
+      sustainablelobster.legacy_windows.win_dhcp_lease: # noqa: args[module]
+        type: "{{ dhcp_case.params.type | default(omit) }}"
+        state: "{{ dhcp_case.params.state | default(omit) }}"
+        ip: "{{ dhcp_case.params.ip | default(omit) }}"
+        mac: "{{ dhcp_case.params.mac | default(omit) }}"
+        scope_id: >-
+          {{ dhcp_scope if dhcp_case.scope | default(true) else omit }}
+        duration: "{{ dhcp_case.params.duration | default(omit) }}"
+        dns_hostname: "{{ dhcp_case.params.dns_hostname | default(omit) }}"
+        dns_regtype: "{{ dhcp_case.params.dns_regtype | default(omit) }}"
+        reservation_name: >-
+          {{ dhcp_case.params.reservation_name | default(omit) }}
+        description: "{{ dhcp_case.params.description | default(omit) }}"
+        computer_name: "{{ dhcp_case.params.computer_name | default(omit) }}"
+      register: dhcp_native_result
+      check_mode: "{{ dhcp_case.check | default(false) }}"
+      diff: true
+      when: dhcp_phase == 'native'
+
+    - name: Measure the untouched released upstream record behavior
+      ansible.windows.win_dhcp_lease:
+        type: "{{ dhcp_case.params.type | default(omit) }}"
+        state: "{{ dhcp_case.params.state | default(omit) }}"
+        ip: "{{ dhcp_case.params.ip | default(omit) }}"
+        mac: "{{ dhcp_case.params.mac | default(omit) }}"
+        scope_id: >-
+          {{ dhcp_scope if dhcp_case.scope | default(true) else omit }}
+        duration: "{{ dhcp_case.params.duration | default(omit) }}"
+        dns_hostname: "{{ dhcp_case.params.dns_hostname | default(omit) }}"
+        dns_regtype: "{{ dhcp_case.params.dns_regtype | default(omit) }}"
+        reservation_name: >-
+          {{ dhcp_case.params.reservation_name | default(omit) }}
+        description: "{{ dhcp_case.params.description | default(omit) }}"
+        computer_name: "{{ dhcp_case.params.computer_name | default(omit) }}"
+      register: dhcp_original_result
+      check_mode: "{{ dhcp_case.check | default(false) }}"
+      diff: true
+      when: dhcp_phase == 'original'
+  rescue:
+    - name: Retain expected and unexpected failures before checking them
+      ansible.builtin.set_fact:
+        dhcp_case_failure: true
+
+- name: Select the complete public result from the executed action
+  ansible.builtin.set_fact:
+    dhcp_case_result: >-
+      {{ dhcp_native_result if dhcp_phase == "native"
+         else dhcp_original_result }}
+
+- name: Observe full provider state and verify protected records independently
+  sustainablelobster.legacy_windows.win_command: # noqa: args[module]
+    argv:
+      - "{{ ansible_python_interpreter }}"
+      - "-"
+      - "{{ dhcp_workspace.path }}"
+      - observe
+    stdin: "{{ dhcp_lease_fixture }}"
+  register: dhcp_case_after
+  changed_when: false
+  no_log: true
+
+- name: Retain every raw result and observation before validation
+  ansible.builtin.set_fact:
+    dhcp_results: >-
+      {{ dhcp_results | default([]) + [{
+         'case': dhcp_case.name, 'phase': dhcp_phase,
+         'request': dhcp_case.params,
+         'scope': dhcp_scope if dhcp_case.scope | default(true) else none,
+         'check_mode': dhcp_case.check | default(false),
+         'result': dhcp_case_result,
+         'before': dhcp_case_before.stdout | from_json,
+         'after': dhcp_case_after.stdout | from_json,
+         'observation_times': {'before_start': dhcp_case_before.start,
+                               'before_end': dhcp_case_before.end,
+                               'after_start': dhcp_case_after.start,
+                               'after_end': dhcp_case_after.end},
+         'validated': false}] }}
+
+- name: Require declared public behavior and check-mode nonmutation
+  ansible.builtin.assert:
+    that:
+      - dhcp_case_result.changed == dhcp_case.changed
+      - (dhcp_case_result is failed) == (dhcp_case.error is defined or
+        dhcp_case.failed | default(false))
+      - dhcp_case.error is not defined or dhcp_case_result.msg ==
+        dhcp_case.error
+      - not (dhcp_case.check | default(false) or
+        dhcp_case.nonmutating | default(false)) or (dhcp_case_before.stdout |
+        from_json) == (dhcp_case_after.stdout | from_json)
+      - dhcp_case_result.warnings | default([]) == []
+
+- name: Compare complete public results except action metadata and exception
+    wrappers
+  ansible.builtin.assert:
+    that:
+      - >-
+        (dhcp_results[-2].result | dict2items |
+         rejectattr('key', 'in', ['invocation', 'exception'])
+         | items2dict) ==
+        (dhcp_case_result | dict2items |
+         rejectattr('key', 'in', ['invocation', 'exception'])
+         | items2dict)
+  when: dhcp_phase == 'original'
+
+- name: Mark only the validated recorded request
+  ansible.builtin.set_fact:
+    dhcp_results: >-
+      {{ dhcp_results[:-1] +
+         [dhcp_results[-1] | combine({"validated": true})] }}

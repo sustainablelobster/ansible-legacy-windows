@@ -1,0 +1,170 @@
+---
+- name: Verify isolated persistent route changes and exact recovery
+  hosts: legacy_windows
+  gather_facts: false
+  vars_files:
+    - vars/route.yml
+    - vars/route_fixture.yml
+  vars:
+    route_wmi_source: >-
+      {{ lookup('ansible.builtin.file', playbook_dir ~
+         '/../../plugins/module_utils/legacy_windows_wmi.py') }}
+    route_script: >-
+      {{ route_wmi_source ~ ('%c' | format(10)) ~ route_fixture }}
+  tasks:
+    - name: Allocate a private controller evidence file
+      ansible.builtin.tempfile:
+        state: file
+        path: '{{ playbook_dir }}/../../tmp'
+        prefix: route-{{ inventory_hostname }}-
+        suffix: .json
+      register: route_capture_file
+      delegate_to: localhost
+      vars: &capture_connection
+        ansible_connection: local
+        ansible_shell_type: sh
+        ansible_python_interpreter: '{{ ansible_playbook_python }}'
+      changed_when: false
+      check_mode: false
+
+    - name: Record the private evidence location
+      ansible.builtin.debug:
+        msg: 'Route evidence: {{ route_capture_file.path }}'
+
+    - name: Initialize complete result records
+      ansible.builtin.set_fact:
+        route_results: []
+
+    - name: Require Python 3.4.4 and retain existing staging directories
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import glob, json, os, sys, tempfile;
+        assert sys.version_info[:3] == (3, 4, 4);
+        print(json.dumps(sorted(glob.glob(os.path.join(tempfile.gettempdir(),
+        'ansible-tmp-*')))))""
+      register: route_staging_before
+      changed_when: false
+
+    - name: Exercise routes with a durable recovery journal
+      block:
+        - name: Allocate the recovery workspace
+          sustainablelobster.legacy_windows.win_tempfile:  # noqa: args[module]
+            state: directory
+            prefix: legacy-windows-route-
+          register: route_workspace
+          check_mode: false
+
+        - name: Journal routes and select unused documentation destinations
+          sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - '-'
+              - '{{ route_workspace.path }}'
+              - setup
+              - '{{ ansible_host }}'
+            stdin: '{{ route_script }}'
+          register: route_setup
+          changed_when: true
+          check_mode: false
+
+        - name: Retain journaled destinations and the complete observation
+          ansible.builtin.set_fact:
+            route_state: '{{ (route_setup.stdout | from_json).state }}'
+            route_previous: >-
+              {{ (route_setup.stdout | from_json).observation }}
+            route_modern: >-
+              {{ (route_setup.stdout | from_json).observation.modern
+                 is not none }}
+
+        - name: Exercise route writes repeats check mode and failures
+          ansible.builtin.include_tasks: tasks/win_route_case.yml
+          loop: '{{ route_cases }}'
+          loop_control:
+            loop_var: route_case
+            label: '{{ route_case.name }}'
+          when: >-
+            (not (route_case.modern | default(false)) or route_modern)
+            and (not (route_case.legacy | default(false)) or
+                 not route_modern)
+      always:
+        - name: Recover routes and retain final evidence
+          block:
+            - name: Restore and verify the complete original route state
+              sustainablelobster.legacy_windows.win_command:
+                # noqa: args[module]
+                argv:
+                  - '{{ ansible_python_interpreter }}'
+                  - '-'
+                  - '{{ route_workspace.path }}'
+                  - cleanup
+                  - '{{ ansible_host }}'
+                stdin: '{{ route_script }}'
+              register: route_cleanup
+              changed_when: true
+              check_mode: false
+              when: route_workspace.path is defined
+
+            - name: Require restoration before removing the journal
+              ansible.builtin.assert:
+                that:
+                  - (route_cleanup.stdout | from_json).restored
+              when: route_workspace.path is defined
+
+            - name: Remove only the verified recovery workspace
+              sustainablelobster.legacy_windows.win_file:  # noqa: args[module]
+                path: '{{ route_workspace.path }}'
+                state: absent
+              check_mode: false
+              when: route_workspace.path is defined
+          always:
+            - name: Save private results and recovery evidence
+              ansible.builtin.copy:
+                content: >-
+                  {{ {'results': route_results,
+                      'last_result': route_result | default(none),
+                      'workspace': route_workspace.path | default(none),
+                      'setup': route_setup | default(none),
+                      'cleanup': route_cleanup | default(none)}
+                     | to_nice_json }}
+                dest: '{{ route_capture_file.path }}'
+                mode: '0600'
+              delegate_to: localhost
+              vars: *capture_connection
+              changed_when: false
+
+        - name: Verify workspace and staging cleanup
+          ansible.builtin.raw: >-
+            cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+            "import glob, json, os, sys, tempfile;
+            assert not os.path.exists(sys.argv[1]);
+            print(json.dumps(sorted(glob.glob(os.path.join(tempfile.gettempdir(),
+            'ansible-tmp-*')))))" "{{ route_workspace.path }}""
+          when: route_workspace.path is defined
+          register: route_staging_after
+          changed_when: false
+          check_mode: false
+
+        - name: Require staging-directory cleanup
+          ansible.builtin.assert:
+            that:
+              - >-
+                (route_staging_before.stdout | from_json) ==
+                (route_staging_after.stdout | from_json)
+          when: route_workspace.path is defined
+
+        - name: Retain final workspace and staging-cleanup evidence
+          ansible.builtin.copy:
+            content: >-
+              {{ {'results': route_results,
+                  'last_result': route_result | default(none),
+                  'workspace': route_workspace.path | default(none),
+                  'setup': route_setup | default(none),
+                  'cleanup': route_cleanup | default(none),
+                  'staging_before': route_staging_before,
+                  'staging_after': route_staging_after | default(none)}
+                 | to_nice_json }}
+            dest: '{{ route_capture_file.path }}'
+            mode: '0600'
+          delegate_to: localhost
+          vars: *capture_connection
+          changed_when: false

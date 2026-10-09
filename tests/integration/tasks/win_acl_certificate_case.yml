@@ -1,0 +1,104 @@
+---
+- name: Exercise the certificate operation and native capability boundary
+  block:
+    - name: '{{ acl_certificate_case.name ~ " on " ~ acl_certificate_kind }}'
+      sustainablelobster.legacy_windows.win_acl:  # noqa: args[module]
+        path: '{{ acl_certificate_initial.paths[acl_certificate_kind] }}'
+        user: '{{ acl_guest_sid }}'
+        rights: '{{ acl_certificate_case.rights }}'
+        type: '{{ acl_certificate_case.type | default("allow") }}'
+        state: '{{ acl_certificate_case.state | default("present") }}'
+      check_mode: '{{ acl_certificate_case.check | default(false) }}'
+      diff: true
+      register: acl_certificate_result
+  rescue:
+    - name: Accept only the unsupported CAPI partial-removal rejection
+      ansible.builtin.assert:
+        that:
+          - acl_certificate_kind == 'capi'
+          - acl_certificate_case.capi_failure | default(false)
+          - acl_certificate_result is failed
+
+- name: Read native key permissions and verify certificate identity preservation
+  sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+    argv:
+      - '{{ ansible_python_interpreter }}'
+      - '-'
+      - '{{ acl_workspace.path }}'
+      - observe
+    stdin: '{{ acl_certificate_fixture }}'
+  register: acl_certificate_observation
+  changed_when: false
+  check_mode: false
+
+- name: Require exact certificate results and unchanged predicted permissions
+  vars:
+    snapshot: '{{ (acl_certificate_observation.stdout | from_json).snapshot }}'
+    expected_failure: >-
+      {{ acl_certificate_kind == 'capi' and
+      acl_certificate_case.capi_failure | default(false) }}
+    expected_changed: >-
+      {{ acl_certificate_case.capi_changed |
+      default(acl_certificate_case.changed) if acl_certificate_kind == 'capi'
+      else acl_certificate_case.changed }}
+  ansible.builtin.assert:
+    fail_msg: >-
+      {{ {'expected_failure': expected_failure,
+          'actual': acl_certificate_result.msg | default(none)} | to_json }}
+    that:
+      - acl_certificate_result.changed == expected_changed
+      - acl_certificate_result.failed | default(false) == expected_failure
+      - acl_certificate_result.warnings | default([]) == []
+      - >-
+        'cannot represent this partial rights removal' in
+        acl_certificate_result.msg if expected_failure else
+        acl_certificate_result.msg is not defined
+      - >-
+        'Remove the complete Read or FullControl rule instead.' in
+        acl_certificate_result.msg if expected_failure else true
+      - acl_certificate_result.diff is not defined
+      - >-
+        not (acl_certificate_case.check | default(false)) or
+        snapshot == acl_certificate_previous
+      - expected_changed or snapshot == acl_certificate_previous
+
+- name: Require exact Guest permissions and preserve other key permissions
+  vars:
+    path: '{{ acl_certificate_initial.paths[acl_certificate_kind] }}'
+    observed: >-
+      {{ (acl_certificate_observation.stdout | from_json).snapshot[path] }}
+    original: '{{ acl_certificate_initial.snapshot[path] }}'
+    entries: >-
+      {{ observed.aces | selectattr('sid', 'equalto', acl_guest_sid) | list }}
+    expected: '{{ acl_certificate_case.entries[acl_certificate_kind] }}'
+  ansible.builtin.assert:
+    fail_msg: '{{ {"expected": expected, "actual": entries} | to_json }}'
+    that:
+      - entries | map(attribute='type') | list == expected | map('first') | list
+      - >-
+        entries | map(attribute='flags') | list ==
+        expected | map(attribute=1) | list
+      - >-
+        entries | map(attribute='mask') | list ==
+        expected | map(attribute=2) | list
+      - observed.protected == original.protected
+      - observed.owner == original.owner
+      - observed.group == original.group
+      - observed.der == original.der
+      - observed.key_identity == original.key_identity
+      - >-
+        observed.aces | rejectattr('sid', 'equalto', acl_guest_sid) |
+        map(attribute='raw') | sort ==
+        original.aces | map(attribute='raw') | sort
+
+- name: Retain certificate results and complete native observations
+  vars:
+    snapshot: '{{ (acl_certificate_observation.stdout | from_json).snapshot }}'
+    record:
+      target: '{{ "certificate-" ~ acl_certificate_kind }}'
+      case: '{{ acl_certificate_case.name }}'
+      result: '{{ acl_certificate_result }}'
+      snapshot: '{{ snapshot }}'
+  ansible.builtin.set_fact:
+    acl_certificate_previous: '{{ snapshot }}'
+    acl_results: '{{ acl_results | default([]) + [record] }}'

@@ -1,0 +1,346 @@
+---
+capability_wmi_source: >-
+  {{ lookup('file', playbook_dir +
+  '/../../plugins/module_utils/legacy_windows_wmi.py') }}
+capability_program: |
+  {{ capability_wmi_source }}
+  {{ capability_fixture }}
+capability_fixture: |
+  # SPDX-License-Identifier: GPL-3.0-or-later
+  # CLI inventory is independent of the capability payload's native DLL calls.
+  import binascii
+  import ctypes
+  import glob
+  import hashlib
+  import json
+  import os
+  import re
+  import subprocess
+  import sys
+  import tempfile
+  import time
+  import winreg
+
+  workspace, operation = sys.argv[1:3]
+  journal_path = os.path.join(workspace, 'capability-journal.json')
+  root = os.environ['SystemRoot']
+  tool = os.path.join(root, 'Sysnative', 'dism.exe')
+  if not os.path.isfile(tool):
+      tool = os.path.join(root, 'System32', 'dism.exe')
+  def provider_available():
+      path = os.path.join(root, 'System32', 'DismApi.dll')
+      if not os.path.isfile(tool) or not os.path.isfile(path):
+          return False
+      try:
+          library = ctypes.WinDLL(path)
+      except OSError:
+          return False
+      return all(hasattr(library, name) for name in (
+          'DismGetCapabilities', 'DismAddCapability', 'DismRemoveCapability'))
+
+  supported = provider_available()
+  target = 'XPS.Viewer~~~~0.0.1.0'
+  pending_paths = (
+      r'SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing'
+      r'\RebootPending',
+      r'SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update'
+      r'\RebootRequired',
+      r'SYSTEM\CurrentControlSet\Control\Session Manager')
+
+  def validate_workspace():
+      api = ctypes.WinDLL('kernel32', use_last_error=True)
+      api.GetLongPathNameW.argtypes = [ctypes.c_wchar_p, ctypes.c_wchar_p,
+                                      ctypes.c_uint32]
+      api.GetLongPathNameW.restype = ctypes.c_uint32
+      paths = []
+      for path in (workspace, tempfile.gettempdir()):
+          size = api.GetLongPathNameW(os.path.abspath(path), None, 0)
+          if not size:
+              raise ctypes.WinError(ctypes.get_last_error())
+          buffer = ctypes.create_unicode_buffer(size)
+          length = api.GetLongPathNameW(os.path.abspath(path), buffer, size)
+          assert 0 < length < size
+          paths.append(os.path.normcase(buffer.value))
+      assert os.path.basename(paths[0]).startswith(
+          'legacy-windows-capability-')
+      assert os.path.dirname(paths[0]) == paths[1]
+
+  def services():
+      with WmiConnection() as connection:
+          rows = connection.query('SELECT * FROM Win32_Service',
+              ['Name', 'DisplayName', 'StartMode', 'State', 'PathName',
+               'StartName'])
+      for row in rows:
+          if (row['Name'] != 'TrustedInstaller' and
+                  'bvsshserver' not in (row['PathName'] or '').lower()):
+              del row['State']
+      return {row['Name']: row for row in rows}
+
+  def pending():
+      result = {}
+      for path in pending_paths:
+          try:
+              key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, path)
+          except FileNotFoundError:
+              result[path] = None
+              continue
+          with key:
+              values = {}
+              for index in range(winreg.QueryInfoKey(key)[1]):
+                  name, value, kind = winreg.EnumValue(key, index)
+                  if (path == pending_paths[-1] and
+                          name != 'PendingFileRenameOperations'):
+                      continue
+                  if isinstance(value, bytes):
+                      value = {'hex': binascii.hexlify(value).decode('ascii')}
+                  values[name] = [value, kind]
+              # The Session Manager key normally exists even with no rename
+              # request; only its pending-file value prevents a recovery reboot.
+              if path == pending_paths[-1] and not values:
+                  values = None
+              result[path] = values
+      return result
+
+  def catalogue():
+      if not supported:
+          return None
+      with subprocess.Popen([tool, '/Online', '/English', '/Get-Capabilities',
+              '/LogPath:' + os.path.join(workspace, 'fixture.log'),
+              '/ScratchDir:' + workspace], stdout=subprocess.PIPE,
+              stderr=subprocess.PIPE) as child:
+          stdout, stderr = child.communicate()
+      if child.returncode:
+          raise OSError('Capability inventory failed: ' +
+              stderr.decode('mbcs', errors='replace'))
+      text = stdout.decode('mbcs', errors='replace')
+      names = re.findall(r'^Capability Identity\s*:\s*(.*?)\s*$',
+                         text, re.MULTILINE)
+      states = re.findall(r'^State\s*:\s*(.*?)\s*$', text, re.MULTILINE)
+      assert names and len(names) == len(states)
+      assert len(names) == len(set(names))
+      # CLI labels include spaces; the public DISM enum names do not.
+      return dict(zip(names, [state.replace(' ', '') for state in states]))
+
+  def protected_files():
+      paths = {sys.executable}
+      for row in services().values():
+          command = row['PathName'] or ''
+          if 'bvsshserver' in command.lower():
+              executable = (command.split('"')[1] if command.startswith('"')
+                            else command.split(' ')[0])
+              paths.add(executable)
+      result = {}
+      for path in sorted(paths):
+          with open(path, 'rb') as stream:
+              result[path] = hashlib.sha256(stream.read()).hexdigest()
+      return result
+
+  def task_resources():
+      task_root = os.path.join(root, 'System32', 'Tasks')
+      tasks = []
+      for directory, _folders, names in os.walk(task_root):
+          tasks.extend(os.path.relpath(os.path.join(directory, name), task_root)
+                       for name in names)
+      return {'tasks': sorted(tasks), 'batch_directories': sorted(glob.glob(
+          os.path.join(tempfile.gettempdir(),
+                       'legacy-windows-capability-batch-*')))}
+
+  def snapshot():
+      return {'capabilities': catalogue(), 'pending': pending(),
+              'services': services(), 'files': protected_files(),
+              'task_resources': task_resources()}
+
+  def boot_identity():
+      with WmiConnection() as connection:
+          rows = connection.query('SELECT LastBootUpTime FROM '
+              'Win32_OperatingSystem', ['LastBootUpTime'])
+      assert len(rows) == 1 and rows[0]['LastBootUpTime']
+      return rows[0]['LastBootUpTime']
+
+  def write(record):
+      temporary = None
+      try:
+          with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8',
+                  prefix='capability-journal-', suffix='.writing',
+                  dir=workspace, delete=False) as stream:
+              temporary = stream.name
+              json.dump(record, stream, sort_keys=True)
+              stream.flush()
+              os.fsync(stream.fileno())
+          os.replace(temporary, journal_path)
+      finally:
+          if temporary is not None and os.path.exists(temporary):
+              os.remove(temporary)
+
+  def read():
+      with open(journal_path, encoding='utf-8') as stream:
+          record = json.load(stream)
+      assert record['workspace'] == workspace and record['target'] == target
+      return record
+
+  def setup():
+      assert not os.path.exists(journal_path)
+      before = {'capabilities': None, 'pending': pending(),
+                'services': services(), 'files': protected_files(),
+                'task_resources': task_resources()}
+      record = {'workspace': workspace, 'target': target,
+                'before': before, 'complete': False,
+                'initial_boot': boot_identity(), 'servicing_reboot': False}
+      write(record)
+      before['capabilities'] = catalogue()
+      if supported:
+          assert before['capabilities'].get(target) == 'NotPresent'
+          assert not any('Pending' in value
+                         for value in before['capabilities'].values())
+      record['complete'] = True
+      write(record)
+      return {'supported': supported, 'before': before,
+              'log': os.path.join(workspace, 'request.log'),
+              'missing_source': os.path.join(workspace, 'missing-source')}
+
+  def restore_service(original):
+      before = original.get('TrustedInstaller')
+      current = services().get('TrustedInstaller')
+      if current == before:
+          return
+      assert before is not None and current is not None
+      assert before['State'] == 'Stopped'
+      assert {k: v for k, v in before.items() if k != 'State'} == (
+          {k: v for k, v in current.items() if k != 'State'})
+      api = ctypes.WinDLL('advapi32', use_last_error=True)
+      pointer, wide, dword = (ctypes.c_void_p, ctypes.c_wchar_p,
+                              ctypes.c_uint32)
+      api.OpenSCManagerW.argtypes = [wide, wide, dword]
+      api.OpenSCManagerW.restype = pointer
+      api.OpenServiceW.argtypes = [pointer, wide, dword]
+      api.OpenServiceW.restype = pointer
+      api.ControlService.argtypes = [pointer, dword, pointer]
+      api.ControlService.restype = ctypes.c_int
+      api.CloseServiceHandle.argtypes = [pointer]
+      api.CloseServiceHandle.restype = ctypes.c_int
+      manager = api.OpenSCManagerW(None, None, 1)
+      if not manager:
+          raise ctypes.WinError(ctypes.get_last_error())
+      handle = None
+      try:
+          handle = api.OpenServiceW(manager, 'TrustedInstaller', 0x20)
+          if not handle:
+              raise ctypes.WinError(ctypes.get_last_error())
+          status = (dword * 7)()
+          if not api.ControlService(handle, 1, status):
+              raise ctypes.WinError(ctypes.get_last_error())
+          for attempt in range(40):
+              if services().get('TrustedInstaller') == before:
+                  return
+              time.sleep(.25)
+          raise ValueError('Servicing service did not restore original state')
+      finally:
+          if handle:
+              api.CloseServiceHandle(handle)
+          api.CloseServiceHandle(manager)
+
+  def remove_target():
+      with subprocess.Popen([tool, '/Online', '/English',
+              '/Remove-Capability', '/CapabilityName:' + target,
+              '/NoRestart',
+              '/LogPath:' + os.path.join(workspace, 'recovery.log'),
+              '/ScratchDir:' + workspace],
+              stdout=subprocess.PIPE, stderr=subprocess.PIPE) as child:
+          stdout, stderr = child.communicate()
+      assert child.returncode in (0, 3010)
+      return {'rc': child.returncode,
+              'stdout': stdout.decode('mbcs', errors='replace'),
+              'stderr': stderr.decode('mbcs', errors='replace')}
+
+  def cleanup():
+      if not os.path.exists(journal_path):
+          return {'restored': True, 'journal_absent': True}
+      record = read()
+      before = record['before']
+      after = snapshot()
+      actions = []
+      if record['complete'] and supported:
+          original = before['capabilities']
+          current = after['capabilities']
+          assert set(current) == set(original)
+          assert all(current[name] == original[name]
+                     for name in original if name != target)
+          if current[target] != original[target]:
+              # Only the one journal-owned absent capability may be removed.
+              assert original[target] == 'NotPresent'
+              assert current[target] in (
+                  'Installed', 'InstallPending', 'UninstallPending')
+              if current[target] != 'UninstallPending':
+                  actions.append(remove_target())
+                  if actions[-1]['rc'] == 3010:
+                      record['servicing_reboot'] = True
+                      write(record)
+                  after = snapshot()
+          if (after['capabilities'] != original or
+                  after['pending'] != before['pending']):
+              assert (any('Pending' in value
+                          for value in after['capabilities'].values()) or
+                      any(value is not None
+                          for value in after['pending'].values()))
+              # Rebooting must not erase a reboot request that predates this
+              # fixture. Retain the journal if exact recovery needs that choice.
+              assert all(value is None for value in before['pending'].values())
+              return {'restored': False, 'requires_reboot': True,
+                      'after': after, 'actions': actions}
+          # DISM can return 3010 with already-equal catalogue/registry markers.
+          # Keep its reported reboot obligation until a real boot has occurred.
+          if (record.get('servicing_reboot') and
+                  boot_identity() == record['initial_boot']):
+              assert all(value is None for value in before['pending'].values())
+              return {'restored': False, 'requires_reboot': True,
+                      'after': after, 'actions': actions}
+      elif record['complete']:
+          assert after['capabilities'] == before['capabilities']
+      assert after['pending'] == before['pending']
+      assert after['files'] == before['files']
+      assert after['task_resources'] == before['task_resources']
+      restore_service(before['services'])
+      after['services'] = services()
+      assert after['services'] == before['services']
+      record['verified'] = True
+      write(record)
+      # Only finalize after the play's separate full-service interface check.
+      return {'restored': True, 'requires_reboot': False,
+              'before': before, 'after': after, 'actions': actions,
+              'setup_incomplete': not record['complete']}
+
+  def note_reboot():
+      record = read()
+      assert supported and record['complete']
+      record['servicing_reboot'] = True
+      write(record)
+      return {'journaled_reboot': True}
+
+  def finalize():
+      if not os.path.exists(journal_path):
+          return {'finalized': True, 'journal_absent': True}
+      record = read()
+      assert record.get('verified') is True
+      assert services() == record['before']['services']
+      assert pending() == record['before']['pending']
+      assert protected_files() == record['before']['files']
+      assert task_resources() == record['before']['task_resources']
+      os.remove(journal_path)
+      return {'finalized': True}
+
+  if __name__ == '__main__':
+      assert sys.version_info[:3] == (3, 4, 4)
+      validate_workspace()
+      if operation == 'setup':
+          result = setup()
+      elif operation == 'observe':
+          result = snapshot()
+      elif operation == 'cleanup':
+          result = cleanup()
+      elif operation == 'note_reboot':
+          result = note_reboot()
+      elif operation == 'finalize':
+          result = finalize()
+      else:
+          raise ValueError('Unknown fixture operation')
+      print(json.dumps(result, sort_keys=True))

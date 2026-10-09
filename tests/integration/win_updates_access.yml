@@ -1,0 +1,173 @@
+---
+- name: Compare bounded public native and released WUA results and recovery
+  hosts: legacy_windows
+  gather_facts: false
+  vars:
+    updates_capture_path: '{{ playbook_dir }}/win-updates-access-result.json'
+    updates_journal_path: '{{ playbook_dir }}/win-updates-access-journal.json'
+    updates_observer_source: '{{ playbook_dir }}/fixtures/setup.py'
+    updates_cases:
+      - {id: access, check: false}
+      - {id: access-check, check: true}
+    updates_protected_observer: |
+      import json,sys
+      assert sys.version_info[:3] == (3,4,4)
+      namespace = {'__name__':'updates_protected_observer'}
+      source = (
+          {{ lookup('ansible.builtin.file',
+                    updates_observer_source, rstrip=false) | to_json }}
+      )
+      exec(compile(source, 'frozen_protected_observer', 'exec'),
+           namespace)
+      result = namespace['_protected_state']()
+      for label,path in (
+          ('update_policy',
+           r'SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate'),
+          ('update_au_policy',
+           r'SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU')):
+          result[label] = namespace['_registry_values'](
+              'HKEY_LOCAL_MACHINE',path)
+      print(json.dumps(result))
+    updates_staging_observer: >-
+      import glob,json,os,sys,tempfile;
+      assert sys.version_info[:3]==(3,4,4);
+      print(json.dumps({name:sorted(glob.glob(
+      os.path.join(tempfile.gettempdir(),pattern)))
+      for name,pattern in [('staging','ansible-tmp-*'),
+      ('workers','legacy-windows-updates-*')]}))
+  tasks:
+    - name: Capture original global staging and native worker directories
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "{{ updates_staging_observer }}""
+      register: updates_staging_before
+      changed_when: false
+    - name: Capture literal protected values with actual Python 3.4.4
+      sustainablelobster.legacy_windows.win_command:
+        argv: ['{{ ansible_python_interpreter }}', '-']
+        stdin: '{{ updates_protected_observer }}'
+      register: updates_protected_before
+      changed_when: false
+      no_log: true
+    - name: Capture all original service configuration and runtime rows
+      sustainablelobster.legacy_windows.win_service_info:
+      register: updates_services_before
+      no_log: true
+    - name: Retain complete controller pre-write access journal
+      ansible.builtin.copy:
+        dest: '{{ updates_journal_path }}'
+        mode: '0600'
+        content: >-
+          {{ {'services':updates_services_before,
+              'protected':updates_protected_before,
+              'staging':updates_staging_before} | to_nice_json }}
+      delegate_to: localhost
+      no_log: true
+    - name: Exercise only the explicitly supplied public update cases
+      block:
+        - name: Capture complete native public access results
+          sustainablelobster.legacy_windows.win_updates:
+          args: '{{ item.args | default({"_operation": "test"}) }}'
+          check_mode: '{{ item.check }}'
+          loop: '{{ updates_cases }}'
+          register: updates_native
+          ignore_errors: true
+          no_log: true
+        - name: Capture untouched released public access results
+          ansible.windows.win_updates:
+          args: '{{ item.args | default({"_operation": "test"}) }}'
+          check_mode: '{{ item.check }}'
+          loop: '{{ updates_cases }}'
+          register: updates_source
+          ignore_errors: true
+          no_log: true
+        - name: Compare every whole typed public native and released result
+          vars:
+            native_public: >-
+              {{ item.0 | dict2items |
+              rejectattr('key', 'in', ['invocation', 'exception']) |
+              items2dict }}
+            source_public: >-
+              {{ item.1 | dict2items |
+              rejectattr('key', 'in', ['invocation', 'exception']) |
+              items2dict }}
+          ansible.builtin.assert:
+            that:
+              - >-
+                (native_public | to_json(sort_keys=true)) ==
+                (source_public | to_json(sort_keys=true))
+          loop: >-
+            {{ updates_native.results | zip(updates_source.results) | list }}
+          no_log: true
+      always:
+        - name: Capture raw service effects before restoration
+          sustainablelobster.legacy_windows.win_service_info:
+          register: updates_services_after
+          no_log: true
+        - name: Restore only access-started WUA service runtime states
+          sustainablelobster.legacy_windows.win_service:
+            name: '{{ item }}'
+            state: stopped
+          loop: [TrustedInstaller, wuauserv]
+          when:
+            - >-
+              (updates_services_before.services |
+              selectattr('name', 'equalto', item) | first).state == 'stopped'
+            - >-
+              (updates_services_after.services |
+              selectattr('name', 'equalto', item) | first).state != 'stopped'
+          no_log: true
+        - name: Capture all final service configuration and runtime rows
+          sustainablelobster.legacy_windows.win_service_info:
+          register: updates_services_final
+          no_log: true
+        - name: Capture final literal protected values
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}', '-']
+            stdin: '{{ updates_protected_observer }}'
+          register: updates_protected_after
+          changed_when: false
+          no_log: true
+        - name: Capture final global staging and native worker directory closure
+          ansible.builtin.raw: >-
+            cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+            "{{ updates_staging_observer }}""
+          register: updates_staging_after
+          changed_when: false
+        - name: Preserve whole raw public results and recovery
+          ansible.builtin.copy:
+            dest: '{{ updates_capture_path }}'
+            mode: '0600'
+            content: >-
+              {{ {'native':updates_native | default({}),
+                  'source':updates_source | default({}),
+                  'services_before':updates_services_before,
+                  'services_after':updates_services_after,
+                  'services_final':updates_services_final,
+                  'protected_before':updates_protected_before,
+                  'protected_after':updates_protected_after,
+                  'staging_before':updates_staging_before,
+                  'staging_after':updates_staging_after} | to_nice_json }}
+          delegate_to: localhost
+          no_log: true
+        - name: Require literal measured configuration and staging closure
+          ansible.builtin.assert:
+            that:
+              - >-
+                updates_services_final.services ==
+                updates_services_before.services
+              - >-
+                (updates_protected_after.stdout | from_json) ==
+                (updates_protected_before.stdout | from_json)
+              - >-
+                (updates_staging_after.stdout | from_json) ==
+                (updates_staging_before.stdout | from_json)
+          no_log: true
+    - name: Require successful public native and released access prerequisites
+      ansible.builtin.assert:
+        that:
+          - not updates_native.failed | default(false)
+          - not updates_source.failed | default(false)
+          - updates_native.results | length == updates_cases | length
+          - updates_source.results | length == updates_cases | length
+      no_log: true

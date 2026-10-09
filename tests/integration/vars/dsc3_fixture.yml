@@ -1,0 +1,168 @@
+---
+dsc3_fixture: |
+  # Copyright 2026 Joe Lustri
+  # SPDX-License-Identifier: GPL-3.0-or-later
+  """Journal a portable DSC engine and one uniquely owned registry key."""
+
+  import hashlib
+  import json
+  import os
+  import sys
+  import time
+  import uuid
+  import winreg
+  import zipfile
+
+  assert sys.version_info[:3] == (3, 4, 4)
+  WORKSPACE, OPERATION = sys.argv[1:3]
+  JOURNAL = os.path.join(WORKSPACE, 'dsc3-recovery.json')
+  ENGINE = os.path.join(WORKSPACE, 'engine')
+  ARCHIVE_SHA256 = (
+      '8dc83ccd773d5a43f5907f01034c75c64771dc0e90d53b837c11747af3d87d43')
+  ENGINE_FILES = (
+      'dsc.exe', 'dsc.settings.json', 'dsc_default.settings.json',
+      'dscecho.exe', 'echo.dsc.resource.json', 'registry.exe',
+      'registry.dsc.resource.json', 'osinfo.exe', 'osinfo.dsc.resource.json',
+      'NOTICE.txt',
+  )
+
+
+  def key_names():
+      names = []
+      index = 0
+      while True:
+          try:
+              names.append(winreg.EnumKey(winreg.HKEY_CURRENT_USER, index))
+          except OSError as error:
+              if error.winerror != 259:
+                  raise
+              return names
+          index += 1
+
+
+  def digest(path):
+      with open(path, 'rb') as stream:
+          return hashlib.sha256(stream.read()).hexdigest()
+
+
+  def save(journal):
+      with open(JOURNAL, 'w', encoding='utf-8') as stream:
+          json.dump(journal, stream, sort_keys=True)
+          stream.flush()
+          os.fsync(stream.fileno())
+      with open(JOURNAL, encoding='utf-8') as stream:
+          assert json.load(stream) == journal
+
+
+  def load():
+      with open(JOURNAL, encoding='utf-8') as stream:
+          journal = json.load(stream)
+      assert journal['workspace'] == WORKSPACE
+      assert journal['key'].startswith('legacy-windows-dsc-')
+      assert len(journal['key']) == len('legacy-windows-dsc-') + 32
+      return journal
+
+
+  def observe(journal):
+      names = key_names()
+      protected_keys = [name for name in names if name != journal['key']]
+      assert protected_keys == journal['keys']
+      protected = os.path.join(WORKSPACE, 'protected.txt')
+      assert digest(protected) == journal['protected']
+      values = []
+      try:
+          key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, journal['key'])
+      except FileNotFoundError:
+          present = False
+      else:
+          with key:
+              assert winreg.QueryInfoKey(key)[0] == 0
+              for index in range(winreg.QueryInfoKey(key)[1]):
+                  values.append(winreg.EnumValue(key, index))
+          present = True
+      return {'key_present': present, 'values': values, 'keys': names,
+              'protected': journal['protected'], 'utc': time.time()}
+
+
+  def reset(journal):
+      observe(journal)
+      try:
+          winreg.DeleteKey(winreg.HKEY_CURRENT_USER, journal['key'])
+      except FileNotFoundError:
+          pass
+      seed = json.loads(sys.argv[3])
+      if seed is not None:
+          root = winreg.CreateKey(winreg.HKEY_CURRENT_USER, journal['key'])
+          with root as key:
+              winreg.SetValueEx(key, 'message', 0, winreg.REG_SZ, seed)
+      return observe(journal)
+
+
+  def setup():
+      assert not os.path.exists(JOURNAL)
+      archive = os.path.join(WORKSPACE, 'dsc.zip')
+      assert digest(archive) == ARCHIVE_SHA256
+      key = 'legacy-windows-dsc-' + uuid.uuid4().hex
+      names = key_names()
+      assert key not in names
+      protected = os.path.join(WORKSPACE, 'protected.txt')
+      with open(protected, 'wb') as stream:
+          stream.write(b'protected DSC fixture sibling\r\n')
+      journal = {'workspace': WORKSPACE, 'key': key, 'keys': names,
+                 'protected': digest(protected), 'engine_files': {}}
+      save(journal)
+      os.mkdir(ENGINE)
+      with zipfile.ZipFile(archive) as source:
+          for name in ENGINE_FILES:
+              source.extract(name, ENGINE)
+              journal['engine_files'][name] = digest(os.path.join(ENGINE, name))
+      config = {
+          '$schema': ('https://aka.ms/dsc/schemas/v3/bundled/'
+                      'config/document.json'),
+          'resources': [{'name': 'file echo',
+                         'type': 'Microsoft.DSC.Debug/Echo',
+                         'properties': {
+                             'output': 'controller and remote file'}}]}
+      documents = (('echo.dsc.json', json.dumps(config)),
+                   ('invalid.dsc.yaml', '[{'))
+      for filename, content in documents:
+          path = os.path.join(WORKSPACE, filename)
+          with open(path, 'w', encoding='utf-8') as stream:
+              stream.write(content)
+      journal['config_files'] = {
+          filename: digest(os.path.join(WORKSPACE, filename))
+          for filename in ('echo.dsc.json', 'invalid.dsc.yaml')}
+      save(journal)
+      return {'engine': ENGINE, 'key_path': 'HKCU\\' + key,
+              'path_env': os.environ.get('PATH', ''),
+              'original': observe(journal), 'journal': journal}
+
+
+  def cleanup(journal):
+      current = observe(journal)
+      for name, expected in journal['engine_files'].items():
+          assert digest(os.path.join(ENGINE, name)) == expected
+      for name, expected in journal.get('config_files', {}).items():
+          assert digest(os.path.join(WORKSPACE, name)) == expected
+      try:
+          winreg.DeleteKey(winreg.HKEY_CURRENT_USER, journal['key'])
+      except FileNotFoundError:
+          pass
+      final = observe(journal)
+      assert final['keys'] == journal['keys'] and not final['key_present']
+      return {'restored': True, 'original_keys': journal['keys'],
+              'final_keys': final['keys'], 'before': current, 'final': final,
+              'journal': journal}
+
+
+  if OPERATION == 'setup':
+      result = setup()
+  elif OPERATION == 'reset':
+      result = reset(load())
+  elif OPERATION == 'observe':
+      result = observe(load())
+  elif OPERATION == 'cleanup':
+      result = cleanup(load())
+  else:
+      raise ValueError('Unknown DSC fixture operation: ' + OPERATION)
+  print(json.dumps(result, sort_keys=True))

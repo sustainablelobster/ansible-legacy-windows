@@ -1,0 +1,169 @@
+---
+- name: Verify signed legacy hotfix servicing behind an owned image snapshot
+  hosts: legacy_windows
+  gather_facts: false
+  vars_files:
+    - vars/hotfix_lifecycle_fixture.yml
+    - vars/hotfix_lifecycle.yml
+  vars:
+    hotfix_lifecycle_engine: native
+    hotfix_lifecycle_identifier: >-
+      Package_for_KB4474419~31bf3856ad364e35~amd64~~6.1.3.2
+    hotfix_lifecycle_kb: KB4474419
+    hotfix_legacy_prerequisite: >-
+      Package_for_KB4490628~31bf3856ad364e35~amd64~~6.1.1.2
+    hotfix_legacy_packages:
+      - filename: windows6.1-kb4490628-x64.msu
+        target: prerequisite.msu
+        identifier: '{{ hotfix_legacy_prerequisite }}'
+        kb: KB4490628
+        sha256: 8075f6d889bcb27be6f52ed47081675e5bb8a5390f2f5bfe4ec27a2bb70cbf5e
+      - filename: windows6.1-kb4474419-v3-x64.msu
+        target: package.msu
+        identifier: '{{ hotfix_lifecycle_identifier }}'
+        kb: '{{ hotfix_lifecycle_kb }}'
+        sha256: 99312df792b376f02e25607d2eb3355725c47d124d8da253193195515fe90213
+  tasks:
+    - name: Require explicit snapshot protection and private evidence locations
+      ansible.builtin.assert:
+        that:
+          - hotfix_lifecycle_snapshot_protected | default(false) | bool
+          - hotfix_legacy_resource_root | length > 0
+          - hotfix_lifecycle_capture | length > 0
+    - name: Record the genuine compatibility floor and original global staging
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import glob,json,os,sys,tempfile;assert sys.version_info[:3]==(3,4,4);
+        print(json.dumps(sorted(glob.glob(os.path.join(tempfile.gettempdir(),
+        'ansible-tmp-*')))))""
+      register: hotfix_lifecycle_staging_before
+      changed_when: false
+    - name: Allocate one owned source and observation directory
+      sustainablelobster.legacy_windows.win_tempfile:
+        state: directory
+        prefix: legacy-windows-hotfix-lifecycle-
+      register: hotfix_legacy_workspace
+    - name: Execute the exact official package lifecycle
+      block:
+        - name: Retain the full pre-servicing provider baseline
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}', '-', observe,
+                   '{{ hotfix_lifecycle_identifier }}']
+            stdin: '{{ hotfix_lifecycle_program }}'
+          register: hotfix_legacy_baseline
+          changed_when: false
+          no_log: true
+        - name: Copy only the two identified official MSUs
+          sustainablelobster.legacy_windows.win_copy:
+            src: '{{ hotfix_legacy_resource_root }}/{{ item.filename }}'
+            dest: '{{ hotfix_legacy_workspace.path }}\{{ item.target }}'
+          loop: '{{ hotfix_legacy_packages }}'
+        - name: Verify native catalogue trust and exact package identities
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}', '-', inspect-install,
+                   '{{ item.identifier }}',
+                   '{{ hotfix_legacy_workspace.path }}\{{ item.target }}',
+                   '{{ item.kb }}', '{{ item.sha256 }}']
+            stdin: '{{ hotfix_lifecycle_program }}'
+          loop: '{{ hotfix_legacy_packages }}'
+          register: hotfix_legacy_inspection
+          changed_when: false
+          no_log: true
+        - name: Require the package is removable before any install
+          vars:
+            inspected: >-
+              {{ hotfix_legacy_inspection.results[1].stdout | from_json }}
+          ansible.builtin.assert:
+            that:
+              - inspected.declarations | length > 0
+              - >-
+                inspected.declarations | selectattr('permanence', 'defined') |
+                selectattr('permanence', 'equalto', 'permanent') |
+                list | length == 0
+              - inspected.metadata[0].state == 'NotPresent'
+        - name: Predict the servicing-stack prerequisite installation
+          sustainablelobster.legacy_windows.win_hotfix:
+            source: '{{ hotfix_legacy_workspace.path }}\prerequisite.msu'
+            hotfix_identifier: '{{ hotfix_legacy_prerequisite }}'
+            hotfix_kb: KB4490628
+          check_mode: true
+          register: hotfix_legacy_prerequisite_check
+        - name: Install the trusted prerequisite using the public legacy backend
+          sustainablelobster.legacy_windows.win_hotfix:
+            source: '{{ hotfix_legacy_workspace.path }}\prerequisite.msu'
+            hotfix_identifier: '{{ hotfix_legacy_prerequisite }}'
+            hotfix_kb: KB4490628
+          register: hotfix_legacy_prerequisite_install
+        - name: Repeat the exact prerequisite installation
+          sustainablelobster.legacy_windows.win_hotfix:
+            source: '{{ hotfix_legacy_workspace.path }}\prerequisite.msu'
+          register: hotfix_legacy_prerequisite_repeat
+        - name: Require actual prerequisite change and idempotence
+          ansible.builtin.assert:
+            that:
+              - hotfix_legacy_prerequisite_check.changed
+              - hotfix_legacy_prerequisite_install.changed
+              - not hotfix_legacy_prerequisite_repeat.changed
+        - name: Complete only a genuinely requested prerequisite restart
+          sustainablelobster.legacy_windows.win_reboot:
+            reboot_timeout: 600
+          when: >-
+            hotfix_legacy_prerequisite_install.reboot_required or
+            hotfix_legacy_prerequisite_repeat.reboot_required
+          register: hotfix_legacy_prerequisite_restart
+        - name: Initialize the existing public lifecycle cases
+          ansible.builtin.set_fact:
+            hotfix_lifecycle_workspace: '{{ hotfix_legacy_workspace.path }}'
+            hotfix_lifecycle_results: []
+            hotfix_lifecycle_restart_required: false
+        - name: Exercise signed install remove repeat preview and failure
+          ansible.builtin.include_tasks: tasks/win_hotfix_lifecycle_case.yml
+          loop: '{{ hotfix_lifecycle_cases }}'
+          loop_control:
+            loop_var: hotfix_lifecycle_case
+            label: '{{ hotfix_lifecycle_case.name }}'
+      always:
+        - name: Preserve the unmodified results before external image recovery
+          ansible.builtin.copy:
+            dest: '{{ hotfix_lifecycle_capture }}'
+            mode: '0600'
+            content: >-
+              {{ {'baseline': hotfix_legacy_baseline | default(none),
+                  'workspace': hotfix_legacy_workspace.path,
+                  'inspection': hotfix_legacy_inspection | default(none),
+                  'prerequisite_check':
+                    hotfix_legacy_prerequisite_check | default(none),
+                  'prerequisite_install':
+                    hotfix_legacy_prerequisite_install | default(none),
+                  'prerequisite_repeat':
+                    hotfix_legacy_prerequisite_repeat | default(none),
+                  'prerequisite_restart':
+                    hotfix_legacy_prerequisite_restart | default(none),
+                  'results': hotfix_lifecycle_results | default([])} |
+                 to_nice_json }}
+          delegate_to: localhost
+          vars:
+            ansible_connection: local
+            ansible_shell_type: sh
+            ansible_python_interpreter: '{{ ansible_playbook_python }}'
+          changed_when: false
+        - name: Remove only the owned input directory after completed servicing
+          sustainablelobster.legacy_windows.win_file:
+            path: '{{ hotfix_legacy_workspace.path }}'
+            state: absent
+        - name: Verify original global staging before image recovery
+          ansible.builtin.raw: >-
+            cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+            "import glob,json,os,tempfile;
+            print(json.dumps(sorted(glob.glob(os.path.join(tempfile.gettempdir(),
+            'ansible-tmp-*')))))""
+          register: hotfix_legacy_staging_final
+          changed_when: false
+        - name: Require literal module workspace closure
+          ansible.builtin.assert:
+            that:
+              - >-
+                (hotfix_lifecycle_staging_before.stdout | from_json) ==
+                (hotfix_legacy_staging_final.stdout | from_json)
+        - name: Close this phase before restoring its owned VM snapshot
+          ansible.builtin.meta: reset_connection

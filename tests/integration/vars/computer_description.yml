@@ -1,0 +1,133 @@
+---
+computer_description_cases:
+  - name: Keep the controlled baseline unchanged
+    parameters:
+      owner: Legacy fixture owner
+      organization: Legacy fixture organization
+      description: Legacy fixture description
+    changed: false
+  - name: Preserve the description write before a missing-owner failure
+    fixture_operation: remove_owner
+    parameters:
+      description: Legacy partial failure
+      owner: Legacy requested owner
+    changed: false
+    partial_change: true
+    expected: {description: Legacy partial failure, owner: null}
+    error: >-
+      Unhandled exception while executing module: Property RegisteredOwner
+      does not exist at path
+      HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion\.
+  - name: Recover after restoring the missing controlled owner
+    fixture_operation: restore_owner
+    parameters:
+      description: Legacy fixture description
+      owner: Legacy fixture owner
+    changed: true
+    expected: {description: Legacy fixture description}
+  - name: Predict all three changes without writing
+    parameters:
+      owner: Legacy test owner
+      organization: Legacy test organization
+      description: Legacy test description
+    check: true
+    changed: true
+  - name: Set all three fields
+    parameters:
+      owner: Legacy test owner
+      organization: Legacy test organization
+      description: Legacy test description
+    changed: true
+    expected:
+      owner: Legacy test owner
+      organization: Legacy test organization
+      description: Legacy test description
+  - name: Repeat all three fields
+    parameters:
+      owner: Legacy test owner
+      organization: Legacy test organization
+      description: Legacy test description
+    changed: false
+  - name: Predict an owner-only change
+    parameters: {owner: Legacy second owner}
+    check: true
+    changed: true
+  - name: Change only the owner
+    parameters: {owner: Legacy second owner}
+    changed: true
+    expected: {owner: Legacy second owner}
+  - name: Repeat the owner-only change
+    parameters: {owner: Legacy second owner}
+    changed: false
+  - name: Change only the description case
+    parameters: {description: Legacy test DESCRIPTION}
+    changed: true
+    expected: {description: Legacy test DESCRIPTION}
+  - name: Repeat the description-only change
+    parameters: {description: Legacy test DESCRIPTION}
+    changed: false
+  - name: Set a Unicode organization
+    parameters: {organization: 'Legacy café organization 雪'}
+    changed: true
+    expected: {organization: 'Legacy café organization 雪'}
+  - name: Repeat the Unicode organization
+    parameters: {organization: 'Legacy café organization 雪'}
+    changed: false
+  - name: Ignore null fields while changing the organization
+    parameters:
+      owner: null
+      organization: Legacy null companion
+      description: null
+    changed: true
+    expected: {organization: Legacy null companion}
+  - name: Repeat the value beside null fields
+    parameters:
+      owner: null
+      organization: Legacy null companion
+      description: null
+    changed: false
+  - name: Treat all explicitly null fields as a no-op
+    parameters: {owner: null, organization: null, description: null}
+    changed: false
+  - name: Set a description with BMP and non-BMP characters
+    parameters: {description: 'Legacy description 雪😀'}
+    changed: true
+    expected: {description: 'Legacy description 雪😀'}
+  - name: Repeat the Unicode description
+    parameters: {description: 'Legacy description 雪😀'}
+    changed: false
+  - name: Predict clearing all three fields
+    parameters: {owner: '', organization: '', description: ''}
+    check: true
+    changed: true
+  - name: Clear all three fields
+    parameters: {owner: '', organization: '', description: ''}
+    changed: true
+    expected: {owner: '', organization: '', description: ''}
+  - name: Repeat the cleared fields
+    parameters: {owner: '', organization: '', description: ''}
+    changed: false
+  - name: Leave null fields untouched beside an empty description
+    parameters: {owner: null, organization: null, description: ''}
+    changed: false
+  - name: Reject omitted fields without writing
+    parameters: {}
+    changed: false
+    error: 'one of the following is required: owner, organization, description'
+  - name: Recover after validation failure
+    parameters:
+      owner: Legacy recovered owner
+      organization: Legacy recovered organization
+      description: Legacy recovered description
+    changed: true
+    expected:
+      owner: Legacy recovered owner
+      organization: Legacy recovered organization
+      description: Legacy recovered description
+  - name: Repeat the recovered values in check mode
+    parameters:
+      owner: Legacy recovered owner
+      organization: Legacy recovered organization
+      description: Legacy recovered description
+    check: true
+    changed: false

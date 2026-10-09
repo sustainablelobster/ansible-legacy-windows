@@ -1,0 +1,192 @@
+---
+# SPDX-License-Identifier: GPL-3.0-or-later
+user_fixture_code: |
+  import ctypes, json, os, re, sys, uuid
+  assert sys.version_info[:3] == (3, 4, 4)
+  pointer, dword, wide = ctypes.c_void_p, ctypes.c_uint32, ctypes.c_wchar_p
+  net = ctypes.WinDLL('netapi32')
+  security = ctypes.WinDLL('advapi32', use_last_error=True)
+  kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+  class UserInfo(ctypes.Structure):
+      _fields_ = [
+          ('name', wide), ('password', wide), ('password_age', dword),
+          ('priv', dword), ('home_dir', wide), ('comment', wide),
+          ('flags', dword), ('script_path', wide), ('auth_flags', dword),
+          ('full_name', wide), ('usr_comment', wide), ('parms', wide),
+          ('workstations', wide), ('last_logon', dword),
+          ('last_logoff', dword), ('acct_expires', dword),
+          ('max_storage', dword), ('units_per_week', dword),
+          ('logon_hours', pointer), ('bad_pw_count', dword),
+          ('num_logons', dword), ('logon_server', wide),
+          ('country_code', dword), ('code_page', dword),
+          ('user_sid', pointer), ('primary_group_id', dword),
+          ('profile', wide), ('home_dir_drive', wide),
+          ('password_expired', dword)]
+  class GroupInfo(ctypes.Structure):
+      _fields_ = [('name', wide), ('comment', wide)]
+  class GroupName(ctypes.Structure):
+      _fields_ = [('name', wide)]
+  net.NetUserGetInfo.argtypes = [wide, wide, dword,
+      ctypes.POINTER(pointer)]
+  net.NetUserGetInfo.restype = dword
+  net.NetUserDel.argtypes = [wide, wide]
+  net.NetUserDel.restype = dword
+  net.NetLocalGroupGetInfo.argtypes = [wide, wide, dword,
+      ctypes.POINTER(pointer)]
+  net.NetLocalGroupGetInfo.restype = dword
+  net.NetLocalGroupAdd.argtypes = [wide, dword, pointer,
+      ctypes.POINTER(dword)]
+  net.NetLocalGroupAdd.restype = dword
+  net.NetLocalGroupDel.argtypes = [wide, wide]
+  net.NetLocalGroupDel.restype = dword
+  net.NetUserGetLocalGroups.argtypes = [wide, wide, dword, dword,
+      ctypes.POINTER(pointer), dword, ctypes.POINTER(dword),
+      ctypes.POINTER(dword)]
+  net.NetUserGetLocalGroups.restype = dword
+  net.NetApiBufferFree.argtypes = [pointer]
+  net.NetApiBufferFree.restype = dword
+  security.ConvertSidToStringSidW.argtypes = [pointer,
+      ctypes.POINTER(wide)]
+  security.ConvertSidToStringSidW.restype = ctypes.c_int
+  security.LookupAccountNameW.argtypes = [wide, wide, pointer,
+      ctypes.POINTER(dword), wide, ctypes.POINTER(dword),
+      ctypes.POINTER(dword)]
+  security.LookupAccountNameW.restype = ctypes.c_int
+  kernel.LocalFree.argtypes = [pointer]
+  kernel.LocalFree.restype = pointer
+  user_suffixes = ('main', 'part', 'prev')
+  group_suffixes = ('one', 'two')
+  reserved_suffixes = user_suffixes + group_suffixes + ('miss',)
+
+  def sid_text(sid):
+      text = wide()
+      try:
+          if not security.ConvertSidToStringSidW(sid, ctypes.byref(text)):
+              raise ctypes.WinError(ctypes.get_last_error())
+          return text.value
+      finally:
+          if text:
+              kernel.LocalFree(ctypes.cast(text, pointer))
+
+  def account_sid(name):
+      size, domain_size, kind = dword(), dword(), dword()
+      qualified = os.environ['COMPUTERNAME'] + '\\' + name
+      security.LookupAccountNameW(None, qualified, None,
+          ctypes.byref(size), None, ctypes.byref(domain_size),
+          ctypes.byref(kind))
+      assert ctypes.get_last_error() == 122
+      sid = ctypes.create_string_buffer(size.value)
+      domain = ctypes.create_unicode_buffer(max(1, domain_size.value))
+      if not security.LookupAccountNameW(None, qualified, sid,
+              ctypes.byref(size), domain, ctypes.byref(domain_size),
+              ctypes.byref(kind)):
+          raise ctypes.WinError(ctypes.get_last_error())
+      return sid_text(sid)
+
+  def memberships(name):
+      buffer, count, total = pointer(), dword(), dword()
+      try:
+          status = net.NetUserGetLocalGroups(None, name, 0, 0,
+              ctypes.byref(buffer), 0xffffffff, ctypes.byref(count),
+              ctypes.byref(total))
+          if status:
+              raise ctypes.WinError(status)
+          entries = ctypes.cast(buffer, ctypes.POINTER(GroupName))
+          return [entries[index].name for index in range(count.value)]
+      finally:
+          if buffer:
+              net.NetApiBufferFree(buffer)
+
+  def user(name):
+      buffer = pointer()
+      try:
+          status = net.NetUserGetInfo(None, name, 4, ctypes.byref(buffer))
+          if status == 2221:
+              return None
+          if status:
+              raise ctypes.WinError(status)
+          info = ctypes.cast(buffer, ctypes.POINTER(UserInfo)).contents
+          result = {'name': info.name, 'sid': sid_text(info.user_sid),
+              'fullname': info.full_name or '',
+              'description': info.comment or '',
+              'home_directory': info.home_dir or '',
+              'login_script': info.script_path or '',
+              'profile': info.profile or '',
+              'account_disabled': bool(info.flags & 2),
+              'account_locked': bool(info.flags & 16),
+              'user_cannot_change_password': bool(info.flags & 64),
+              'password_never_expires': bool(info.flags & 65536),
+              'password_expired': bool(info.password_expired),
+              'account_expires': info.acct_expires}
+      finally:
+          if buffer:
+              net.NetApiBufferFree(buffer)
+      result['groups'] = memberships(name)
+      return result
+
+  def group(name):
+      buffer = pointer()
+      try:
+          status = net.NetLocalGroupGetInfo(None, name, 1,
+              ctypes.byref(buffer))
+          if status in (1376, 2220):
+              return None
+          if status:
+              raise ctypes.WinError(status)
+          info = ctypes.cast(buffer, ctypes.POINTER(GroupInfo)).contents
+          return {'name': info.name, 'description': info.comment or '',
+              'sid': account_sid(name)}
+      finally:
+          if buffer:
+              net.NetApiBufferFree(buffer)
+
+  def inspect(prefix):
+      assert re.match(r'^LWU[a-f0-9]{12}_$', prefix)
+      return {'users': {part: user(prefix + part)
+                  for part in user_suffixes},
+              'groups': {part: group(prefix + part)
+                  for part in group_suffixes}}
+
+  mode = sys.argv[1]
+  if mode == 'allocate':
+      prefix = 'LWU' + uuid.uuid4().hex[:12] + '_'
+      for suffix in reserved_suffixes:
+          name = prefix + suffix
+          assert len(name) <= 20
+          assert user(name) is None and group(name) is None
+      print(json.dumps({'public': {'prefix': prefix,
+          'computer': os.environ['COMPUTERNAME']},
+          'passwords': ['Aa!7' + uuid.uuid4().hex,
+                        'Bb!8' + uuid.uuid4().hex]}))
+  else:
+      prefix = sys.argv[2]
+      assert re.match(r'^LWU[a-f0-9]{12}_$', prefix)
+      if mode == 'prepare':
+          for suffix in group_suffixes:
+              information = GroupInfo(prefix + suffix, 'User fixture')
+              status = net.NetLocalGroupAdd(None, 1,
+                  ctypes.byref(information), None)
+              if status:
+                  raise ctypes.WinError(status)
+          print(json.dumps(inspect(prefix)))
+      elif mode == 'inspect':
+          print(json.dumps(inspect(prefix)))
+      else:
+          assert mode == 'cleanup'
+          failures = []
+          try:
+              for suffix in user_suffixes:
+                  status = net.NetUserDel(None, prefix + suffix)
+                  if status not in (0, 2221):
+                      failures.append(['user', suffix, status])
+              for suffix in group_suffixes:
+                  status = net.NetLocalGroupDel(None, prefix + suffix)
+                  if status not in (0, 1376, 2220):
+                      failures.append(['group', suffix, status])
+          finally:
+              remaining = inspect(prefix)
+              assert not failures, failures
+              assert all(item is None
+                  for values in remaining.values()
+                  for item in values.values()), remaining
+          print(json.dumps({'removed': True}))

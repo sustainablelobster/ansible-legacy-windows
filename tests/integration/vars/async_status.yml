@@ -1,0 +1,146 @@
+---
+async_status_cases:
+  - name: completed empty object
+    contents: '{}'
+    finished: true
+  - name: completed changed result and output
+    contents: '{"changed":true,"stdout":"done\nsecond","stderr":"error"}'
+    changed: true
+    finished: true
+  - name: running record
+    contents: '{"started":1,"ansible_job_id":"stored-id"}'
+    finished: false
+  - name: failed completed record
+    contents: '{"started":1,"finished":1,"failed":true,"msg":"job-failed"}'
+    failed: true
+    finished: true
+  - name: finished flag without started becomes completed
+    contents: '{"finished":0}'
+    finished: true
+  - name: explicit false flags are preserved
+    contents: '{"started":0,"finished":0}'
+    finished: false
+  - name: case insensitive job fields retain original spelling
+    contents: '{"Started":1,"Finished":1}'
+    finished: false
+  - name: arbitrary nested job fields are returned
+    contents: '{"nested":{"items":[1,null,true]},"custom":"kept"}'
+    finished: true
+  - name: multiline object
+    contents: "{\r\n\"stdout\":\"hello\"\r\n}"
+    finished: true
+  - name: escaped Unicode
+    contents: '{"stdout":"\u00e9 \u2603"}'
+    finished: true
+  - name: unmarked UTF8 uses ANSI decoding
+    contents: '{"stdout":"é ☃"}'
+    encoding: utf-8
+    finished: true
+  - name: UTF8 marker
+    contents: '{"stdout":"é ☃"}'
+    encoding: utf-8-sig
+    finished: true
+  - name: UTF16 marker
+    contents: '{"stdout":"é ☃"}'
+    encoding: utf-16
+    finished: true
+  - name: UTF32 marker
+    contents: '{"stdout":"é ☃"}'
+    encoding: utf-32
+    finished: true
+  - name: Windows ANSI text
+    contents: '{"stdout":"café"}'
+    encoding: cp1252
+    finished: true
+  - name: empty file is an upstream unhandled failure
+    contents: ''
+    failed: true
+    finished: false
+  - name: whitespace is an upstream unhandled failure
+    contents: " \r\n"
+    failed: true
+    finished: false
+  - name: malformed JSON
+    contents: '{'
+    failed: true
+    finished: true
+  - name: null JSON
+    contents: 'null'
+    failed: true
+    finished: false
+  - name: integer JSON
+    contents: '42'
+    failed: true
+    finished: false
+  - name: integer array JSON
+    contents: '[1,2]'
+    failed: true
+    finished: false
+  - name: object array JSON
+    contents: '[{}]'
+    failed: true
+    finished: false
+  - name: started object array JSON
+    contents: '[{"started":1}]'
+    failed: true
+    finished: false
+  - name: boolean JSON
+    contents: 'true'
+    failed: true
+    finished: false
+  - name: case conflicting properties
+    contents: '{"started":1,"Started":2}'
+    failed: true
+    finished: true
+  - name: missing file
+    failed: true
+    finished: true
+  - name: literal bracketed identifier
+    params:
+      jid: job[1]
+    contents: '{}'
+    finished: true
+  - name: directory read is still running
+    directory: true
+    finished: false
+  - name: cleanup file
+    params:
+      jid: job
+      mode: cleanup
+    contents: '{}'
+    erased: true
+    finished: false
+  - name: cleanup file in check mode really erases it
+    params:
+      jid: job
+      mode: cleanup
+    contents: '{}'
+    check: true
+    erased: true
+    finished: false
+  - name: cleanup directory in check mode really erases it
+    params:
+      jid: job
+      mode: cleanup
+    directory: true
+    check: true
+    erased: true
+    finished: false
+  - name: cleanup missing file fails
+    params:
+      jid: job
+      mode: cleanup
+    failed: true
+    finished: true
+  - name: omitted required identifier
+    params: {}
+    failed: true
+  - name: explicit null identifier reads the cache directory
+    params:
+      jid:
+    finished: false
+  - name: invalid mode
+    params:
+      jid: job
+      mode: invalid
+    failed: true

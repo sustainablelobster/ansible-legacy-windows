@@ -1,0 +1,67 @@
+---
+- name: '{{ acl_inheritance_case.name ~ " on " ~ acl_inheritance_target }}'
+  # Assertions exercise the native WANT_JSON argument interface.
+  sustainablelobster.legacy_windows.win_acl_inheritance:  # noqa: args[module]
+    path: '{{ acl_inheritance_path }}'
+    state: '{{ acl_inheritance_case.state }}'
+    reorganize: '{{ acl_inheritance_case.reorganize | default(omit) }}'
+  check_mode: '{{ acl_inheritance_case.check | default(false) }}'
+  diff: true
+  register: acl_inheritance_result
+
+- name: Independently observe permissions and unchanged object contents
+  sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+    argv:
+      - '{{ ansible_python_interpreter }}'
+      - '-'
+      - '{{ acl_inheritance_workspace.path }}'
+      - observe
+      - '{{ acl_inheritance_kind }}'
+      - '{{ acl_inheritance_path }}'
+      - '{{ acl_inheritance_case.permissions | default("none") }}'
+    stdin: '{{ acl_inheritance_fixture }}'
+  register: acl_inheritance_observation
+  changed_when: false
+  check_mode: false
+
+- name: Verify public results and actual inheritance state
+  vars:
+    observation: '{{ acl_inheritance_observation.stdout | from_json }}'
+    observed: '{{ observation.snapshot[acl_inheritance_path] }}'
+    previous: '{{ acl_inheritance_previous[acl_inheritance_path] }}'
+    before_state: '{{ "absent" if previous.protected else "present" }}'
+  ansible.builtin.assert:
+    that:
+      - acl_inheritance_result.changed == acl_inheritance_case.changed
+      - acl_inheritance_result.warnings | default([]) == []
+      - acl_inheritance_result.diff.before.state == before_state
+      - acl_inheritance_result.diff.after.state == acl_inheritance_case.state
+      - >-
+        observed.protected == (previous.protected if
+        acl_inheritance_case.check | default(false) else
+        acl_inheritance_case.state == 'absent')
+      - >-
+        not (acl_inheritance_case.check | default(false)) or
+        observed == previous
+      - >-
+        acl_inheritance_case.changed or observed == previous
+      - >-
+        not observed.protected or
+        (observed.aces | selectattr('flags', 'ge', 16) | list | length) == 0
+      - >-
+        observed.protected or
+        (observed.aces | selectattr('flags', 'ge', 16) | list | length) > 0
+
+- name: Retain public results and native observations
+  vars:
+    snapshot: '{{ (acl_inheritance_observation.stdout | from_json).snapshot }}'
+    record:
+      target: '{{ acl_inheritance_target }}'
+      case: '{{ acl_inheritance_case.name }}'
+      result: '{{ acl_inheritance_result }}'
+      snapshot: '{{ snapshot }}'
+  ansible.builtin.set_fact:
+    acl_inheritance_previous: >-
+      {{ acl_inheritance_previous | combine(snapshot) }}
+    acl_inheritance_results: >-
+      {{ acl_inheritance_results | default([]) + [record] }}

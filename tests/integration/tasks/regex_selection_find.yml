@@ -1,0 +1,42 @@
+---
+# SPDX-License-Identifier: GPL-3.0-or-later
+- name: Restore literal owned file times before each complete Find pair
+  sustainablelobster.legacy_windows.win_command:
+    argv:
+      - "{{ ansible_python_interpreter }}"
+      - "-"
+      - reset
+      - "{{ regex_workspace.path }}"
+      - "{{ regex_nonce }}"
+    stdin: "{{ regex_selection_fixture }}"
+  changed_when: false
+- name: Capture the native complete public Find dictionary
+  sustainablelobster.legacy_windows.win_find:
+    paths: "{{ regex_workspace.path }}\\files"
+    patterns: ["{{ regex_case.0.pattern }}"]
+    use_regex: true
+    recurse: false
+    get_checksum: false
+    case_sensitive: "{{ regex_case.0.sensitive | default(false) }}"
+  check_mode: "{{ regex_case.1 }}"
+  register: regex_native_find
+  ignore_errors: true
+  no_log: true
+- name: Capture the untouched released complete public Find dictionary
+  ansible.windows.win_find:
+    paths: "{{ regex_workspace.path }}\\files"
+    patterns: ["{{ regex_case.0.pattern }}"]
+    use_regex: true
+    recurse: false
+    get_checksum: false
+    case_sensitive: "{{ regex_case.0.sensitive | default(false) }}"
+  check_mode: "{{ regex_case.1 }}"
+  register: regex_source_find
+  ignore_errors: true
+  no_log: true
+- name: Append all raw typed Find fields and their exact inputs
+  ansible.builtin.set_fact:
+    regex_find_pairs: >-
+      {{ regex_find_pairs + [{'case':regex_case.0, 'check':regex_case.1,
+      'native':regex_native_find, 'source':regex_source_find}] }}
+  no_log: true

@@ -1,0 +1,146 @@
+---
+- name: Verify hostname activation and exact original-name restoration
+  hosts: legacy_windows
+  gather_facts: false
+  vars_files:
+    - vars/hostname.yml
+    - vars/hostname_fixture.yml
+  vars:
+    hostname_helper_names:
+      - legacy_windows_wmi
+      - legacy_windows_environment
+      - legacy_windows_hostname
+    hostname_test_name: >-
+      {{ 'LWH-' ~ (inventory_hostname | hash('sha1'))[:10] | upper }}
+  tasks:
+    - name: Read maintained native helper sources for the fixture
+      ansible.builtin.set_fact:
+        hostname_helper_sources: >-
+          {{ hostname_helper_sources | default({}) |
+             combine({item: lookup('ansible.builtin.file', playbook_dir ~
+             '/../../plugins/module_utils/' ~ item ~ '.py')}) }}
+      loop: '{{ hostname_helper_names }}'
+      when: item not in (hostname_helper_sources | default({}))
+
+    - name: Require Python 3.4.4 and record existing task directories
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import glob, json, os, sys, tempfile;
+        assert sys.version_info[:3] == (3, 4, 4);
+        print(json.dumps(sorted(glob.glob(os.path.join(tempfile.gettempdir(),
+        'ansible-tmp-*')))))""
+      register: task_directories_before
+      changed_when: false
+
+    - name: Exercise hostname changes across an actual reboot
+      block:
+        - name: Allocate the persistent recovery workspace
+          sustainablelobster.legacy_windows.win_tempfile:  # noqa: args[module]
+            state: directory
+            prefix: legacy-windows-hostname-
+          register: hostname_workspace
+          check_mode: false
+
+        - name: Journal all original names before any rename
+          sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - '-'
+              - '{{ hostname_workspace.path }}'
+              - setup
+              - '{{ hostname_test_name }}'
+            stdin: '{{ hostname_fixture }}'
+          register: hostname_setup
+          changed_when: false
+          check_mode: false
+
+        - name: Retain the original and previous native observations
+          ansible.builtin.set_fact:
+            hostname_initial: '{{ hostname_setup.stdout | from_json }}'
+            hostname_previous_snapshot: >-
+              {{ hostname_setup.stdout | from_json }}
+            hostname_original_name: >-
+              {{ (hostname_setup.stdout | from_json).names.effective_name }}
+
+        - name: Exercise validation pending renames reboot and activated repeats
+          ansible.builtin.include_tasks: tasks/win_hostname_case.yml
+          loop: '{{ range(hostname_cases | length) | list }}'
+          loop_control:
+            loop_var: hostname_case_index
+          vars:
+            hostname_case: '{{ hostname_cases[hostname_case_index] }}'
+      always:
+        - name: Restore original names before removing recovery data
+          when: hostname_workspace.path is defined
+          block:
+            - name: Restore the original pending name  # noqa: args[module]
+              sustainablelobster.legacy_windows.win_command:
+                argv:
+                  - '{{ ansible_python_interpreter }}'
+                  - '-'
+                  - '{{ hostname_workspace.path }}'
+                  - restore
+                stdin: '{{ hostname_fixture }}'
+              register: hostname_restoration
+              changed_when: true
+              check_mode: false
+
+            - name: Retain the independent pre-restoration-reboot snapshot
+              ansible.builtin.set_fact:
+                hostname_previous_snapshot: >-
+                  {{ (hostname_restoration.stdout | from_json).snapshot }}
+              when: >-
+                (hostname_restoration.stdout | from_json).snapshot is defined
+
+            - name: Activate the restored original name when necessary
+              ansible.builtin.include_tasks: tasks/win_hostname_case.yml
+              vars:
+                hostname_case:
+                  name: Reboot to activate the original hostname
+                  reboot: true
+                  active: '{{ hostname_original_name }}'
+              when: >-
+                (hostname_restoration.stdout | from_json).reboot_required
+
+            - name: Verify every original hostname  # noqa: args[module]
+              sustainablelobster.legacy_windows.win_command:
+                argv:
+                  - '{{ ansible_python_interpreter }}'
+                  - '-'
+                  - '{{ hostname_workspace.path }}'
+                  - verify
+                stdin: '{{ hostname_fixture }}'
+              register: hostname_verification
+              changed_when: false
+              check_mode: false
+
+            - name: Require verified restoration before discarding the journal
+              ansible.builtin.assert:
+                that:
+                  - (hostname_verification.stdout | from_json).restored
+
+            - name: Remove only the verified recovery workspace
+              sustainablelobster.legacy_windows.win_file:  # noqa: args[module]
+                path: '{{ hostname_workspace.path }}'
+                state: absent
+              check_mode: false
+
+        - name: Verify recovery-workspace and staging cleanup
+          ansible.builtin.raw: >-
+            cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+            "import glob, json, os, sys, tempfile;
+            assert not os.path.exists(sys.argv[1]);
+            print(json.dumps(sorted(glob.glob(os.path.join(tempfile.gettempdir(),
+            'ansible-tmp-*')))))" "{{ hostname_workspace.path }}""
+          when: hostname_workspace.path is defined
+          register: task_directories_after
+          changed_when: false
+          check_mode: false
+
+        - name: Require task-directory cleanup
+          ansible.builtin.assert:
+            that:
+              - >-
+                (task_directories_before.stdout | from_json) ==
+                (task_directories_after.stdout | from_json)
+          when: hostname_workspace.path is defined

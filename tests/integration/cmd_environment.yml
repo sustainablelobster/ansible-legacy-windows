@@ -1,0 +1,160 @@
+---
+- name: Verify literal process-local environments on actual Python 3.4.4
+  hosts: legacy_windows
+  gather_facts: false
+  vars:
+    cmd_environment_value: "spaces λ %PATH% !text! & | < > ^ \"\r\nnext"
+    cmd_environment_path_suffix: ";C:\\LegacyWindowsUncreatedPath"
+    cmd_environment_temp_suffix: "\\."
+    cmd_environment_program: |
+      import json,os,sys
+      assert sys.version_info[:3] == (3,4,4)
+      print(json.dumps({name: os.environ.get(name) for name in
+                        ['LEGACY_WINDOWS_ENV_TEST', 'LEGACY_WINDOWS_ENV_EMPTY',
+                         'LEGACY_WINDOWS_ENV_NUMBER']}, sort_keys=True))
+    cmd_environment_case_program: |
+      import ctypes,json,os,sys
+      assert sys.version_info[:3] == (3,4,4)
+      kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+      kernel.GetEnvironmentStringsW.restype = ctypes.c_void_p
+      kernel.FreeEnvironmentStringsW.argtypes = [ctypes.c_void_p]
+      pointer = kernel.GetEnvironmentStringsW()
+      assert pointer
+      entries = []
+      try:
+          position = pointer
+          while True:
+              end = position
+              while ctypes.c_uint16.from_address(end).value:
+                  end += 2
+              if end == position:
+                  break
+              entry = ctypes.wstring_at(position)
+              entries.append(entry.split('=',1)[0].upper())
+              position = end + 2
+      finally:
+          assert kernel.FreeEnvironmentStringsW(pointer)
+      print(json.dumps({'values': {name: os.environ[name] for name in
+                                   ['PATH','TEMP']},
+                        'counts': {name: entries.count(name) for name in
+                                   ['PATH','TEMP']}}, sort_keys=True))
+  tasks:
+    - name: Observe original global task staging
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import glob,json,os,tempfile;
+        print(json.dumps(sorted(glob.glob(os.path.join(tempfile.gettempdir(),
+        'ansible-tmp-*')))))""
+      register: cmd_environment_staging_before
+      changed_when: false
+
+    - name: Allocate private capture before execution
+      ansible.builtin.tempfile:
+        state: file
+        path: "{{ playbook_dir }}/../../tmp"
+        prefix: "cmd-environment-{{ inventory_hostname }}-"
+        suffix: .json
+      register: cmd_environment_capture
+      delegate_to: localhost
+
+    - name: Observe inherited values without a task environment
+      sustainablelobster.legacy_windows.win_command: # noqa: args[module]
+        argv: ["{{ ansible_python_interpreter }}", "-"]
+        stdin: "{{ cmd_environment_program }}"
+      register: cmd_environment_before
+      changed_when: false
+
+    - name: Execute literal metacharacters Unicode empty and numeric overrides
+      sustainablelobster.legacy_windows.win_command: # noqa: args[module]
+        argv: ["{{ ansible_python_interpreter }}", "-"]
+        stdin: "{{ cmd_environment_program }}"
+      environment:
+        LEGACY_WINDOWS_ENV_TEST: "{{ cmd_environment_value }}"
+        LEGACY_WINDOWS_ENV_EMPTY: ""
+        LEGACY_WINDOWS_ENV_NUMBER: "4"
+      register: cmd_environment_during
+      changed_when: false
+
+    - name: Observe inherited case-insensitive names and native entry counts
+      sustainablelobster.legacy_windows.win_command: # noqa: args[module]
+        argv: ["{{ ansible_python_interpreter }}", "-"]
+        stdin: "{{ cmd_environment_case_program }}"
+      register: cmd_environment_case_before
+      changed_when: false
+
+    - name: Replace inherited names using mixed-case task keys
+      sustainablelobster.legacy_windows.win_command: # noqa: args[module]
+        argv: ["{{ ansible_python_interpreter }}", "-"]
+        stdin: "{{ cmd_environment_case_program }}"
+      environment:
+        Path: >-
+          {{ (cmd_environment_case_before.stdout | from_json)['values']['PATH']
+             + cmd_environment_path_suffix }}
+        tEmP: >-
+          {{ (cmd_environment_case_before.stdout | from_json)['values']['TEMP']
+             + cmd_environment_temp_suffix }}
+      register: cmd_environment_case_during
+      changed_when: false
+
+    - name: Observe subsequent inherited names after mixed-case replacement
+      sustainablelobster.legacy_windows.win_command: # noqa: args[module]
+        argv: ["{{ ansible_python_interpreter }}", "-"]
+        stdin: "{{ cmd_environment_case_program }}"
+      register: cmd_environment_case_after
+      changed_when: false
+
+    - name: Observe subsequent ordinary task environment
+      sustainablelobster.legacy_windows.win_command: # noqa: args[module]
+        argv: ["{{ ansible_python_interpreter }}", "-"]
+        stdin: "{{ cmd_environment_program }}"
+      register: cmd_environment_after
+      changed_when: false
+
+    - name: Observe final global task staging
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import glob,json,os,tempfile;
+        print(json.dumps(sorted(glob.glob(os.path.join(tempfile.gettempdir(),
+        'ansible-tmp-*')))))""
+      register: cmd_environment_staging_after
+      changed_when: false
+
+    - name: Retain complete raw execution before behavior checks
+      ansible.builtin.copy:
+        content: >-
+          {{ {'before': cmd_environment_before,
+              'during': cmd_environment_during,
+              'after': cmd_environment_after,
+              'case_before': cmd_environment_case_before,
+              'case_during': cmd_environment_case_during,
+              'case_after': cmd_environment_case_after,
+              'staging_before': cmd_environment_staging_before,
+              'staging_after': cmd_environment_staging_after} | to_nice_json }}
+        dest: "{{ cmd_environment_capture.path }}"
+        mode: "0600"
+      delegate_to: localhost
+
+    - name: Require literal values no environment leak and exact staging
+      ansible.builtin.assert:
+        that:
+          - >-
+            (cmd_environment_during.stdout | from_json) ==
+            {'LEGACY_WINDOWS_ENV_TEST': cmd_environment_value,
+             'LEGACY_WINDOWS_ENV_EMPTY': '', 'LEGACY_WINDOWS_ENV_NUMBER': '4'}
+          - (cmd_environment_before.stdout | from_json) ==
+            (cmd_environment_after.stdout | from_json)
+          - (cmd_environment_staging_before.stdout | from_json) ==
+            (cmd_environment_staging_after.stdout | from_json)
+          - (cmd_environment_case_before.stdout | from_json) ==
+            (cmd_environment_case_after.stdout | from_json)
+          - >-
+            (cmd_environment_case_during.stdout | from_json)['values'] ==
+            {'PATH':
+             (cmd_environment_case_before.stdout | from_json)['values']['PATH']
+             + cmd_environment_path_suffix,
+             'TEMP':
+             (cmd_environment_case_before.stdout | from_json)['values']['TEMP']
+             + cmd_environment_temp_suffix}
+          - >-
+            (cmd_environment_case_during.stdout | from_json)['counts'] ==
+            {'PATH': 1, 'TEMP': 1}

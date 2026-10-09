@@ -1,0 +1,192 @@
+---
+# Copyright 2026 Joe Lustri
+# SPDX-License-Identifier: GPL-3.0-or-later
+# This server and journal adapter run only on the Nix controller. The original
+# FTP fixture still owns process identity, protected inputs and SSH forwards.
+get_url_ftp_server: '{{ uri_upload_ftp_server }}'
+uri_upload_ftp_server: |
+  import json, os, sys, threading, time, uuid
+  from pyftpdlib.authorizers import DummyAuthorizer
+  from pyftpdlib.handlers import DTPHandler, FTPHandler
+  from pyftpdlib.log import logger
+  from pyftpdlib.servers import FTPServer
+  root, token = sys.argv[1:3]
+  control, passive = 2121, 2122
+  uploads = os.path.join(root, 'uploads')
+  os.mkdir(uploads, 0o700)
+
+  def event(value):
+      with open(os.path.join(root, 'wire.jsonl'), 'a',
+                encoding='utf-8') as stream:
+          stream.write(json.dumps(dict(value, time=time.time())) + '\n')
+          stream.flush()
+
+  class FixedPassive(FTPHandler.passive_dtp):
+      def bind(self, address):
+          if address != ('127.0.0.1', passive):
+              event({'kind': 'refused_passive', 'address': address})
+              raise ValueError('FTP fixture refuses an unowned passive port')
+          super().bind(address)
+          event({'kind': 'passive', 'port': self.socket.getsockname()[1]})
+
+  class InterruptedData(DTPHandler):
+      ac_in_buffer_size = 1024
+
+      def handle_read(self):
+          super().handle_read()
+          if (self.cmd_channel.upload_name == 'interrupted.bin' and
+                  self.tot_bytes_received >= 8192 and not self._closed):
+              self.transfer_finished = False
+              self._resp = ('426 Fixture interrupted the data stream.',
+                            logger.debug)
+              self.close()
+
+      handle_read_event = handle_read
+
+  class Handler(FTPHandler):
+      passive_dtp = FixedPassive
+      dtp_handler = InterruptedData
+      passive_ports = [passive]
+      masquerade_address = '127.0.0.1'
+      timeout = 15
+
+      def __init__(self, *arguments, **options):
+          self.session = uuid.uuid4().hex
+          self.upload_name = None
+          self.unique_upload = False
+          super().__init__(*arguments, **options)
+
+      def pre_process_command(self, line, command, argument):
+          event({'kind': 'command', 'session': self.session,
+                 'command': command, 'argument': '<redacted>'
+                 if command == 'PASS' else argument})
+          if command in ('STOR', 'STOU', 'APPE'):
+              self.unique_upload = command == 'STOU'
+              self.upload_name = argument.rsplit('/', 1)[-1]
+              if self.upload_name == 'denied.bin':
+                  self.respond('550 Upload forbidden by fixture.')
+                  return
+          super().pre_process_command(line, command, argument)
+
+      def respond(self, response, **options):
+          if (response.startswith(('125 ', '150 ')) and
+                  not self.unique_upload):
+              response = '150 File status okay. About to open data connection.'
+          if response.startswith('226 '):
+              if self.upload_name == 'final-failure.bin':
+                  response = '426 Fixture rejects the completed transfer.'
+              elif self.upload_name == 'delayed.bin':
+                  time.sleep(2)
+              if response.startswith('226 '):
+                  response = '226 Transfer complete.'
+          event({'kind': 'reply', 'session': self.session,
+                 'response': response + '\r\n'})
+          super().respond(response, **options)
+
+  authorizer = DummyAuthorizer()
+  authorizer.add_anonymous(os.path.join(root, 'data'), perm='elr')
+  authorizer.add_user('fixture', 'secret', uploads, perm='elradfmw')
+  Handler.authorizer = authorizer
+  server = FTPServer(('127.0.0.1', control), Handler)
+  try:
+      with open('/proc/self/stat', encoding='utf-8') as stream:
+          creation = stream.read().rsplit(')', 1)[1].split()[19]
+      metadata = {'pid': os.getpid(), 'creation': creation, 'token': token,
+                  'control': control, 'passive': passive}
+      with open(os.path.join(root, 'server.json.tmp'), 'w',
+                encoding='utf-8') as stream:
+          json.dump(metadata, stream)
+          stream.flush()
+          os.fsync(stream.fileno())
+      os.replace(os.path.join(root, 'server.json.tmp'),
+                 os.path.join(root, 'server.json'))
+      timer = threading.Timer(600, server.close_all)
+      timer.daemon = True
+      timer.start()
+      server.serve_forever(timeout=.1)
+  finally:
+      server.close_all()
+
+uri_upload_ftp_program: |
+  import contextlib, io, json, pathlib, sys
+  source = {{ get_url_ftp_program | to_json }}
+  workspace = pathlib.Path(sys.argv[1])
+  operation = sys.argv[2]
+
+  def base(selected):
+      saved = sys.argv[2]
+      sys.argv[2] = selected
+      output = io.StringIO()
+      try:
+          with contextlib.redirect_stdout(output):
+              exec(compile(source, '<owned FTP fixture>', 'exec'), {})
+      finally:
+          sys.argv[2] = saved
+      return json.loads(output.getvalue())
+
+  def files():
+      directory = workspace / 'uploads'
+      assert directory.is_dir() and not directory.is_symlink()
+      entries = sorted(directory.iterdir())
+      assert all(path.is_file() and not path.is_symlink() for path in entries)
+      return directory, entries
+
+  if operation == 'prepare_upload':
+      base('observe')
+      directory, entries = files()
+      for path in entries:
+          path.unlink()
+      case = json.loads(sys.argv[4])
+      name = case.get('filename', 'upload.bin')
+      assert (name and pathlib.Path(name).name == name and
+              name not in ('.', '..'))
+      if case.get('baseline') is not None:
+          (directory / name).write_bytes(case['baseline'].encode('utf-8'))
+      result = base('mark')
+  elif operation == 'observe_upload':
+      result = base('observe')
+      directory, entries = files()
+      result['uploads'] = {
+          path.name: path.read_bytes().hex() for path in entries}
+  elif operation == 'cleanup':
+      result = base('cleanup')
+      directory = workspace / 'uploads'
+      if directory.exists():
+          directory, entries = files()
+          result['uploads_before_cleanup'] = {
+              path.name: path.read_bytes().hex() for path in entries}
+          for path in entries:
+              path.unlink()
+          directory.rmdir()
+      result['uploads_removed'] = not directory.exists()
+  else:
+      result = base(operation)
+  print(json.dumps(result, sort_keys=True))
+
+uri_upload_ftp_cases:
+  - {name: stor_unicode, method: STOR, body: 'upload 中😀',
+     expected: 'upload 中😀'}
+  - {name: stor_empty, method: STOR, body: '', baseline: old, expected: ''}
+  - {name: append_unicode, method: APPE, body: ' 中😀', baseline: prefix,
+     expected: 'prefix 中😀'}
+  - {name: append_empty, method: APPE, body: '', baseline: prefix,
+     expected: prefix}
+  - {name: stor_check, method: STOR, body: 'check 中😀', check: true,
+     expected: 'check 中😀'}
+  - {name: stor_without_body, method: STOR, expected: ''}
+  - {name: store_unique, method: STOU, body: 'unique 中😀',
+     expected: 'unique 中😀', unique: true}
+  - {name: rejected_retrieve, method: RETR, body: rejected, baseline: original,
+     expected: original, failure: true}
+  - {name: denied_store, method: STOR, filename: denied.bin, body: rejected,
+     failure: true, no_file: true, status: 550}
+  - {name: final_failure, method: STOR, filename: final-failure.bin,
+     body: 'written 中😀', expected: 'written 中😀', failure: true, status: 426}
+  - {name: final_timeout, method: STOR, filename: delayed.bin,
+     body: 'written 中😀', expected: 'written 中😀', failure: true, timeout: 1}
+  - name: interrupted_transfer
+    method: STOR
+    filename: interrupted.bin
+    body: '{{ "abcdefgh" * 65536 }}'
+    failure: true
+    partial: true

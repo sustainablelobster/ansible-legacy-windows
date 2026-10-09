@@ -16,19 +16,21 @@ after the original conversation is forgotten.
 
 `sustainablelobster.legacy_windows` aims to reimplement all first-party
 `ansible.windows` functionality with Python 3.4.4-compatible Windows payloads.
-The [README](README.md) is the user entry point; the
-[compatibility contract](docs/compatibility.md) defines parity and the evidence
-required for support claims. Keep changing availability and tested combinations
-in [the support record](docs/status.md), not in these working instructions.
+The [README](README.md) is the user entry point. Keep user-facing prerequisites
+and meaningful limitations in [Usage](docs/usage.md), not these instructions.
+Windows versions and connection plugins are not allowlisted; distinguish the
+capabilities a workflow needs from the environments in its execution evidence.
 
 Do not infer runtime support from a successful build, local installation, or
 controller-side test. Base implementation on a recorded upstream release and
 verified controller-to-target behavior. Do not invent a transport framework to
 fill gaps in execution evidence.
 
-Target payloads and every imported helper must use Python 3.4.4-compatible
-syntax, standard-library APIs, and dependencies. Controller code must support
-the declared controller Python versions; development tooling uses Nix Python.
+Python 3.4.4 is the minimum Windows target version, not an exact-version
+requirement. Target payloads and every imported helper must use Python
+3.4.4-compatible syntax, standard-library APIs, and dependencies. Controller
+code must support the declared controller Python versions; development tooling
+uses Nix Python.
 Keep these execution environments explicit; do not introduce a modern dependency
 into target code through a shared helper. Prove target compatibility using the
 actual Python 3.4.4 runtime on an authorized Windows host before claiming it.
@@ -37,6 +39,10 @@ actual Python 3.4.4 runtime on an authorized Windows host before claiming it.
 
 - Prefer maintained libraries and established tools over custom machinery,
   subject to the target runtime requirement.
+- Prefer Python's standard library for target behavior and native Windows APIs
+  for management operations it cannot provide. Preserve familiar upstream
+  interfaces where practical; document meaningful differences instead of
+  recreating PowerShell or .NET internals for exact equivalence.
 - Write only code needed for the current user-visible outcome. Do not add
   abstractions, registries, state models, or frameworks for possible future work.
 - Keep names, types, and control flow obvious. Validate real inputs and return
@@ -50,11 +56,18 @@ actual Python 3.4.4 runtime on an authorized Windows host before claiming it.
 - Use Ansible's module documentation format for module interfaces and
   Sphinx-style docstrings for public Python contracts. Obvious private helpers
   do not need ceremonial docstrings.
-- License project contributions under Apache 2.0. Preserve required notices
-  and license files when incorporating third-party material. Do not add notices
-  for tools merely installed as development dependencies.
+- License project contributions under GPL-3.0-or-later, matching the recorded
+  ansible.windows baseline. Preserve required upstream and compatible
+  third-party notices, copyrights, and license files. Do not add notices for tools
+  merely installed as development dependencies.
+- Use Joe Lustri for project-owned author and copyright attribution.
+  `sustainablelobster` is the GitHub handle and collection namespace, not an
+  organization or a collective author. Preserve third-party attribution.
 - Do not echo credentials gratuitously. Keep private inventories and local
   connection settings out of version control and collection artifacts.
+- Keep agent-created logs, captures, inventories, snapshots and working files
+  under `tmp/codex/`. Preserve historical evidence there; do not scatter agent
+  outputs directly under `tmp/` or move user inputs without authorization.
 
 ## Command-first work
 
@@ -69,10 +82,22 @@ increment is not complete. A packaging command demonstrates packaging, not
 Windows execution. A deletion-only cleanup demonstrates that affected
 commands still work while maintained code or prose is removed.
 
-Keep one increment active. Stop and ask the user when progress depends on a
+Use a usable module or comparable user-visible feature as the default
+increment. Build its interface, payload, helper staging, and behavior tests
+together; keep helper fixes within that increment rather than treating each
+as a separate handoff. Prioritize exercising the public behavior. Expand
+edge-case investigation when a supported workflow, an observed failure, or a
+review finding requires it. Record significant limitations without claiming
+untested behavior; incidental upstream differences are not release blockers.
+
+Independent module increments may be implemented in parallel with explicit
+file ownership. Coordinate shared-code edits, collection installation, and lab
+operations so one worker cannot invalidate another's execution evidence. Each
+increment still requires its own demonstration, relevant checks, and independent
+review before a support claim. Stop and ask the user when progress depends on a
 product choice, unavailable infrastructure, unknown Windows or Ansible
-behavior, or materially broader work. Do not fill the gap with defensive
-scaffolding.
+behavior that cannot be established by authorized tests, or materially broader
+work. Do not fill the gap with defensive scaffolding.
 
 ## Development and checks
 
@@ -85,9 +110,17 @@ Install hooks explicitly; never install them automatically on shell entry.
 Do not change global Nix or Git configuration to make local checks work.
 
 Run the demonstration and `just lint check` before handoff, including relevant
-behavior tests. Report every failed or skipped check and distinguish
-controller-only evidence from execution on Windows. Routine local checks must
-not contact Windows hosts or lab infrastructure.
+behavior tests. Use focused checks during development, then run the full
+required checks on the integrated increment. After a fix, rerun the checks
+whose evidence it invalidates; do not repeat the whole suite for every edit.
+Documentation-only changes need documentation checks and review, not another
+Windows run. Retain prior execution evidence when the tested behavior and its
+dependencies are unchanged, recording the relationship between revisions.
+
+Report every failed or skipped check and distinguish controller-only evidence
+from execution on Windows. Routine local checks must not contact Windows
+hosts or lab infrastructure. These batching rules do not relax target-runtime,
+cleanup, recovery, or compatibility requirements.
 
 ## Review and commits
 
@@ -102,11 +135,16 @@ reader usefulness and prose. Assign explicit file ownership to any reviewer
 who edits; the implementer owns integration and checks.
 
 After the demonstration and required checks pass, obtain one independent,
-read-only review of the complete change when a reviewer is available. The
-initial brief contains only:
+read-only review of the complete increment when a reviewer is available.
+Review against a recorded, previously reviewed baseline, including all affected
+shared code, tests, and documentation. An accumulating uncommitted worktree
+does not require reviewing unchanged earlier increments again. Review wider
+behavior when new changes invalidate earlier conclusions. Record the baseline
+and reviewed diff without creating commits merely to establish a checkpoint.
+The initial brief contains only:
 
 - The user's request.
-- The raw working-tree diff or commit range.
+- The raw increment diff and its baseline identifier, or the commit range.
 - The instruction to review the implementation and behavior.
 
 Do not provide the implementer's summary, rationale, claimed test results,
@@ -119,7 +157,8 @@ Findings must identify exact locations and concrete effects on users or
 maintainers. Do not invent new architecture or hypothetical requirements.
 Even a passing review must name the paths and behavior inspected and describe
 how the reviewer tried to find faults. Fix valid findings and return the
-corrections for review when the reviewer is available.
+corrections for review when the reviewer is available; do not restart unrelated
+review or validation for each correction.
 
 When a local commit is part of the authorized work:
 

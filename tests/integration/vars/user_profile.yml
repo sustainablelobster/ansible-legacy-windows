@@ -1,0 +1,365 @@
+---
+user_profile_binding_cases:
+  - name: Require username for present
+    params: {}
+    changed: false
+    failed: true
+    message: 'state is present but all of the following are missing: username'
+    initialized: false
+  - name: Require an absent selector
+    params: {state: absent}
+    changed: false
+    failed: true
+    message: 'state is absent but any of the following are missing:'
+    initialized: false
+  - name: Reject invalid state
+    params: {state: unexpected}
+    changed: false
+    failed: true
+    message: 'value of state must be one of:'
+    initialized: false
+  - name: Reject an absent account name
+    params: {username: '{{ user_profile_names.accounts.primary.name }}_missing'}
+    changed: false
+    failed: true
+    message: 'argument for username is of type System.String'
+    initialized: false
+  - name: Reject an empty account string
+    params: {username: ''}
+    changed: false
+    failed: true
+    message: String cannot be of zero length.
+    initialized: false
+  - name: Reject creating an unmapped SID
+    params: {username: '{{ user_profile_names.unmapped_sid }}'}
+    changed: false
+    failed: true
+    message: Fail to map the account
+  - name: Preserve empty name for absent matching
+    params: {name: '', state: absent}
+    changed: false
+  - name: Ignore outside name on an existing system profile in check mode
+    params: {username: S-1-5-18, name: 'C:\Outside'}
+    check: true
+    changed: false
+    system_profile: true
+  - name: Preserve null state without a selector
+    params: {state: null}
+    changed: false
+  - name: Accept mixed-case present on the system profile without mutation
+    params: {username: S-1-5-18, state: Present}
+    check: true
+    changed: false
+    system_profile: true
+  - name: Predict mixed-case absent without deleting the system profile
+    params: {username: S-1-5-18, state: ABSENT}
+    check: true
+    changed: true
+    system_profile: true
+  - name: Preserve numeric SID binding diagnostic
+    params: {username: 1}
+    changed: false
+    failed: true
+    message: 'argument for username is of type System.Int32'
+    initialized: false
+  - name: Preserve boolean SID binding diagnostic
+    params: {username: true}
+    changed: false
+    failed: true
+    message: 'argument for username is of type System.Boolean'
+    initialized: false
+  - name: Preserve array SID binding diagnostic
+    params: {username: [], state: absent}
+    changed: false
+    failed: true
+    message: 'argument for username is of type System.Object[]'
+    initialized: false
+
+user_profile_review_cases:
+  - name: Explicit null present username reaches the original method failure
+    params: {username: null}
+    check: true
+    changed: false
+    failed: true
+    initialized: false
+    message: >-
+      Unhandled exception while executing module: You cannot call a method on
+      a null-valued expression.
+  - name: Explicit null absent name reaches empty-basename matching
+    params: {state: absent, name: null}
+    changed: false
+  - name: Explicit null absent username reaches empty-basename matching
+    params: {state: absent, username: null}
+    changed: false
+  - name: Explicit null both absent selectors reach empty-basename matching
+    params: {state: absent, username: null, name: null}
+    changed: false
+  - name: Predict leading backslash basename beneath the profile root
+    params:
+      username: &preview_uncreated >-
+        {{ user_profile_names.accounts.primary.sid
+        if user_profile_names.create_available else
+        user_profile_names.accounts.collision.sid }}
+      name: '\{{ user_profile_names.bases.primary }}'
+    check: true
+    changed: true
+    predicted_name: '{{ user_profile_names.bases.primary }}'
+  - name: Predict leading slash basename beneath the profile root
+    params:
+      username: *preview_uncreated
+      name: '/{{ user_profile_names.bases.primary }}'
+    check: true
+    changed: true
+    predicted_name: '{{ user_profile_names.bases.primary }}'
+  - name: Preserve the second leading separator in a prediction
+    params:
+      username: *preview_uncreated
+      name: '\\{{ user_profile_names.bases.primary }}'
+    check: true
+    changed: true
+    predicted_name: '\{{ user_profile_names.bases.primary }}'
+  - name: Preserve drive-qualified text as a child in a prediction
+    params:
+      username: *preview_uncreated
+      name: 'C:\{{ user_profile_names.bases.primary }}'
+    check: true
+    changed: true
+    predicted_name: 'C:\{{ user_profile_names.bases.primary }}'
+  - name: Preserve a relative dot component in a prediction
+    params:
+      username: *preview_uncreated
+      name: '.\{{ user_profile_names.bases.primary }}'
+    check: true
+    changed: true
+    predicted_name: '.\{{ user_profile_names.bases.primary }}'
+  - name: Preserve a parent component in a prediction
+    params:
+      username: *preview_uncreated
+      name: '..\{{ user_profile_names.bases.primary }}'
+    check: true
+    changed: true
+    predicted_name: '..\{{ user_profile_names.bases.primary }}'
+
+user_profile_lifecycle_cases:
+  - name: Predict the default account profile without creation
+    params: {username: '{{ user_profile_names.accounts.primary.name }}'}
+    check: true
+    changed: true
+    predicted_name: '{{ user_profile_names.accounts.primary.name }}'
+  - name: Reject a uniquely owned invalid profile basename before creation
+    params:
+      username: '{{ user_profile_names.accounts.primary.name }}'
+      name: '{{ user_profile_names.bases.primary }}?'
+    changed: false
+    failed: true
+    message: Failed to create profile for user
+  - name: Create the default account profile
+    params: {username: '{{ user_profile_names.accounts.primary.name }}'}
+    changed: true
+    after_role: primary
+    registered: true
+    path_role: primary
+  - name: Repeat by SID and ignore another name
+    params:
+      username: '{{ user_profile_names.accounts.primary.sid }}'
+      name: ignored-name
+    changed: false
+    path_role: primary
+  - name: Repeat in check mode with a null multiple option
+    params:
+      username: '{{ user_profile_names.accounts.primary.name }}'
+      remove_multiple: null
+    check: true
+    changed: false
+    path_role: primary
+  - name: Predict removal by SID
+    params: &remove_primary
+      username: '{{ user_profile_names.accounts.primary.sid }}'
+      state: absent
+    check: true
+    changed: true
+    before_path_role: primary
+  - name: Remove by case-insensitive default profile name
+    params:
+      name: '{{ user_profile_names.accounts.primary.name | upper }}'
+      state: absent
+    changed: true
+    before_path_role: primary
+    after_role: primary
+    registered: false
+  - name: Repeat removal by name
+    params:
+      name: '{{ user_profile_names.accounts.primary.name }}'
+      state: absent
+    changed: false
+  - name: Create a custom profile basename
+    params:
+      username: '{{ user_profile_names.accounts.primary.name }}'
+      name: '{{ user_profile_names.bases.primary }}'
+    changed: true
+    after_role: primary
+    registered: true
+    path_role: primary
+  - name: Predict removing a registered child by leading backslash
+    params:
+      name: '\{{ user_profile_names.bases.primary }}'
+      state: absent
+    check: true
+    changed: true
+    before_path_role: primary
+  - name: Predict removing a registered child by leading slash
+    params:
+      name: '/{{ user_profile_names.bases.primary }}'
+      state: absent
+    check: true
+    changed: true
+    before_path_role: primary
+  - name: Reject dot-qualified account binding without profile changes
+    params:
+      username: '.\{{ user_profile_names.accounts.primary.name }}'
+    changed: false
+    failed: true
+    message: 'argument for username is of type System.String'
+    initialized: false
+  - name: Predict an unsuffixed collision path
+    params: &collision
+      username: '{{ user_profile_names.accounts.collision.name }}'
+      name: '{{ user_profile_names.bases.collision }}'
+    check: true
+    changed: true
+    predicted_name: '{{ user_profile_names.bases.collision }}'
+  - name: Create a profile beside the owned collision directory
+    params: *collision
+    changed: true
+    after_role: collision
+    registered: true
+    path_role: collision
+    collision: true
+  - name: Repeat the actual collision path
+    params: *collision
+    changed: false
+    path_role: collision
+  - name: Give username precedence during removal
+    params:
+      username: '{{ user_profile_names.accounts.collision.sid }}'
+      name: '{{ user_profile_names.bases.primary }}'
+      state: absent
+    changed: true
+    before_path_role: collision
+    after_role: collision
+    registered: false
+  - name: Repeat the missing collision SID
+    params:
+      username: '{{ user_profile_names.accounts.collision.sid }}'
+      state: absent
+    changed: false
+  - name: Create a profile before deleting its owned account
+    params:
+      username: '{{ user_profile_names.accounts.orphan.name }}'
+      name: '{{ user_profile_names.bases.orphan }}'
+    changed: true
+    after_role: orphan
+    registered: true
+    path_role: orphan
+  - name: Reject the deleted account name without removing its profile
+    prepare: delete-orphan
+    params: {username: '{{ user_profile_names.accounts.orphan.name }}'}
+    changed: false
+    failed: true
+    message: Some or all identity references could not be translated.
+    initialized: false
+  - name: Predict removing a deleted account profile by SID
+    params: &remove_orphan
+      username: '{{ user_profile_names.accounts.orphan.sid }}'
+      state: absent
+    check: true
+    changed: true
+    before_path_role: orphan
+  - name: Remove the deleted account profile by SID
+    params: *remove_orphan
+    changed: true
+    before_path_role: orphan
+    after_role: orphan
+    registered: false
+  - name: Repeat the deleted account SID
+    params: *remove_orphan
+    changed: false
+  - name: Create a second owned profile for multiple matching
+    params:
+      username: '{{ user_profile_names.accounts.multiple.name }}'
+      name: '{{ user_profile_names.bases.multiple }}'
+    changed: true
+    after_role: multiple
+    registered: true
+    path_role: multiple
+  - name: Reject multiple profiles before any removal
+    prepare: alias-multiple
+    params:
+      name: '{{ user_profile_names.bases.primary }}'
+      state: absent
+    changed: false
+    failed: true
+    message: Found multiple profiles matching the path
+  - name: Predict removing multiple registered profiles
+    params: &remove_multiple
+      name: '{{ user_profile_names.bases.primary }}'
+      state: absent
+      remove_multiple: true
+    check: true
+    changed: true
+    before_path_role: primary
+  - name: Remove multiple registered owned profiles
+    params: *remove_multiple
+    changed: true
+    before_path_role: primary
+    after_role: primary
+    registered: false
+    all_multiple_absent: true
+
+user_profile_legacy_cases:
+  - name: Predict creation even when CreateProfile is unavailable
+    params: *collision
+    check: true
+    changed: true
+    predicted_name: '{{ user_profile_names.bases.collision }}'
+  - name: Reject unavailable creation without profile changes
+    params: *collision
+    changed: false
+    failed: true
+    message: Windows profile creation API is unavailable
+    initialized: false
+  - name: Predict removal of a fixture-loaded legacy profile
+    params: *remove_primary
+    check: true
+    changed: true
+    before_path_role: primary
+  - name: Remove a fixture-loaded legacy profile by SID
+    params: *remove_primary
+    changed: true
+    before_path_role: primary
+    after_role: primary
+    registered: false
+  - name: Repeat removed legacy profile
+    params: *remove_primary
+    changed: false
+  - name: Delete only the owned orphan account
+    prepare: delete-orphan
+    params: {username: '{{ user_profile_names.accounts.orphan.name }}'}
+    changed: false
+    failed: true
+    message: Some or all identity references could not be translated.
+    initialized: false
+  - name: Predict removing a loaded legacy orphan profile
+    params: *remove_orphan
+    check: true
+    changed: true
+    before_path_role: orphan
+  - name: Remove a legacy orphan profile by SID
+    params: *remove_orphan
+    changed: true
+    before_path_role: orphan
+    after_role: orphan
+    registered: false
+  - name: Repeat legacy orphan removal
+    params: *remove_orphan
+    changed: false

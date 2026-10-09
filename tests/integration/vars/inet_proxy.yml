@@ -1,0 +1,284 @@
+---
+inet_proxy_defaults:
+  auto_detect: true
+  auto_config_url: null
+  proxy: null
+  bypass: null
+inet_proxy_protocols: >-
+  {{ 'http=http-proxy.invalid:8080;https=https-proxy.invalid:8443;' ~
+     'ftp=ftp-proxy.invalid:8021;socks=socks-proxy.invalid:1080' }}
+inet_proxy_cases:
+  - name: The default LAN settings are already correct
+    params: {}
+    changed: false
+    expected: '{{ inet_proxy_defaults }}'
+
+  - name: A bypass requires an explicit proxy parameter
+    params: {bypass: bypass.invalid}
+    changed: false
+    error: "missing parameter(s) required by 'bypass': proxy"
+
+  - name: Invalid dictionary protocols report sorted keys
+    params:
+      proxy: {wrong2: proxy.invalid, wrong1: proxy.invalid}
+    changed: false
+    error: >-
+      Invalid keys found in proxy: wrong1, wrong2.
+      Valid keys are http, https, ftp, socks.
+
+  - name: A missing named connection fails without writing
+    params: {connection: 'Legacy nonexistent fixture connection'}
+    changed: false
+    error: >-
+      The connection 'Legacy nonexistent fixture connection' does not exist.
+
+  - name: Predict disabling automatic detection
+    params: {auto_detect: false}
+    check: true
+    changed: true
+    expected: '{{ inet_proxy_defaults | combine({"auto_detect": false}) }}'
+
+  - name: Disable automatic detection
+    params: {auto_detect: false}
+    changed: true
+    expected: '{{ inet_proxy_defaults | combine({"auto_detect": false}) }}'
+
+  - name: Repeat disabled automatic detection
+    params: {auto_detect: false}
+    changed: false
+    expected: '{{ inet_proxy_defaults | combine({"auto_detect": false}) }}'
+
+  - name: Predict a PAC URL and default automatic detection
+    params: {auto_config_url: 'http://pac.invalid/fixture.pac'}
+    check: true
+    changed: true
+    expected:
+      auto_detect: true
+      auto_config_url: http://pac.invalid/fixture.pac
+      proxy: null
+      bypass: null
+
+  - name: Set a PAC URL and restore default automatic detection
+    params: {auto_config_url: 'http://pac.invalid/fixture.pac'}
+    changed: true
+    expected:
+      auto_detect: true
+      auto_config_url: http://pac.invalid/fixture.pac
+      proxy: null
+      bypass: null
+
+  - name: Repeat the PAC URL
+    params: {auto_config_url: 'http://pac.invalid/fixture.pac'}
+    changed: false
+    expected:
+      auto_detect: true
+      auto_config_url: http://pac.invalid/fixture.pac
+      proxy: null
+      bypass: null
+
+  - name: PAC comparison ignores case while preserving stored spelling
+    params: {auto_config_url: 'HTTP://PAC.INVALID/FIXTURE.PAC'}
+    changed: false
+    expected:
+      auto_detect: true
+      auto_config_url: HTTP://PAC.INVALID/FIXTURE.PAC
+      proxy: null
+      bypass: null
+
+  - name: Set an explicit proxy and clear the omitted PAC URL
+    params: {proxy: proxy.invalid}
+    changed: true
+    expected:
+      auto_detect: true
+      auto_config_url: null
+      proxy: proxy.invalid
+      bypass: null
+
+  - name: Repeat the explicit proxy
+    params: {proxy: proxy.invalid}
+    changed: false
+    expected:
+      auto_detect: true
+      auto_config_url: null
+      proxy: proxy.invalid
+      bypass: null
+
+  - name: Predict a NUL-containing proxy without native truncation
+    params: {proxy: "proxy.invalid\u0000truncated"}
+    check: true
+    changed: true
+    expected:
+      auto_detect: true
+      auto_config_url: null
+      proxy: "proxy.invalid\u0000truncated"
+      bypass: null
+
+  - name: Native truncation fails readback and rolls back semantic settings
+    params: {proxy: "proxy.invalid\u0000truncated"}
+    changed: false
+    diff_before_only: true
+    error: "Unknown error when trying to set auto_config_url '',
+      proxy 'proxy.invalid\u0000truncated', or bypass ''"
+
+  - name: Proxy comparison ignores case while preserving stored spelling
+    params: {proxy: PROXY.INVALID}
+    changed: false
+    expected:
+      auto_detect: true
+      auto_config_url: null
+      proxy: PROXY.INVALID
+      bypass: null
+
+  - name: Predict combined static PAC bypass and detection settings
+    params:
+      auto_detect: false
+      auto_config_url: http://pac.invalid/combined.pac
+      proxy: proxy.invalid:8080
+      bypass: [first.invalid, second.invalid, '<local>']
+    check: true
+    changed: true
+    expected:
+      auto_detect: false
+      auto_config_url: http://pac.invalid/combined.pac
+      proxy: proxy.invalid:8080
+      bypass: first.invalid;second.invalid;<local>
+
+  - name: Set combined static PAC bypass and detection settings
+    params:
+      auto_detect: false
+      auto_config_url: http://pac.invalid/combined.pac
+      proxy: proxy.invalid:8080
+      bypass: [first.invalid, second.invalid, '<local>']
+    changed: true
+    expected:
+      auto_detect: false
+      auto_config_url: http://pac.invalid/combined.pac
+      proxy: proxy.invalid:8080
+      bypass: first.invalid;second.invalid;<local>
+
+  - name: A comma-separated bypass repeats the combined setting
+    params:
+      auto_detect: false
+      auto_config_url: http://pac.invalid/combined.pac
+      proxy: proxy.invalid:8080
+      bypass: first.invalid,second.invalid,<local>
+    changed: false
+    expected:
+      auto_detect: false
+      auto_config_url: http://pac.invalid/combined.pac
+      proxy: proxy.invalid:8080
+      bypass: first.invalid;second.invalid;<local>
+
+  - name: Null clears static and PAC settings while default detection returns
+    params: {proxy: null, bypass: null, auto_config_url: null}
+    changed: true
+    expected: '{{ inet_proxy_defaults }}'
+
+  - name: Empty strings and list repeat the cleared settings
+    params: {proxy: '', bypass: [], auto_config_url: ''}
+    changed: false
+    expected: '{{ inet_proxy_defaults }}'
+
+  - name: Dictionary protocols use their defined serialization order
+    params:
+      proxy:
+        socks: socks-proxy.invalid:1080
+        ftp: ftp-proxy.invalid:8021
+        https: https-proxy.invalid:8443
+        http: http-proxy.invalid:8080
+    changed: true
+    expected:
+      auto_detect: true
+      auto_config_url: null
+      proxy: '{{ inet_proxy_protocols }}'
+      bypass: null
+
+  - name: An equivalent protocol string is unchanged
+    params: {proxy: '{{ inet_proxy_protocols }}'}
+    changed: false
+    expected:
+      auto_detect: true
+      auto_config_url: null
+      proxy: '{{ inet_proxy_protocols }}'
+      bypass: null
+
+  - name: Predict restoring default LAN settings
+    params: {}
+    check: true
+    changed: true
+    expected: '{{ inet_proxy_defaults }}'
+
+  - name: Restore default LAN settings
+    params: {}
+    changed: true
+    expected: '{{ inet_proxy_defaults }}'
+
+  - name: Repeat default LAN settings
+    params: {}
+    changed: false
+    expected: '{{ inet_proxy_defaults }}'
+
+  - name: Predict changes for the owned disconnected named connection
+    target: connection
+    params:
+      connection: '{{ inet_proxy_connection }}'
+      auto_detect: false
+      auto_config_url: http://pac.invalid/named.pac
+      proxy: named-proxy.invalid:8282
+      bypass: named-bypass.invalid
+    check: true
+    changed: true
+    expected:
+      auto_detect: false
+      auto_config_url: http://pac.invalid/named.pac
+      proxy: named-proxy.invalid:8282
+      bypass: named-bypass.invalid
+
+  - name: Change the owned named connection without changing LAN settings
+    target: connection
+    params:
+      connection: '{{ inet_proxy_connection }}'
+      auto_detect: false
+      auto_config_url: http://pac.invalid/named.pac
+      proxy: named-proxy.invalid:8282
+      bypass: named-bypass.invalid
+    changed: true
+    expected:
+      auto_detect: false
+      auto_config_url: http://pac.invalid/named.pac
+      proxy: named-proxy.invalid:8282
+      bypass: named-bypass.invalid
+
+  - name: Repeat the named connection settings
+    target: connection
+    params:
+      connection: '{{ inet_proxy_connection }}'
+      auto_detect: false
+      auto_config_url: http://pac.invalid/named.pac
+      proxy: named-proxy.invalid:8282
+      bypass: named-bypass.invalid
+    changed: false
+    expected:
+      auto_detect: false
+      auto_config_url: http://pac.invalid/named.pac
+      proxy: named-proxy.invalid:8282
+      bypass: named-bypass.invalid
+
+  - name: Predict clearing the named connection
+    target: connection
+    params: {connection: '{{ inet_proxy_connection }}'}
+    check: true
+    changed: true
+    expected: '{{ inet_proxy_defaults }}'
+
+  - name: Clear the named connection
+    target: connection
+    params: {connection: '{{ inet_proxy_connection }}'}
+    changed: true
+    expected: '{{ inet_proxy_defaults }}'
+
+  - name: Repeat the cleared named connection
+    target: connection
+    params: {connection: '{{ inet_proxy_connection }}'}
+    changed: false
+    expected: '{{ inet_proxy_defaults }}'

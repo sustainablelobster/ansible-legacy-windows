@@ -1,0 +1,111 @@
+---
+- name: Verify owned SMB share changes and exact absence restoration
+  hosts: legacy_windows
+  gather_facts: false
+  vars_files:
+    - vars/share.yml
+    - vars/share_fixture.yml
+  tasks:
+    - name: Require Python 3.4.4 and record existing task directories
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import glob, json, os, sys, tempfile;
+        assert sys.version_info[:3] == (3, 4, 4);
+        print(json.dumps(sorted(glob.glob(os.path.join(tempfile.gettempdir(),
+        'ansible-tmp-*')))))""
+      register: task_directories_before
+      changed_when: false
+
+    - name: Exercise only a newly allocated share with durable recovery
+      block:
+        - name: Allocate the owned recovery workspace
+          sustainablelobster.legacy_windows.win_tempfile:  # noqa: args[module]
+            state: directory
+            prefix: legacy-windows-share-
+          register: share_workspace
+          check_mode: false
+
+        - name: Journal verified original absence before any share mutation
+          sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - '-'
+              - '{{ share_workspace.path }}'
+              - setup
+            stdin: '{{ share_fixture }}'
+          register: share_setup
+          changed_when: true
+          check_mode: false
+
+        - name: Retain the owned name paths and initial state
+          ansible.builtin.set_fact:
+            share_identity: '{{ share_setup.stdout | from_json }}'
+            share_previous: null
+
+        - name: Exercise share predictions writes repeats access and removal
+          ansible.builtin.include_tasks: tasks/win_share_case.yml
+          loop: '{{ range(share_cases | length) | list }}'
+          loop_control:
+            loop_var: share_case_index
+          vars:
+            share_case: '{{ share_cases[share_case_index] }}'
+          when: >-
+            not (share_case.requires_encryption | default(false)) or
+            share_identity.supports_encryption
+      always:
+        - name: Restore original absence before removing the journal
+          when: share_workspace.path is defined
+          block:
+            - name: Remove share and verify absence  # noqa: args[module]
+              sustainablelobster.legacy_windows.win_command:
+                argv:
+                  - '{{ ansible_python_interpreter }}'
+                  - '-'
+                  - '{{ share_workspace.path }}'
+                  - cleanup
+                stdin: '{{ share_fixture }}'
+              register: share_restoration
+              changed_when: true
+              check_mode: false
+
+            - name: Require exact initial absence and retained directories
+              ansible.builtin.assert:
+                that:
+                  - (share_restoration.stdout | from_json).restored
+                  - (share_restoration.stdout | from_json).initial is none
+                  - >-
+                    (share_restoration.stdout | from_json).restored_state
+                    is none
+                  - >-
+                    share_setup is failed or
+                    (share_restoration.stdout | from_json).directories ==
+                    [true, true]
+
+            - name: Remove the verified owned recovery workspace
+              sustainablelobster.legacy_windows.win_file:  # noqa: args[module]
+                path: '{{ share_workspace.path }}'
+                state: absent
+              check_mode: false
+
+        - name: Verify workspace and staging cleanup
+          ansible.builtin.raw: >-
+            cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+            "import glob, json, os, sys, tempfile;
+            assert not os.path.exists(sys.argv[1]);
+            print(json.dumps(sorted(glob.glob(os.path.join(tempfile.gettempdir(),
+            'ansible-tmp-*')))))" "{{ share_workspace.path }}""
+          when: >-
+            share_restoration is defined and share_restoration is succeeded
+          register: task_directories_after
+          changed_when: false
+          check_mode: false
+
+        - name: Require task-directory cleanup
+          ansible.builtin.assert:
+            that:
+              - >-
+                (task_directories_before.stdout | from_json) ==
+                (task_directories_after.stdout | from_json)
+          when: >-
+            task_directories_after is defined and
+            task_directories_after is succeeded

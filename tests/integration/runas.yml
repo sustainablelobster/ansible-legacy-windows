@@ -1,0 +1,170 @@
+---
+# SPDX-License-Identifier: GPL-3.0-or-later
+- name: Verify native synchronous runas on actual Python 3.4.4
+  hosts: legacy_windows
+  gather_facts: false
+  vars:
+    runas_compare: false
+    runas_body: 'AAH/AApib2R5IM67'
+    runas_environment: 'literal λ %PATH% !text! & | < > ^'
+    runas_program: >-
+      {{ lookup('file', playbook_dir + '/fixtures/runas_observer.py') }}
+  tasks:
+    - name: Record original staging and actual interpreter
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import glob,json,os,sys,tempfile;assert sys.version_info[:3]==(3,4,4);
+        print(json.dumps(sorted(glob.glob(os.path.join(tempfile.gettempdir(),'ansible-tmp-*')))))""
+      register: runas_staging_before
+      changed_when: false
+
+    - name: Record original account without changing logon context
+      sustainablelobster.legacy_windows.win_whoami:
+      register: runas_original_identity
+
+    - name: Allocate private local capture
+      ansible.builtin.tempfile:
+        state: file
+        path: '{{ playbook_dir }}/../../tmp'
+        prefix: 'runas-{{ inventory_hostname }}-'
+        suffix: .json
+      register: runas_capture
+      delegate_to: localhost
+      vars: &controller
+        ansible_connection: local
+        ansible_shell_type: sh
+        ansible_python_interpreter: '{{ ansible_playbook_python }}'
+      changed_when: false
+
+    - name: Exercise native worker tokens with mandatory final observations
+      block:
+        - name: Observe requested user and literal task environment
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}', '-', '{{ runas_body }}']
+            stdin: '{{ runas_program }}'
+          become: true
+          become_method: ansible.builtin.runas
+          become_user: '{{ ansible_user }}'
+          vars:
+            ansible_become_password: '{{ ansible_password }}'
+          environment:
+            LEGACY_WINDOWS_RUNAS_TEST: '{{ runas_environment }}'
+          register: runas_user
+          changed_when: false
+          no_log: true
+
+        - name: Observe native SYSTEM token without a password
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}', '-', '{{ runas_body }}']
+            stdin: '{{ runas_program }}'
+          become: true
+          become_method: ansible.builtin.runas
+          become_user: 'NT AUTHORITY\SYSTEM'
+          environment:
+            LEGACY_WINDOWS_RUNAS_TEST: '{{ runas_environment }}'
+          register: runas_system
+          changed_when: false
+
+        - name: Require actual target identities and literal child output
+          vars:
+            actual: '{{ item.result.stdout | from_json }}'
+          ansible.builtin.assert:
+            that:
+              - item.result.rc == 0
+              - item.result.stderr == ''
+              - actual.sid == item.sid
+              - actual.python == [3, 4, 4]
+              - actual.body_base64 == runas_body
+              - actual.environment == runas_environment
+          loop:
+            - result: '{{ runas_user }}'
+              sid: '{{ runas_original_identity.account.sid }}'
+            - result: '{{ runas_system }}'
+              sid: 'S-1-5-18'
+          loop_control:
+            label: '{{ item.sid }}'
+          no_log: true
+
+        - name: Read native identity through a separate public payload
+          sustainablelobster.legacy_windows.win_whoami:
+          become: true
+          become_method: ansible.builtin.runas
+          become_user: 'NT AUTHORITY\SYSTEM'
+          register: runas_identity
+
+        - name: Require public SYSTEM identity without changes
+          ansible.builtin.assert:
+            that:
+              - runas_identity is not changed
+              - runas_identity.account.sid == 'S-1-5-18'
+
+        - name: Read released public SYSTEM identity for comparison
+          ansible.windows.win_whoami:
+          become: true
+          become_method: ansible.builtin.runas
+          become_user: 'NT AUTHORITY\SYSTEM'
+          vars:
+            ansible_shell_type: cmd
+          register: runas_source_identity
+          when: runas_compare | bool
+
+        - name: Require complete released and native SYSTEM identity parity
+          ansible.builtin.assert:
+            that:
+              - >-
+                (runas_identity | dict2items |
+                rejectattr('key', 'in', ['invocation', 'exception']) |
+                items2dict | to_json(sort_keys=true)) ==
+                (runas_source_identity | dict2items |
+                rejectattr('key', 'in', ['invocation', 'exception']) |
+                items2dict | to_json(sort_keys=true))
+          when: runas_compare | bool
+      always:
+        - name: Observe original user again outside privilege escalation
+          sustainablelobster.legacy_windows.win_whoami:
+          register: runas_final_identity
+
+        - name: Observe original task staging after native workers finish
+          ansible.builtin.raw: >-
+            cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+            "import glob,json,os,tempfile;
+            print(json.dumps(sorted(glob.glob(os.path.join(tempfile.gettempdir(),'ansible-tmp-*')))))""
+          register: runas_staging_after
+          changed_when: false
+
+        - name: Preserve raw public results before cleanup assertions
+          ansible.builtin.copy:
+            content: >-
+              {{ {'user': runas_user | default(none),
+              'system': runas_system | default(none),
+              'system_identity': runas_identity | default(none),
+              'source_system_identity': runas_source_identity | default(none),
+              'original_identity': runas_original_identity,
+              'final_identity': runas_final_identity,
+              'staging_before': runas_staging_before,
+              'staging_after': runas_staging_after} | to_nice_json }}
+            dest: '{{ runas_capture.path }}'
+            mode: '0600'
+          delegate_to: localhost
+          vars: *controller
+          changed_when: false
+          no_log: true
+
+        - name: Require original connection token and exact staging recovery
+          ansible.builtin.assert:
+            that:
+              - >-
+                (runas_original_identity | dict2items |
+                rejectattr('key', 'in', ['invocation', 'exception']) |
+                items2dict |
+                to_json(sort_keys=true)) ==
+                (runas_final_identity | dict2items |
+                rejectattr('key', 'in', ['invocation', 'exception']) |
+                items2dict |
+                to_json(sort_keys=true))
+              - >-
+                (runas_staging_before.stdout | from_json) ==
+                (runas_staging_after.stdout | from_json)
+
+        - name: Close any owner-scoped persistent SSH connection
+          ansible.builtin.meta: reset_connection

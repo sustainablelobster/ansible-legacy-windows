@@ -1,0 +1,106 @@
+---
+# SPDX-License-Identifier: GPL-3.0-or-later
+- name: Observe DSC state and owned caches before the automatic request
+  sustainablelobster.legacy_windows.win_command:
+    argv: ['{{ ansible_python_interpreter }}', '-',
+           '{{ dsc3_workspace.path }}', observe]
+    stdin: '{{ dsc3_fixture }}'
+  register: dsc3_poll_before
+  changed_when: false
+  no_log: true
+
+- name: Automatically poll the native public DSC request
+  sustainablelobster.legacy_windows.dsc3: &request
+    config: '{{ dsc3_poll_case.params.config | default(omit) }}'
+    config_file: '{{ dsc3_poll_case.params.config_file | default(omit) }}'
+    remote_config_file: >-
+      {{ dsc3_poll_case.params.remote_config_file | default(omit) }}
+  async: 30
+  poll: 1
+  diff: true
+  environment: &engine
+    PATH: '{{ dsc3_engine }};{{ dsc3_path_env }}'
+    DSC_RESOURCE_PATH: '{{ dsc3_engine }}'
+  vars: &directories
+    ansible_remote_tmp: '{{ dsc3_workspace.path }}\staging'
+    ansible_async_dir: '{{ dsc3_workspace.path }}\cache'
+  register: dsc3_poll_native
+  ignore_errors: true
+  no_log: true
+  when: dsc3_poll_phase == 'native'
+
+- name: Automatically poll the untouched released public DSC request
+  ansible.windows.dsc3: *request
+  async: 30
+  poll: 1
+  diff: true
+  environment: *engine
+  vars:
+    <<: *directories
+    ansible_shell_type: cmd
+  register: dsc3_poll_original
+  ignore_errors: true
+  no_log: true
+  when: dsc3_poll_phase == 'original'
+
+- name: Select the complete actual automatic result
+  ansible.builtin.set_fact:
+    dsc3_poll_result: >-
+      {{ dsc3_poll_native if dsc3_poll_phase == 'native'
+         else dsc3_poll_original }}
+  no_log: true
+
+- name: Observe DSC state independently after the operation
+  sustainablelobster.legacy_windows.win_command:
+    argv: ['{{ ansible_python_interpreter }}', '-',
+           '{{ dsc3_workspace.path }}', observe]
+    stdin: '{{ dsc3_fixture }}'
+  register: dsc3_poll_after
+  changed_when: false
+  no_log: true
+
+- name: Retain automatically removed or failed caches before fixture cleanup
+  sustainablelobster.legacy_windows.win_command:
+    argv: ['{{ ansible_python_interpreter }}', '-',
+           '{{ dsc3_workspace.path }}', observe]
+    stdin: '{{ dsc3_poll_program }}'
+  register: dsc3_poll_observation
+  changed_when: false
+  no_log: true
+
+- name: Preserve raw public fields and bounded observations before gates
+  ansible.builtin.set_fact:
+    dsc3_poll_records: >-
+      {{ dsc3_poll_records | default([]) + [{'case': dsc3_poll_case.name,
+        'phase': dsc3_poll_phase, 'request': dsc3_poll_case.params,
+        'check_mode': false, 'before': dsc3_poll_before.stdout | from_json,
+        'after': dsc3_poll_after.stdout | from_json, 'result': dsc3_poll_result,
+        'observation': dsc3_poll_observation.stdout | from_json,
+        'local_rejection': dsc3_poll_case.local_rejection | default(false),
+        'validated': false}] }}
+  no_log: true
+
+- name: Require the declared public outcome without guessing rejection metadata
+  ansible.builtin.assert:
+    that:
+      - dsc3_poll_result.changed == dsc3_poll_case.changed
+      - (dsc3_poll_result is failed) == (dsc3_poll_case.error is defined)
+      - >-
+        dsc3_poll_case.error is not defined or
+        dsc3_poll_result.msg == dsc3_poll_case.error
+      - >-
+        dsc3_poll_case.local_rejection | default(false) or
+        dsc3_poll_result.rc == dsc3_poll_case.rc | default(0)
+      - >-
+        not (dsc3_poll_case.local_rejection | default(false)) or
+        (dsc3_poll_result.ansible_job_id is not defined and
+         dsc3_poll_result.rc is not defined)
+      - dsc3_poll_result.warnings | default([]) == []
+  no_log: true
+
+- name: Mark only a passing complete public request
+  ansible.builtin.set_fact:
+    dsc3_poll_records: >-
+      {{ dsc3_poll_records[:-1] +
+         [dsc3_poll_records[-1] | combine({'validated': true})] }}
+  no_log: true

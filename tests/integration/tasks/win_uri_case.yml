@@ -1,0 +1,233 @@
+---
+- name: Bind one complete public URI request
+  ansible.builtin.set_fact:
+    uri_params: >-
+      {{ {'url': get_url_setup_data.http + '/payload.bin',
+          'use_proxy': false} | combine(uri_case.params | default({})) }}
+
+- name: Prepare identical owned destination baseline  # noqa: args[module]
+  sustainablelobster.legacy_windows.win_command:
+    argv: ['{{ ansible_python_interpreter }}', '-',
+           '{{ get_url_workspace.path }}', prepare,
+           '{{ uri_case | to_json | b64encode }}']
+    stdin: '{{ get_url_program }}'
+  register: uri_before_native
+  changed_when: false
+  no_log: true
+
+- name: Retain complete native result
+  block:
+    - name: Execute native public URI request  # noqa: args[module]
+      sustainablelobster.legacy_windows.win_uri: '{{ uri_params }}'
+      register: uri_native
+      check_mode: '{{ uri_case.check | default(false) }}'
+  rescue:
+    - name: Keep complete native failure
+      ansible.builtin.debug:
+        msg: Public native failure retained.
+
+- name: Observe native requests and owned file state  # noqa: args[module]
+  sustainablelobster.legacy_windows.win_command:
+    argv: ['{{ ansible_python_interpreter }}', '-',
+           '{{ get_url_workspace.path }}', observe]
+    stdin: '{{ get_url_program }}'
+  register: uri_after_native
+  changed_when: false
+  no_log: true
+
+- name: Capture untouched source on the identical owned baseline
+  when: uri_compare | default(false) | bool
+  block:
+    - name: Reset owned baseline before original  # noqa: args[module]
+      sustainablelobster.legacy_windows.win_command:
+        argv: ['{{ ansible_python_interpreter }}', '-',
+               '{{ get_url_workspace.path }}', prepare,
+               '{{ uri_case | to_json | b64encode }}']
+        stdin: '{{ get_url_program }}'
+      register: uri_before_original
+      changed_when: false
+      no_log: true
+
+    - name: Retain complete original result
+      block:
+        - name: Execute untouched source public URI request
+          ansible.windows.win_uri: '{{ uri_params }}'
+          register: uri_original
+          check_mode: '{{ uri_case.check | default(false) }}'
+          vars:
+            ansible_shell_type: cmd
+            ansible_remote_tmp: '{{ get_url_workspace.path }}'
+      rescue:
+        - name: Keep complete original failure
+          ansible.builtin.debug:
+            msg: Public original failure retained.
+
+    - name: Observe original requests and owned file state  # noqa: args[module]
+      sustainablelobster.legacy_windows.win_command:
+        argv: ['{{ ansible_python_interpreter }}', '-',
+               '{{ get_url_workspace.path }}', observe]
+        stdin: '{{ get_url_program }}'
+      register: uri_after_original
+      changed_when: false
+      no_log: true
+
+- name: Bind a captured original to this owned legacy fixture
+  when: uri_reference_capture is defined
+  block:
+    - name: Select exactly one original reference for the request
+      ansible.builtin.set_fact:
+        uri_reference_matches: >-
+          {{ uri_reference.results |
+             selectattr('name', 'equalto', uri_case.name) | list }}
+      no_log: true
+
+    - name: Require an exact source reference selection
+      ansible.builtin.assert:
+        that:
+          - uri_reference_matches | length == 1
+
+    - name: Retain literal source record and its fixture namespace
+      ansible.builtin.set_fact:
+        uri_reference_record: '{{ uri_reference_matches[0] }}'
+      no_log: true
+
+    - name: Map only owned workspace, file URI and HTTP endpoint
+      vars:
+        source: '{{ uri_reference_record.reference }}'
+        source_workspace: '{{ (source.workspace | to_json)[1:-1] }}'
+        target_workspace: '{{ (get_url_workspace.path | to_json)[1:-1] }}'
+      ansible.builtin.set_fact:
+        uri_original: >-
+          {{ uri_reference_record.original | to_json |
+             replace(source_workspace, target_workspace) |
+             replace(source.file, get_url_setup_data.file) |
+             replace(source.http, get_url_setup_data.http) |
+             replace(source.http | urlsplit('netloc'),
+                     get_url_setup_data.http | urlsplit('netloc')) |
+             from_json }}
+        uri_before_original: '{{ uri_reference_record.before_original }}'
+        uri_after_original: '{{ uri_reference_record.after_original }}'
+      no_log: true
+
+- name: Retain all raw public and request/file observations before assertions
+  ansible.builtin.set_fact:
+    uri_record:
+      name: '{{ uri_case.name }}'
+      params: '{{ uri_params }}'
+      check: '{{ uri_case.check | default(false) }}'
+      native: '{{ uri_native }}'
+      original: '{{ uri_original | default(none) }}'
+      before_native: '{{ uri_before_native }}'
+      after_native: '{{ uri_after_native }}'
+      before_original: '{{ uri_before_original | default(none) }}'
+      after_original: '{{ uri_after_original | default(none) }}'
+      reference_record: '{{ uri_reference_record | default(none) }}'
+      reference:
+        workspace: '{{ get_url_workspace.path }}'
+        http: '{{ get_url_setup_data.http }}'
+        file: '{{ get_url_setup_data.file }}'
+      validated: false
+
+- name: Preserve an unvalidated record if a gate fails
+  ansible.builtin.set_fact:
+    uri_results: '{{ uri_results + [uri_record] }}'
+
+- name: Persist raw evidence before any parity gate
+  ansible.builtin.copy:
+    content: >-
+      {{ {'results': uri_results, 'setup': get_url_setup,
+          'workspace': get_url_workspace} | to_nice_json }}
+    dest: '{{ uri_capture.path }}'
+    mode: '0600'
+  delegate_to: localhost
+  vars: &local
+    ansible_connection: local
+    ansible_shell_type: sh
+    ansible_python_interpreter: '{{ ansible_playbook_python }}'
+  changed_when: false
+  no_log: true
+
+- name: Require native public behavior and exact protected fixture state
+  vars:
+    before: '{{ uri_before_native.stdout | from_json }}'
+    after: '{{ uri_after_native.stdout | from_json }}'
+  ansible.builtin.assert:
+    that:
+      - uri_native.changed == (uri_case.changed | default(false))
+      - (uri_native is failed) == (uri_case.failed | default(false))
+      - >-
+        uri_native.skipped | default(false) ==
+        (uri_case.skipped | default(false))
+      - uri_native.elapsed is number
+      - uri_native.elapsed >= 0 and uri_native.elapsed < 120
+      - >-
+        uri_case.elapsed is not defined or
+        uri_native.elapsed == uri_case.elapsed
+      - not uri_case.no_requests | default(false) or after.requests == []
+      - after.sentinel == before.sentinel and after.source == before.source
+      - >-
+        (not uri_case.check | default(false) and uri_native.changed) or
+        before.output == after.output
+      - >-
+        uri_case.check | default(false) or not uri_native.changed or
+        after.modified_in_request
+
+- name: Compare complete typed public results and request/body/file effects
+  when: uri_compare | default(false) | bool or uri_reference_capture is defined
+  vars:
+    native_public: >-
+      {{ uri_native | dict2items |
+         rejectattr('key', 'in', ['invocation', 'exception']) |
+         list | items2dict }}
+    original_public: >-
+      {{ uri_original | dict2items |
+         rejectattr('key', 'in', ['invocation', 'exception']) |
+         list | items2dict }}
+    native_files: '{{ uri_after_native.stdout | from_json }}'
+    original_files: >-
+      {{ uri_after_original.stdout | from_json | to_json |
+         replace(uri_reference_record.reference.http | urlsplit('netloc'),
+                 get_url_setup_data.http | urlsplit('netloc')) | from_json
+         if uri_reference_capture is defined
+         else uri_after_original.stdout | from_json }}
+    native_requests: >-
+      {{ native_files.requests | map('dict2items') |
+         map('rejectattr', 'key', 'equalto', 'header_pairs') |
+         map('list') | map('items2dict') | list }}
+    original_requests: >-
+      {{ original_files.requests | map('dict2items') |
+         map('rejectattr', 'key', 'equalto', 'header_pairs') |
+         map('list') | map('items2dict') | list }}
+  ansible.builtin.assert:
+    that:
+      - uri_original.elapsed is number
+      - uri_original.elapsed >= 0 and uri_original.elapsed < 120
+      - (uri_native.elapsed | type_debug) == (uri_original.elapsed | type_debug)
+      - >-
+        uri_case.elapsed is not defined or
+        uri_original.elapsed == uri_case.elapsed
+      - >-
+        (native_public | combine({'elapsed': 0}) | to_json(sort_keys=true)) ==
+        (original_public | combine({'elapsed': 0}) | to_json(sort_keys=true))
+      - native_files.portable_output == original_files.portable_output
+      - >-
+        (native_requests | to_json(sort_keys=true)) ==
+        (original_requests | to_json(sort_keys=true))
+      - >-
+        (uri_before_native.stdout | from_json).output ==
+        (uri_before_original.stdout | from_json).output
+      - >-
+        original_files.sentinel ==
+        (uri_before_original.stdout | from_json).sentinel
+      - original_files.source == (uri_before_original.stdout | from_json).source
+      - >-
+        (not uri_case.check | default(false) and uri_original.changed) or
+        (uri_before_original.stdout | from_json).output == original_files.output
+      - >-
+        uri_case.check | default(false) or not uri_original.changed or
+        original_files.modified_in_request
+
+- name: Mark complete public validation
+  ansible.builtin.set_fact:
+    uri_results: >-
+      {{ uri_results[:-1] + [uri_record | combine({'validated': true})] }}

@@ -1,0 +1,111 @@
+---
+# SPDX-License-Identifier: GPL-3.0-or-later
+- name: Compare public Unicode category selection and journal-owned recovery
+  hosts: legacy_windows
+  gather_facts: false
+  vars_files:
+    - vars/regex_selection.yml
+  vars:
+    regex_find_pairs: []
+    regex_wait_pairs: []
+    regex_staging_observer: >-
+      import glob,json,os,tempfile;
+      print(json.dumps(sorted(glob.glob(os.path.join(
+      tempfile.gettempdir(),'ansible-tmp-*')))))
+  tasks:
+    - name: Observe complete original global staging without allocating staging
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c
+        ""{{ ansible_python_interpreter }}" -c "{{ regex_staging_observer
+        }}""
+      register: regex_staging_before
+      changed_when: false
+    - name: Allocate a uniquely named isolated regex workspace
+      sustainablelobster.legacy_windows.win_tempfile:
+        prefix: legacy-windows-regex-selection-
+        state: directory
+      register: regex_workspace
+    - name: Exercise only journal-owned Unicode files through public modules
+      block:
+        - name: Journal exact files before public reads
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - "{{ ansible_python_interpreter }}"
+              - "-"
+              - prepare
+              - "{{ regex_workspace.path }}"
+            stdin: "{{ regex_selection_fixture }}"
+          register: regex_prepare
+          changed_when: false
+          no_log: true
+        - name: Retain the complete pre-write journal on the controller
+          ansible.builtin.copy:
+            dest: "{{ regex_selection_capture }}"
+            mode: "0600"
+            content: >-
+              {{ {"workspace": regex_workspace, "prepare": regex_prepare} |
+              to_nice_json }}
+          delegate_to: localhost
+          no_log: true
+        - name: Use only the actual journal nonce for fixture operations
+          ansible.builtin.set_fact:
+            regex_nonce: "{{ (regex_prepare.stdout | from_json).nonce }}"
+        - name: Run complete native and untouched source Find pairs in normal
+            and check mode
+          ansible.builtin.include_tasks: tasks/regex_selection_find.yml
+          loop: >-
+            {{ regex_selection_find_cases | product([false, true]) | list }}
+          loop_control:
+            loop_var: regex_case
+        - name: Run complete category Wait pairs under independent clock bounds
+          ansible.builtin.include_tasks: tasks/regex_selection_wait.yml
+          loop: "{{ regex_selection_wait_cases }}"
+          loop_control:
+            loop_var: regex_wait_case
+      always:
+        - name: Recover exact journal-owned files and require literal bytes
+            attrs and mtime
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - "{{ ansible_python_interpreter }}"
+              - "-"
+              - cleanup
+              - "{{ regex_workspace.path }}"
+            stdin: "{{ regex_selection_fixture }}"
+          register: regex_cleanup
+          changed_when: false
+          no_log: true
+          ignore_errors: true
+        - name: Observe final complete global staging after owned workspace
+            removal
+          ansible.builtin.raw: >-
+            cmd.exe /d /s /c
+            ""{{ ansible_python_interpreter }}" -c "{{ regex_staging_observer
+            }}""
+          register: regex_staging_after
+          changed_when: false
+        - name: Retain every raw public result and literal recovery observation
+          ansible.builtin.copy:
+            dest: "{{ regex_selection_capture }}"
+            mode: "0600"
+            content: >-
+              {{ {'workspace': regex_workspace,
+              'prepare': regex_prepare | default({}),
+              'find': regex_find_pairs, 'wait': regex_wait_pairs,
+              'cleanup': regex_cleanup,
+              'staging_before': regex_staging_before,
+              'staging_after': regex_staging_after}
+              | to_nice_json }}
+          delegate_to: localhost
+          no_log: true
+        - name: Require literal global staging closure
+          ansible.builtin.assert:
+            that:
+              - (regex_staging_before.stdout | from_json) ==
+                (regex_staging_after.stdout | from_json)
+    - name: Close the exact private SSH connection after owned recovery
+      ansible.builtin.meta: reset_connection
+    - name: Require successful owned recovery after retaining its full result
+      ansible.builtin.assert:
+        that:
+          - not regex_cleanup.failed

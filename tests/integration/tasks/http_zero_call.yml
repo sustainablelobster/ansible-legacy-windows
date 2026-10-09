@@ -1,0 +1,121 @@
+---
+- name: Prove reserved DNS failure and refused socket before this public call
+  when: http_zero_case.connection_failure is defined
+  sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+    argv: ['{{ ansible_python_interpreter }}', '-',
+           '{{ get_url_workspace.path }}', connect_probe]
+    stdin: '{{ get_url_program }}'
+  register: http_zero_connect_before
+  changed_when: false
+  failed_when: false
+  no_log: true
+
+- name: Require the independently observed endpoint precondition
+  when: http_zero_case.connection_failure is defined
+  ansible.builtin.assert:
+    that: http_zero_connect_before.rc == 0
+
+- name: Prepare the identical owned destination baseline
+  sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+    argv: ['{{ ansible_python_interpreter }}', '-',
+           '{{ get_url_workspace.path }}', prepare,
+           '{{ http_zero_case | to_json | b64encode }}']
+    stdin: '{{ get_url_program }}'
+  register: http_zero_before
+  changed_when: false
+  no_log: true
+
+- name: Retain the whole requested public result
+  block:
+    - name: Request native Get URL
+      when: http_zero_side == 'native' and http_zero_case.module == 'get_url'
+      # noqa: args[module]
+      sustainablelobster.legacy_windows.win_get_url: '{{ http_zero_params }}'
+      register: http_zero_native_get_url_result
+      check_mode: '{{ http_zero_case.check | default(false) }}'
+    - name: Request released Get URL
+      when: http_zero_side == 'original' and http_zero_case.module == 'get_url'
+      ansible.windows.win_get_url: '{{ http_zero_params }}'
+      register: http_zero_original_get_url_result
+      check_mode: '{{ http_zero_case.check | default(false) }}'
+      vars: &source
+        ansible_shell_type: cmd
+        ansible_remote_tmp: '{{ get_url_workspace.path }}'
+    - name: Request native URI
+      when: http_zero_side == 'native' and http_zero_case.module == 'uri'
+      # noqa: args[module]
+      sustainablelobster.legacy_windows.win_uri: '{{ http_zero_params }}'
+      register: http_zero_native_uri_result
+      check_mode: '{{ http_zero_case.check | default(false) }}'
+    - name: Request released URI
+      when: http_zero_side == 'original' and http_zero_case.module == 'uri'
+      ansible.windows.win_uri: '{{ http_zero_params }}'
+      register: http_zero_original_uri_result
+      check_mode: '{{ http_zero_case.check | default(false) }}'
+      vars: *source
+    - name: Request native Package
+      when: http_zero_side == 'native' and http_zero_case.module == 'package'
+      # noqa: args[module]
+      sustainablelobster.legacy_windows.win_package: '{{ http_zero_params }}'
+      register: http_zero_native_package_result
+      check_mode: '{{ http_zero_case.check | default(false) }}'
+    - name: Request released Package
+      when: http_zero_side == 'original' and http_zero_case.module == 'package'
+      ansible.windows.win_package: '{{ http_zero_params }}'
+      register: http_zero_original_package_result
+      check_mode: '{{ http_zero_case.check | default(false) }}'
+      vars: *source
+  rescue:
+    - name: Keep the complete public request failure
+      ansible.builtin.debug:
+        msg: Full public failure retained without diagnostic normalization.
+
+- name: Observe all received requests and owned file effects
+  sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+    argv: ['{{ ansible_python_interpreter }}', '-',
+           '{{ get_url_workspace.path }}', observe]
+    stdin: '{{ get_url_program }}'
+  register: http_zero_after
+  changed_when: false
+  no_log: true
+
+- name: Prove reserved DNS failure and refused socket after this public call
+  when: http_zero_case.connection_failure is defined
+  sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+    argv: ['{{ ansible_python_interpreter }}', '-',
+           '{{ get_url_workspace.path }}', connect_probe]
+    stdin: '{{ get_url_program }}'
+  register: http_zero_connect_after
+  changed_when: false
+  no_log: true
+
+- name: Record complete public values and observation clocks
+  ansible.builtin.set_fact:
+    http_zero_results: >-
+      {{ http_zero_results + [{'name': http_zero_case.name,
+      'module': http_zero_case.module, 'side': http_zero_side,
+      'params': http_zero_params,
+      'check': http_zero_case.check | default(false),
+      'result': lookup('ansible.builtin.vars', 'http_zero_' +
+                      http_zero_side + '_' + http_zero_case.module + '_result'),
+      'before': http_zero_before, 'after': http_zero_after} |
+      combine({'connection_before': http_zero_connect_before,
+               'connection_after': http_zero_connect_after}
+              if http_zero_case.connection_failure is defined else {})] }}
+  no_log: true
+
+- name: Preserve the complete partial observation immediately
+  ansible.builtin.copy:
+    content: >-
+      {{ {'results': http_zero_results, 'setup': get_url_setup,
+          'workspace': get_url_workspace,
+          'staging_before': http_zero_staging_before} | to_nice_json }}
+    dest: '{{ http_zero_capture.path }}'
+    mode: '0600'
+  delegate_to: localhost
+  vars:
+    ansible_connection: local
+    ansible_shell_type: sh
+    ansible_python_interpreter: '{{ ansible_playbook_python }}'
+  changed_when: false
+  no_log: true

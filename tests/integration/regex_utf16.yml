@@ -1,0 +1,24 @@
+---
+# SPDX-License-Identifier: GPL-3.0-or-later
+- name: Bind ordinary UTF16 cases before reusing the journal-owned regex fixture
+  hosts: legacy_windows
+  gather_facts: false
+  vars_files:
+    - vars/regex_utf16.yml
+  tasks:
+    - name: Select only the new ordinary-pattern boundaries without guest I/O
+      tags: [regex_utf16_selection]
+      ansible.builtin.set_fact:
+        regex_selection_find_cases: '{{ regex_utf16_find_cases }}'
+        regex_selection_wait_cases: '{{ regex_utf16_wait_cases }}'
+    - name: Require the exact bounded inputs before fixture allocation
+      tags: [regex_utf16_selection]
+      ansible.builtin.assert:
+        that:
+          - regex_selection_find_cases | map(attribute='id') | list ==
+            ['one-unit', 'two-units']
+          - regex_selection_wait_cases | map(attribute='id') | list ==
+            ['one-unit-absent', 'two-units-present']
+
+- name: Compare complete ordinary UTF16 Find and Wait results and recovery
+  ansible.builtin.import_playbook: regex_selection.yml

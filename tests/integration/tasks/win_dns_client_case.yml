@@ -1,0 +1,99 @@
+---
+- name: '{{ dns_client_case.name }}'
+  block:
+    - name: Apply or predict the DNS request  # noqa: args[module]
+      sustainablelobster.legacy_windows.win_dns_client:
+        adapter_names: >-
+          {{ dns_client_case.adapter_names | default(dns_client_name) }}
+        dns_servers: '{{ dns_client_case.servers }}'
+        suffix_search_list: '{{ dns_client_case.suffixes | default(omit) }}'
+        # Deliberately unknown: pinned Legacy parsing ignores extra options.
+        unexpected_dns_option: >-
+          {{ dns_client_case.extra_option | default(omit) }}
+      register: dns_client_result
+      check_mode: '{{ dns_client_case.check | default(false) }}'
+      diff: true
+  rescue:
+    - name: Require the declared failure
+      ansible.builtin.assert:
+        that:
+          - dns_client_case.error is defined
+          - dns_client_result is failed
+          - dns_client_case.error in dns_client_result.msg
+          - not dns_client_result.changed
+
+- name: Observe DNS state independently after the public request
+  sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+    argv:
+      - '{{ ansible_python_interpreter }}'
+      - '-'
+      - '{{ dns_client_workspace.path }}'
+      - observe
+      - '{{ ansible_host }}'
+    stdin: '{{ dns_client_script }}'
+  register: dns_client_observation
+  changed_when: false
+  check_mode: false
+
+- name: Retain complete public result and native observations before assertions
+  ansible.builtin.set_fact:
+    dns_client_results: >-
+      {{ dns_client_results + [{
+         'name': dns_client_case.name, 'result': dns_client_result,
+         'before': dns_client_previous,
+         'after': dns_client_observation.stdout | from_json}] }}
+
+- name: Save private evidence before validating the public result
+  ansible.builtin.copy:
+    content: '{{ dns_client_results | to_nice_json }}'
+    dest: '{{ dns_client_capture_file.path }}'
+    mode: '0600'
+  delegate_to: localhost
+  vars:
+    ansible_connection: local
+    ansible_shell_type: sh
+    ansible_python_interpreter: '{{ ansible_playbook_python }}'
+  changed_when: false
+
+- name: Verify public results ordered values and nonmutation
+  vars:
+    observation: '{{ dns_client_observation.stdout | from_json }}'
+  ansible.builtin.assert:
+    that:
+      - dns_client_result.changed == dns_client_case.changed
+      - (dns_client_result is failed) == (dns_client_case.error is defined)
+      - dns_client_result.diff is not defined
+      - >-
+        dns_client_case.changed and not (dns_client_case.check | default(false))
+        or observation == dns_client_previous
+      - >-
+        dns_client_case.expected_servers is not defined or
+        observation.wmi.DNSServerSearchOrder == dns_client_case.expected_servers
+      - >-
+        dns_client_case.expected_suffixes is not defined or
+        observation.suffixes == dns_client_case.expected_suffixes
+      - >-
+        dns_client_case.expected_v4 is not defined or
+        observation.static_v4 == dns_client_case.expected_v4
+      - >-
+        dns_client_case.expected_v6 is not defined or
+        observation.static_v6 == dns_client_case.expected_v6
+      - observation.wmi.IPAddress == dns_client_previous.wmi.IPAddress
+      - observation.wmi.IPSubnet == dns_client_previous.wmi.IPSubnet
+      - observation.wmi.DHCPEnabled == dns_client_previous.wmi.DHCPEnabled
+      - >-
+        observation.wmi.FullDNSRegistrationEnabled ==
+        dns_client_previous.wmi.FullDNSRegistrationEnabled
+      - >-
+        observation.wmi.DomainDNSRegistrationEnabled ==
+        dns_client_previous.wmi.DomainDNSRegistrationEnabled
+      - observation.v4.security == dns_client_previous.v4.security
+      - >-
+        observation.v6 is none or
+        observation.v6.security == dns_client_previous.v6.security
+      - observation['global'].security == dns_client_previous['global'].security
+      - observation.policy == dns_client_previous.policy
+
+- name: Retain the native observation for the next request
+  ansible.builtin.set_fact:
+    dns_client_previous: '{{ dns_client_observation.stdout | from_json }}'

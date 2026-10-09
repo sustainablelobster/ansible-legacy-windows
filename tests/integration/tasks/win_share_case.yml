@@ -1,0 +1,100 @@
+---
+- name: '{{ share_case.name }}'
+  block:
+    - name: Apply or predict the requested owned share operation
+      sustainablelobster.legacy_windows.win_share:  # noqa: args[module]
+        name: '{{ share_identity.name }}'
+        path: >-
+          {{ share_identity.other_path if
+             (share_case.other_path | default(false))
+             else share_identity.path }}
+        state: '{{ share_case.parameters.state | default(omit) }}'
+        description: '{{ share_case.parameters.description | default(omit) }}'
+        list: '{{ share_case.parameters.list | default(true) }}'
+        caching_mode: '{{ share_case.parameters.caching_mode | default(omit) }}'
+        encrypt: '{{ share_case.parameters.encrypt | default(omit) }}'
+        read: '{{ share_case.parameters.read | default(omit) }}'
+        change: '{{ share_case.parameters.change | default(omit) }}'
+        full: '{{ share_case.parameters.full | default(omit) }}'
+        deny: '{{ share_case.parameters.deny | default(omit) }}'
+        rule_action: '{{ share_case.parameters.rule_action | default(omit) }}'
+      register: share_result
+      check_mode: '{{ share_case.check | default(false) }}'
+      diff: true
+  rescue:
+    - name: Require the declared owned share failure
+      ansible.builtin.assert:
+        that:
+          - share_case.error is defined
+          - share_result is failed
+          - share_result.msg == share_case.error
+          - not share_result.changed
+
+- name: Read native share properties security and access entries independently
+  sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+    argv:
+      - '{{ ansible_python_interpreter }}'
+      - '-'
+      - '{{ share_workspace.path }}'
+      - observe
+    stdin: '{{ share_fixture }}'
+  register: share_observation
+  changed_when: false
+  check_mode: false
+
+- name: Retain each whole result and before and after native snapshot
+  vars:
+    record:
+      case: '{{ share_case.name }}'
+      result: '{{ share_result }}'
+      before: '{{ share_previous }}'
+      snapshot: '{{ share_observation.stdout | from_json }}'
+  ansible.builtin.set_fact:
+    share_results: '{{ share_results | default([]) + [record] }}'
+
+- name: Verify public actions and independent owned-share state
+  vars:
+    observation: '{{ share_observation.stdout | from_json }}'
+    writes: >-
+      {{ share_case.changed and not
+         (share_case.check | default(false)) }}
+  ansible.builtin.assert:
+    that:
+      - share_result.changed == share_case.changed
+      - (share_case.error is defined) == (share_result is failed)
+      - share_result.diff is not defined
+      - share_result.warnings | default([]) == []
+      - share_case.error is defined or share_result.actions is defined
+      - >-
+        share_case.error is defined or
+        (share_result.actions | length > 0) == share_case.changed
+      - writes or observation == share_previous
+      - >-
+        share_case.absent | default(false) or observation is not none or
+        share_case.check | default(false)
+      - not (share_case.absent | default(false)) or observation is none
+      - >-
+        not writes or observation is none or
+        observation.path == (share_identity.other_path if
+        (share_case.other_path | default(false)) else share_identity.path)
+      - >-
+        not writes or observation is none or
+        observation.description ==
+        share_case.parameters.description | default('')
+      - >-
+        not writes or observation is none or
+        observation.list == share_case.parameters.list | default(true)
+      - >-
+        not writes or observation is none or
+        observation.caching_mode ==
+        share_case.parameters.caching_mode | default('Manual')
+      - >-
+        not writes or observation is none or
+        observation.encrypt == share_case.parameters.encrypt | default(false)
+      - >-
+        share_case.expected_access is not defined or
+        observation.access == share_case.expected_access
+
+- name: Advance the previous state only after this case passes
+  ansible.builtin.set_fact:
+    share_previous: '{{ share_observation.stdout | from_json }}'

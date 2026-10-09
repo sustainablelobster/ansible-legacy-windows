@@ -1,0 +1,125 @@
+---
+- name: Mark this case in the owned FTP wire journal
+  ansible.builtin.command:
+    argv: ['{{ ansible_playbook_python }}', '-',
+           '{{ get_url_ftp_workspace.path }}', mark,
+           '{{ get_url_ftp_controller_parent }}']
+    stdin: '{{ get_url_ftp_program }}'
+  delegate_to: localhost
+  vars: &local
+    ansible_connection: local
+    ansible_shell_type: sh
+    ansible_python_interpreter: '{{ ansible_playbook_python }}'
+  changed_when: false
+  no_log: true
+
+- name: Bind source-only FTP public request
+  when: get_url_ftp_mode == 'original'
+  ansible.builtin.set_fact:
+    get_url_params: >-
+      {{ {'url': get_url_ftp_setup_data.ftp + '/payload.bin',
+          'dest': get_url_workspace.path + '\output\result.bin',
+          'use_proxy': false, 'url_timeout': 10} |
+         combine(get_url_case.params | default({})) }}
+
+- name: Prepare owned source-only destination  # noqa: args[module]
+  when: get_url_ftp_mode == 'original'
+  sustainablelobster.legacy_windows.win_command:
+    argv: ['{{ ansible_python_interpreter }}', '-',
+           '{{ get_url_workspace.path }}', prepare,
+           '{{ get_url_case | to_json | b64encode }}']
+    stdin: '{{ get_url_program }}'
+  register: get_url_before_original
+  changed_when: false
+  no_log: true
+
+- name: Capture untouched source-only FTP result
+  when: get_url_ftp_mode == 'original'
+  block:
+    - name: Execute untouched FTP source module
+      ansible.windows.win_get_url: '{{ get_url_params }}'
+      register: get_url_original
+      check_mode: '{{ get_url_case.check | default(false) }}'
+      vars:
+        ansible_shell_type: cmd
+        ansible_remote_tmp: '{{ get_url_workspace.path }}'
+      no_log: true
+  rescue:
+    - name: Keep complete source failure for the oracle
+      ansible.builtin.debug:
+        msg: Complete upstream FTP failure retained.
+
+- name: Observe source destination and protected files  # noqa: args[module]
+  when: get_url_ftp_mode == 'original'
+  sustainablelobster.legacy_windows.win_command:
+    argv: ['{{ ansible_python_interpreter }}', '-',
+           '{{ get_url_workspace.path }}', observe]
+    stdin: '{{ get_url_program }}'
+  register: get_url_after_original
+  changed_when: false
+  no_log: true
+
+- name: Retain whole source-only result without guessing its status text
+  when: get_url_ftp_mode == 'original'
+  ansible.builtin.set_fact:
+    get_url_results: >-
+      {{ get_url_results + [{'name': get_url_case.name,
+          'case': get_url_case, 'params': get_url_params,
+          'original': get_url_original,
+          'before_original': get_url_before_original,
+          'after_original': get_url_after_original, 'validated': false}] }}
+
+- name: Compare native and source FTP when implementation is ready
+  when: get_url_ftp_mode != 'original'
+  ansible.builtin.include_tasks: win_get_url_case.yml
+  vars:
+    get_url_compare: '{{ get_url_ftp_mode == "paired" }}'
+    get_url_case: >-
+      {{ get_url_ftp_case | combine({'params': {
+          'url': get_url_ftp_setup_data.ftp + '/payload.bin',
+          'use_proxy': false, 'url_timeout': 10} |
+          combine(get_url_ftp_case.params | default({}))}) }}
+
+- name: Capture exact controller FTP commands and replies
+  ansible.builtin.command:
+    argv: ['{{ ansible_playbook_python }}', '-',
+           '{{ get_url_ftp_workspace.path }}', observe,
+           '{{ get_url_ftp_controller_parent }}']
+    stdin: '{{ get_url_ftp_program }}'
+  register: get_url_ftp_observed
+  delegate_to: localhost
+  vars: *local
+  changed_when: false
+  no_log: true
+
+- name: Attach wire evidence to the complete public record
+  ansible.builtin.set_fact:
+    get_url_results: >-
+      {{ get_url_results[:-1] + [get_url_results[-1] |
+         combine({'ftp': get_url_ftp_observed.stdout | from_json,
+                  'validated': false})] }}
+
+- name: Persist the whole captured case before later gates
+  ansible.builtin.copy:
+    content: '{{ {"results": get_url_results} | to_nice_json }}'
+    dest: '{{ get_url_capture.path }}'
+    mode: '0600'
+  delegate_to: localhost
+  vars: *local
+  changed_when: false
+  no_log: true
+
+- name: Require no FTP connection for a measured method-setter failure
+  when: get_url_ftp_mode != 'original'
+  ansible.builtin.assert:
+    that:
+      - >-
+        not get_url_case.setter_failure | default(false) or
+        (get_url_ftp_observed.stdout | from_json).wire == []
+
+- name: Mark complete public and FTP wire validation
+  when: get_url_ftp_mode != 'original'
+  ansible.builtin.set_fact:
+    get_url_results: >-
+      {{ get_url_results[:-1] + [get_url_results[-1] |
+         combine({'validated': true})] }}

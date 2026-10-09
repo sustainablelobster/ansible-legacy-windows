@@ -1,0 +1,187 @@
+---
+- name: Verify owned classic event logs and recover their original absence
+  hosts: legacy_windows
+  gather_facts: false
+  vars_files:
+    - vars/eventlog.yml
+    - vars/eventlog_fixture.yml
+  vars:
+    eventlog_capture:
+      results: "{{ eventlog_results }}"
+      workspace: "{{ eventlog_workspace.path | default(none) }}"
+      setup: '{{ eventlog_setup.stdout | default("") }}'
+      cleanup: '{{ eventlog_cleanup.stdout | default("") }}'
+      rebooted: >-
+        {{ eventlog_reboot is defined
+        and not (eventlog_reboot.skipped | default(false)) }}
+      cleanup_command: '{{ eventlog_cleanup | default({}) }}'
+      staging_before: '{{ eventlog_staging_before.stdout | default("") }}'
+      staging_after: '{{ eventlog_staging_after.stdout | default("") }}'
+  tasks:
+    - name: Allocate a unique private controller evidence file
+      ansible.builtin.tempfile:
+        state: file
+        prefix: eventlog-{{ inventory_hostname }}-
+        suffix: .json
+        path: "{{ playbook_dir }}/../../tmp"
+      register: eventlog_capture_file
+      delegate_to: localhost
+      vars: &local
+        ansible_connection: local
+        ansible_shell_type: sh
+        ansible_python_interpreter: "{{ ansible_playbook_python }}"
+      changed_when: false
+      check_mode: false
+
+    - name: Record the private evidence location
+      ansible.builtin.debug:
+        msg: "Event Log evidence: {{ eventlog_capture_file.path }}"
+
+    - name: Initialize Event Log evidence
+      ansible.builtin.set_fact:
+        eventlog_results: []
+
+    - name: Require Python 3.4.4 and record existing staging directories
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import glob, json, os, sys, tempfile;
+        assert sys.version_info[:3] == (3, 4, 4);
+        print(json.dumps(sorted(glob.glob(os.path.join(tempfile.gettempdir(),
+        'ansible-tmp-*')))))""
+      register: eventlog_staging_before
+      changed_when: false
+
+    - name: Exercise only journaled uniquely owned classic logs
+      block:
+        - name: Allocate an owned recovery workspace
+          sustainablelobster.legacy_windows.win_tempfile: # noqa: args[module]
+            state: directory
+            prefix: legacy-windows-eventlog-
+          register: eventlog_workspace
+          check_mode: false
+
+        - name: Verify absence and flush the owned recovery journal
+          sustainablelobster.legacy_windows.win_command: # noqa: args[module]
+            argv:
+              - "{{ ansible_python_interpreter }}"
+              - "-"
+              - "{{ eventlog_workspace.path }}"
+              - setup
+            stdin: "{{ eventlog_fixture }}"
+          register: eventlog_setup
+          changed_when: true
+          check_mode: false
+
+        - name: Retain verified owned log and source names
+          ansible.builtin.set_fact:
+            eventlog_names: "{{ eventlog_setup.stdout | from_json }}"
+
+        - name: Exercise public calls and independent observations
+          ansible.builtin.include_tasks: tasks/win_eventlog_case.yml
+          loop: "{{ eventlog_cases + eventlog_name_cases }}"
+          loop_control:
+            loop_var: eventlog_case
+            label: "{{ eventlog_case.name }}"
+      always:
+        - name: Recover owned logs and retain recovery evidence
+          block:
+            - name: Remove owned registration and files # noqa: args[module]
+              sustainablelobster.legacy_windows.win_command:
+                argv:
+                  - "{{ ansible_python_interpreter }}"
+                  - "-"
+                  - "{{ eventlog_workspace.path }}"
+                  - cleanup
+                stdin: "{{ eventlog_fixture }}"
+              when: eventlog_workspace.path is defined
+              register: eventlog_cleanup
+              changed_when: true
+              check_mode: false
+
+            - name: Release an Event Log service file lock by rebooting the
+                leased host
+              when:
+                - eventlog_workspace.path is defined
+                - (eventlog_cleanup.stdout | from_json).requires_reboot
+              block:
+                - name: Reboot to release owned files # noqa: args[module]
+                  sustainablelobster.legacy_windows.win_command:
+                    argv: [shutdown.exe, /r, /f, /t, "5"]
+                  register: eventlog_reboot
+                  check_mode: false
+
+                - name: Observe the SSH listener stop
+                  ansible.builtin.wait_for:
+                    host: "{{ ansible_host }}"
+                    port: "{{ ansible_port | default(22) }}"
+                    state: stopped
+                    timeout: 120
+                  delegate_to: localhost
+                  vars: *local
+
+                - name: Wait for the SSH listener to return
+                  ansible.builtin.wait_for:
+                    host: "{{ ansible_host }}"
+                    port: "{{ ansible_port | default(22) }}"
+                    state: started
+                    delay: 10
+                    timeout: 240
+                  delegate_to: localhost
+                  vars: *local
+
+                - name: Retry owned file deletion # noqa: args[module]
+                  sustainablelobster.legacy_windows.win_command:
+                    argv:
+                      - "{{ ansible_python_interpreter }}"
+                      - "-"
+                      - "{{ eventlog_workspace.path }}"
+                      - cleanup
+                    stdin: "{{ eventlog_fixture }}"
+                  register: eventlog_cleanup_after_reboot
+                  changed_when: true
+                  check_mode: false
+
+                - name: Retain post-reboot cleanup verification
+                  ansible.builtin.set_fact:
+                    eventlog_cleanup: '{{ eventlog_cleanup_after_reboot }}'
+
+            - name: Require verified absence before deleting the recovery
+                workspace
+              ansible.builtin.assert:
+                that: [(eventlog_cleanup.stdout | from_json).restored]
+              when: eventlog_workspace.path is defined
+
+            - name: Remove the verified owned workspace
+              sustainablelobster.legacy_windows.win_file: # noqa: args[module]
+                path: "{{ eventlog_workspace.path }}"
+                state: absent
+              when: eventlog_workspace.path is defined
+              check_mode: false
+
+            - name: Independently verify workspace and staging cleanup
+              ansible.builtin.raw: >-
+                cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+                "import glob, json, os, sys, tempfile;
+                assert not os.path.exists(sys.argv[1]);
+                print(json.dumps(sorted(glob.glob(os.path.join(tempfile.gettempdir(),
+                'ansible-tmp-*')))))" "{{ eventlog_workspace.path }}""
+              when: eventlog_workspace.path is defined
+              register: eventlog_staging_after
+              changed_when: false
+              check_mode: false
+
+            - name: Require staging-directory cleanup
+              ansible.builtin.assert:
+                that:
+                  - (eventlog_staging_before.stdout | from_json) ==
+                    (eventlog_staging_after.stdout | from_json)
+              when: eventlog_workspace.path is defined
+          always:
+            - name: Save final results and cleanup evidence
+              ansible.builtin.copy:
+                content: "{{ eventlog_capture | to_nice_json }}"
+                dest: "{{ eventlog_capture_file.path }}"
+                mode: "0600"
+              delegate_to: localhost
+              vars: *local
+              changed_when: false

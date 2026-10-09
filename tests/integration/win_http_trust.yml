@@ -1,0 +1,641 @@
+---
+- name: Prove trusted HTTPS and independently observed client identity
+  hosts: legacy_windows
+  gather_facts: false
+  vars_files:
+    - vars/get_url_fixture.yml
+    - vars/http_trust_fixture.yml
+    - vars/acl_certificate_fixture.yml
+  vars:
+    http_trust_evidence_dir: "{{ playbook_dir }}/../../tmp/codex/evidence"
+    http_trust_legacy_tls: false
+    http_trust_store_certificate: false
+    http_trust_timeout: 30
+  tasks:
+    - name: Record actual runtime operating system and network identity
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import ctypes,glob,json,os,struct,sys,tempfile;
+        assert sys.version_info[:3] == (3,4,4);
+        version=ctypes.create_string_buffer(284);
+        struct.pack_into('I',version,0,284);
+        assert ctypes.WinDLL('ntdll').RtlGetVersion(ctypes.byref(version))==0;
+        print(json.dumps(dict(python=sys.version,
+        windows=list(struct.unpack_from('III',version,4)),
+        staging=sorted(path for prefix in
+        ('ansible-tmp-','legacy-windows-package-url-') for path in
+        glob.glob(os.path.join(tempfile.gettempdir(),prefix+'*'))))))""
+      register: trust_runtime
+      changed_when: false
+
+    - name: Read guest network identity through the native operating system
+      # Keep GETMAC's native output-format switch unchanged.
+      ansible.builtin.raw: getmac /FO CSV /NH  # codespell:ignore fo
+      register: trust_network
+      changed_when: false
+
+    - name: Require the allocated guest rather than its inventory label
+      ansible.builtin.assert:
+        that:
+          - >-
+            http_trust_expected_mac in
+            trust_network.stdout | upper | replace('-', '')
+          - (trust_runtime.stdout | from_json).windows[:2] ==
+            http_trust_expected_version
+
+    - name: Allocate private controller certificate and evidence workspace
+      ansible.builtin.tempfile:
+        state: directory
+        path: "{{ http_trust_evidence_dir }}"
+        prefix: "http-trust-{{ inventory_hostname }}-"
+      register: trust_controller
+      delegate_to: localhost
+      vars: &local
+        ansible_connection: local
+        ansible_shell_type: sh
+        ansible_python_interpreter: "{{ ansible_playbook_python }}"
+      changed_when: false
+
+    - name: Exercise only disposable trust and client credentials
+      block:
+        - name: Generate an owned CA and correctly constrained leaf certificates
+          ansible.builtin.command:
+            argv: "{{ item }}"
+            chdir: "{{ trust_controller.path }}"
+          loop:
+            - - openssl
+              - req
+              - -x509
+              - -newkey
+              - "rsa:2048"
+              - -nodes
+              - -days
+              - "1"
+              - -subj
+              - "/CN=legacy-windows-owned-test-CA"
+              - -addext
+              - "basicConstraints=critical,CA:TRUE"
+              - -keyout
+              - ca-key.pem
+              - -out
+              - ca.pem
+            - - openssl
+              - req
+              - -new
+              - -newkey
+              - "rsa:2048"
+              - -nodes
+              - -subj
+              - "/CN=localhost"
+              - -addext
+              - "subjectAltName=DNS:localhost,IP:127.0.0.1"
+              - -addext
+              - "extendedKeyUsage=serverAuth"
+              - -keyout
+              - server-key.pem
+              - -out
+              - server.csr
+            - - openssl
+              - x509
+              - -req
+              - -in
+              - server.csr
+              - -CA
+              - ca.pem
+              - -CAkey
+              - ca-key.pem
+              - -CAcreateserial
+              - -days
+              - "1"
+              - -copy_extensions
+              - copy
+              - -out
+              - server-cert.pem
+            - - openssl
+              - req
+              - -new
+              - -newkey
+              - "rsa:2048"
+              - -nodes
+              - -subj
+              - "/CN=legacy-windows-owned-client"
+              - -addext
+              - "extendedKeyUsage=clientAuth"
+              - -keyout
+              - client-key.pem
+              - -out
+              - client.csr
+            - - openssl
+              - x509
+              - -req
+              - -in
+              - client.csr
+              - -CA
+              - ca.pem
+              - -CAkey
+              - ca-key.pem
+              - -CAcreateserial
+              - -days
+              - "1"
+              - -copy_extensions
+              - copy
+              - -out
+              - client.pem
+            - - openssl
+              - pkcs12
+              - -export
+              - -in
+              - client.pem
+              - -inkey
+              - client-key.pem
+              - -keypbe
+              - PBE-SHA1-3DES
+              - -certpbe
+              - PBE-SHA1-3DES
+              - -macalg
+              - sha1
+              - -passout
+              - "pass:fixture-secret"
+              - -out
+              - client.pfx
+          delegate_to: localhost
+          vars: *local
+          changed_when: false
+          no_log: true
+
+        - name: Read owned certificate fingerprints independently
+          ansible.builtin.command:
+            argv:
+              - openssl
+              - x509
+              - -in
+              - "{{ trust_controller.path }}/{{ item }}"
+              - -noout
+              - -fingerprint
+              - -sha1
+          loop: [ca.pem, client.pem]
+          register: trust_fingerprints
+          delegate_to: localhost
+          vars: *local
+          changed_when: false
+
+        - name: Bind unique owned certificate identities
+          ansible.builtin.set_fact:
+            trust_ca_thumb: >-
+              {{ trust_fingerprints.results[0].stdout.split('=')[1] |
+                 replace(':', '') }}
+            trust_client_thumb: >-
+              {{ trust_fingerprints.results[1].stdout.split('=')[1] |
+                 replace(':', '') | lower }}
+
+        - name: Read only disposable certificate material
+          ansible.builtin.slurp:
+            src: "{{ trust_controller.path }}/{{ item }}"
+          loop:
+            - server-cert.pem
+            - server-key.pem
+            - ca.pem
+            - client.pfx
+          register: trust_materials
+          delegate_to: localhost
+          vars: *local
+          changed_when: false
+          no_log: true
+
+        - name: Allocate owned listener workspace # noqa: args[module]
+          sustainablelobster.legacy_windows.win_tempfile:
+            state: directory
+            prefix: legacy-windows-get-url-trust-
+          register: get_url_workspace
+
+        - name: Allocate independent trust recovery journal # noqa: args[module]
+          sustainablelobster.legacy_windows.win_tempfile:
+            state: directory
+            prefix: legacy-windows-http-trust-
+          register: trust_workspace
+
+        - name: Journal initial trust and user keys # noqa: args[module]
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - "{{ ansible_python_interpreter }}"
+              - "-"
+              - "{{ trust_workspace.path }}"
+              - setup
+              - "{{ trust_ca_thumb }}"
+            stdin: "{{ http_trust_program }}"
+          register: trust_journal
+          changed_when: false
+
+        - name: Create only uniquely owned certificate-store credentials
+          when: http_trust_store_certificate | bool
+          block:
+            - name: Allocate owned certificate journal # noqa: args[module]
+              sustainablelobster.legacy_windows.win_tempfile:
+                state: directory
+                prefix: legacy-windows-http-client-store-
+              register: trust_certificate_workspace
+
+            - name: Create native client credentials # noqa: args[module]
+              sustainablelobster.legacy_windows.win_command:
+                argv:
+                  - "{{ ansible_python_interpreter }}"
+                  - "-"
+                  - "{{ trust_certificate_workspace.path }}"
+                  - setup
+                stdin: "{{ acl_certificate_fixture }}"
+              register: trust_store_setup
+              changed_when: false
+              no_log: true
+
+            - name: Bind owned certificate provider identity
+              ansible.builtin.set_fact:
+                trust_store_path: >-
+                  {{ (trust_store_setup.stdout | from_json).paths.capi }}
+                trust_client_thumb: >-
+                  {{ (trust_store_setup.stdout | from_json).paths.capi[-40:] |
+                     lower }}
+
+            - name: Encode native certificate as listener trust
+              sustainablelobster.legacy_windows.win_command:
+                argv:
+                  - "{{ ansible_python_interpreter }}"
+                  - -c
+                  - >-
+                    import binascii,json,ssl,sys;
+                    print(json.dumps(ssl.DER_cert_to_PEM_cert(
+                    binascii.unhexlify(sys.argv[1]))))
+                  - >-
+                    {{ (trust_store_setup.stdout | from_json).snapshot[
+                       trust_store_path].der }}
+              register: trust_store_pem
+              changed_when: false
+              no_log: true
+
+        - name: Bind disposable listener material
+          ansible.builtin.set_fact:
+            trust_setup_material:
+              cert: '{{ trust_materials.results[0].content }}'
+              key: '{{ trust_materials.results[1].content }}'
+              client_ca: '{{ trust_materials.results[2].content }}'
+              client_pfx: '{{ trust_materials.results[3].content }}'
+              trust_ca: '{{ trust_materials.results[2].content }}'
+              legacy_tls: '{{ http_trust_legacy_tls | bool }}'
+          no_log: true
+
+        - name: Use the owned certificate-store identity for client trust
+          when: http_trust_store_certificate | bool
+          ansible.builtin.set_fact:
+            trust_setup_material: >-
+              {{ trust_setup_material | combine({'client_ca':
+                 (trust_store_pem.stdout | from_json) | b64encode}) }}
+          no_log: true
+
+        - name: Start native TLS fixture # noqa: args[module]
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - "{{ ansible_python_interpreter }}"
+              - "-"
+              - "{{ get_url_workspace.path }}"
+              - setup
+              - '{{ trust_setup_material | to_json | b64encode }}'
+            stdin: "{{ get_url_program }}"
+          register: trust_setup
+          changed_when: false
+          no_log: true
+
+        - name: Bind real owned endpoint
+          ansible.builtin.set_fact:
+            # Older WinHTTP validates the certificate's DNS identity, not its
+            # IP subject alternative name; localhost matches CN and DNS SAN.
+            trust_endpoint: >-
+              {{ (trust_setup.stdout | from_json).https |
+                 replace('127.0.0.1', 'localhost') }}
+
+        - name: Mark requests before testing absent trust # noqa: args[module]
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}', '-',
+                   '{{ get_url_workspace.path }}', prepare, e30=]
+            stdin: '{{ get_url_program }}'
+          changed_when: false
+          no_log: true
+
+        - name: Retain the actual untrusted-certificate rejection
+          block:
+            - name: Reject the initially untrusted CA # noqa: args[module]
+              sustainablelobster.legacy_windows.win_uri:
+                url: "{{ trust_endpoint }}/payload.bin"
+                use_proxy: false
+                url_timeout: '{{ http_trust_timeout }}'
+              register: trust_untrusted
+          rescue:
+            - name: Retain the expected trust failure
+              ansible.builtin.debug:
+                msg: The untrusted request failed without an HTTP response.
+
+        - name: Observe rejected requests at the server # noqa: args[module]
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}', '-',
+                   '{{ get_url_workspace.path }}', observe]
+            stdin: '{{ get_url_program }}'
+          register: trust_untrusted_observed
+          changed_when: false
+          no_log: true
+
+        - name: Require failure without HTTP access before installing trust
+          ansible.builtin.assert:
+            that:
+              - trust_untrusted is failed and not trust_untrusted.changed
+              - trust_untrusted.status_code == none
+              - (trust_untrusted_observed.stdout | from_json).requests == []
+
+        - name: Import only the initially absent test CA # noqa: args[module]
+          sustainablelobster.legacy_windows.win_certificate_store:
+            path: "{{ get_url_workspace.path }}\\trust-ca.pem"
+            store_location: LocalMachine
+            store_name: Root
+
+          register: trust_import
+
+        - name: Read a trusted URI # noqa: args[module]
+          sustainablelobster.legacy_windows.win_uri:
+            url: "{{ trust_endpoint }}/payload.bin"
+            client_cert: "{{ trust_store_path | default(omit) }}"
+            use_proxy: false
+            url_timeout: '{{ http_trust_timeout }}'
+            return_content: true
+          register: trust_uri
+
+        - name: Prepare owned download output # noqa: args[module]
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - "{{ ansible_python_interpreter }}"
+              - "-"
+              - "{{ get_url_workspace.path }}"
+              - prepare
+              - e30=
+            stdin: "{{ get_url_program }}"
+          changed_when: false
+
+        - name: Download with client credentials # noqa: args[module]
+          sustainablelobster.legacy_windows.win_get_url:
+            url: "{{ trust_endpoint }}/client"
+            dest: "{{ get_url_workspace.path }}\\output\\result.bin"
+            client_cert: >-
+              {{ trust_store_path | default(
+                 get_url_workspace.path + '\\client.pfx') }}
+            client_cert_password: fixture-secret
+            use_proxy: false
+            url_timeout: '{{ http_trust_timeout }}'
+          register: trust_client
+
+        - name: Repeat the authenticated download # noqa: args[module]
+          sustainablelobster.legacy_windows.win_get_url:
+            url: "{{ trust_endpoint }}/client"
+            dest: "{{ get_url_workspace.path }}\\output\\result.bin"
+            client_cert: >-
+              {{ trust_store_path | default(
+                 get_url_workspace.path + '\\client.pfx') }}
+            client_cert_password: fixture-secret
+            use_proxy: false
+            url_timeout: '{{ http_trust_timeout }}'
+          register: trust_repeat
+
+        - name: Reject a wrong client private-key password # noqa: args[module]
+          when: not http_trust_store_certificate | bool
+          sustainablelobster.legacy_windows.win_uri:
+            url: "{{ trust_endpoint }}/client"
+            client_cert: "{{ get_url_workspace.path }}\\client.pfx"
+            client_cert_password: deliberately-wrong
+            use_proxy: false
+            url_timeout: '{{ http_trust_timeout }}'
+          register: trust_wrong_password
+          failed_when: false
+
+        - name: Preview a trusted package # noqa: args[module]
+          sustainablelobster.legacy_windows.win_package:
+            path: "{{ trust_endpoint }}/payload.bin"
+            client_cert: "{{ trust_store_path | default(omit) }}"
+            provider: registry
+            product_id: >-
+              legacy-windows-trust-{{
+              (trust_setup.stdout | from_json).server.token }}
+            use_proxy: false
+            url_timeout: '{{ http_trust_timeout }}'
+          check_mode: true
+          register: trust_package
+
+        - name: Observe server-side client identity # noqa: args[module]
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - "{{ ansible_python_interpreter }}"
+              - "-"
+              - "{{ get_url_workspace.path }}"
+              - observe
+            stdin: "{{ get_url_program }}"
+          register: trust_observed
+          changed_when: false
+          no_log: true
+
+        - name: Require public behavior and actual client identity
+          ansible.builtin.assert:
+            that:
+              - trust_untrusted is failed and not trust_untrusted.changed
+              - trust_untrusted.status_code == none
+              - trust_import.changed and trust_import.thumbprints ==
+                [trust_ca_thumb]
+              - trust_uri.status_code == 200 and not trust_uri.changed
+              - trust_client.status_code == 200 and trust_client.changed
+              - trust_repeat.status_code == 200 and not trust_repeat.changed
+              - >-
+                http_trust_store_certificate | bool or
+                (trust_wrong_password.msg is defined and
+                 trust_wrong_password.status_code == none and
+                 not trust_wrong_password.changed and
+                 'deliberately-wrong' not in trust_wrong_password.msg)
+              - trust_package.status_code == 200 and trust_package.changed
+              - >-
+                (trust_observed.stdout | from_json).requests |
+                selectattr('path', 'equalto', '/client') |
+                map(attribute='client_sha1') | unique | list ==
+                [trust_client_thumb]
+      always:
+        - name: Preserve private raw evidence before recovery
+          ansible.builtin.copy:
+            content: >-
+              {{ {'runtime': trust_runtime, 'network': trust_network,
+                  'setup': trust_setup | default(none),
+                  'untrusted': trust_untrusted | default(none),
+                  'untrusted_observed':
+                    trust_untrusted_observed | default(none),
+                  'import': trust_import | default(none),
+                  'uri': trust_uri | default(none),
+                  'client': trust_client | default(none),
+                  'store_setup': trust_store_setup | default(none),
+                  'store_path': trust_store_path | default(none),
+                  'repeat': trust_repeat | default(none),
+                  'wrong_password': trust_wrong_password | default(none),
+                  'package': trust_package | default(none),
+                  'observed': trust_observed | default(none),
+                  'ca_thumb': trust_ca_thumb | default(none),
+                  'client_thumb': trust_client_thumb | default(none)} |
+                  to_nice_json }}
+            dest: "{{ trust_controller.path }}/capture.json"
+            mode: "0600"
+          delegate_to: localhost
+          vars: *local
+          changed_when: false
+          no_log: true
+
+        - name: Remove known-owned certificates and key containers
+          when: trust_certificate_workspace.path is defined
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - "{{ ansible_python_interpreter }}"
+              - "-"
+              - "{{ trust_certificate_workspace.path }}"
+              - cleanup
+            stdin: "{{ acl_certificate_fixture }}"
+          register: trust_store_recovery
+          changed_when: false
+          failed_when: false
+          no_log: true
+
+        - name: Remove the owned trust anchor # noqa: args[module]
+          when: trust_journal is defined and trust_journal is succeeded
+          sustainablelobster.legacy_windows.win_certificate_store:
+            state: absent
+            thumbprint: "{{ trust_ca_thumb }}"
+            store_location: LocalMachine
+            store_name: Root
+          register: trust_public_removal
+          failed_when: false
+
+        - name: Restore trust and verify key files # noqa: args[module]
+          when: trust_journal is defined and trust_journal is succeeded
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - "{{ ansible_python_interpreter }}"
+              - "-"
+              - "{{ trust_workspace.path }}"
+              - cleanup
+              - "{{ trust_ca_thumb }}"
+            stdin: "{{ http_trust_program }}"
+          register: trust_restored
+          changed_when: false
+          no_log: true
+          failed_when: false
+
+        - name: Stop and verify owned listeners # noqa: args[module]
+          when: get_url_workspace.path is defined
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - "{{ ansible_python_interpreter }}"
+              - "-"
+              - "{{ get_url_workspace.path }}"
+              - cleanup
+            stdin: "{{ get_url_program }}"
+          register: trust_listener_restored
+          changed_when: false
+          no_log: true
+          failed_when: false
+
+        - name: Validate protected owned inputs # noqa: args[module]
+          when:
+            - get_url_workspace.path is defined
+            - trust_listener_restored.rc | default(1) == 0
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - "{{ ansible_python_interpreter }}"
+              - "-"
+              - "{{ get_url_workspace.path }}"
+              - finalize
+            stdin: "{{ get_url_program }}"
+          changed_when: false
+          no_log: true
+
+        - name: Remove recovered listener directory # noqa: args[module]
+          when: trust_listener_restored.rc | default(1) == 0
+          sustainablelobster.legacy_windows.win_file:
+            path: "{{ get_url_workspace.path }}"
+            state: absent
+
+        - name: Remove recovered trust journal directory # noqa: args[module]
+          when: trust_restored.rc | default(1) == 0
+          sustainablelobster.legacy_windows.win_file:
+            path: "{{ trust_workspace.path }}"
+            state: absent
+
+        - name: Remove recovered certificate journal directory
+          when:
+            - trust_certificate_workspace.path is defined
+            - trust_store_recovery.rc | default(1) == 0
+          sustainablelobster.legacy_windows.win_file:
+            path: "{{ trust_certificate_workspace.path }}"
+            state: absent
+
+        - name: Independently verify no staging or owned guest directory remains
+          ansible.builtin.raw: >-
+            cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+            "import glob,json,os,sys,tempfile;
+            assert not any(os.path.exists(path) for path in sys.argv[1:]);
+            print(json.dumps(sorted(path for prefix in
+            ('ansible-tmp-','legacy-windows-package-url-') for path in
+            glob.glob(os.path.join(tempfile.gettempdir(),prefix+'*')))))"
+            "{{ get_url_workspace.path | default('') }}"
+            "{{ trust_workspace.path | default('') }}"
+            "{{ trust_certificate_workspace.path | default('') }}""
+          register: trust_staging_after
+          changed_when: false
+
+        - name: Require original staging and listener restoration
+          ansible.builtin.assert:
+            that:
+              - >-
+                (trust_runtime.stdout | from_json).staging ==
+                trust_staging_after.stdout | from_json
+              - trust_listener_restored.stdout | from_json is defined
+              - (trust_listener_restored.stdout | from_json).server_stopped
+              - >-
+                not http_trust_store_certificate | bool or
+                (trust_store_recovery.rc == 0 and
+                 (trust_store_recovery.stdout | from_json).cleaned)
+
+        - name: Retain independently verified recovery
+          ansible.builtin.copy:
+            content: >-
+              {{ lookup('ansible.builtin.file',
+                        trust_controller.path + '/capture.json')
+              |
+                 from_json | combine({
+                   'trust_recovery': trust_restored | default(none),
+                   'listener_recovery': trust_listener_restored | default(none),
+                   'store_recovery': trust_store_recovery | default(none),
+                   'staging_after': trust_staging_after,
+                   'workspace_absent': true})
+              |
+                 to_nice_json }}
+            dest: "{{ trust_controller.path }}/capture.json"
+            mode: "0600"
+          delegate_to: localhost
+          vars: *local
+          changed_when: false
+          no_log: true
+
+        - name: Remove only private keys and certificate generation inputs
+          ansible.builtin.file:
+            path: "{{ trust_controller.path }}/{{ item }}"
+            state: absent
+          loop:
+            - ca-key.pem
+            - ca.pem
+            - ca.srl
+            - server.csr
+            - server-key.pem
+            - server-cert.pem
+            - client.csr
+            - client-key.pem
+            - client.pem
+            - client.pfx
+          delegate_to: localhost
+          vars: *local
+          changed_when: false

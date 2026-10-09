@@ -1,0 +1,122 @@
+---
+- name: Initialize complete result capture
+  ansible.builtin.set_fact:
+    feature_info_validated: false
+
+- name: Capture public success or failure without changing returned fields
+  block:
+    - name: Execute native public feature metadata  # noqa: args[module]
+      sustainablelobster.legacy_windows.win_feature_info: >-
+        {{ feature_info_case.params }}
+      register: feature_info_native
+      check_mode: '{{ feature_info_case.check | default(false) }}'
+  rescue:
+    - name: Retain native failure for whole public-result validation
+      ansible.builtin.debug:
+        msg: Public failure retained.
+
+- name: Capture unchanged pinned source on the comparison target
+  when: feature_info_compare | default(false) | bool
+  block:
+    - name: Execute original public feature metadata
+      ansible.windows.win_feature_info: '{{ feature_info_case.params }}'
+      register: feature_info_original
+      check_mode: '{{ feature_info_case.check | default(false) }}'
+      vars:
+        ansible_shell_type: cmd
+        ansible_remote_tmp: '{{ feature_info_workspace.path }}'
+  rescue:
+    - name: Retain original failure for whole public-result validation
+      ansible.builtin.debug:
+        msg: Original failure retained.
+
+- name: Retain raw results before assertions
+  ansible.builtin.set_fact:
+    feature_info_record:
+      name: '{{ feature_info_case.name }}'
+      params: '{{ feature_info_case.params }}'
+      check: '{{ feature_info_case.check | default(false) }}'
+      comparison: >-
+        {{ 'module_identity' if
+        feature_info_case.module_identity | default(false)
+        else 'literal' }}
+      native: '{{ feature_info_native }}'
+      original: '{{ feature_info_original | default(none) }}'
+      validated: false
+
+- name: Retain the unvalidated whole record before any assertion
+  ansible.builtin.set_fact:
+    feature_info_results: '{{ feature_info_results + [feature_info_record] }}'
+
+- name: Persist raw public evidence before assertions
+  ansible.builtin.copy:
+    content: >-
+      {{ {'results': feature_info_results,
+          'setup': feature_info_setup | default(none)} | to_nice_json }}
+    dest: '{{ feature_info_capture.path }}'
+    mode: '0600'
+  delegate_to: localhost
+  vars: &local
+    ansible_connection: local
+    ansible_shell_type: sh
+    ansible_python_interpreter: '{{ ansible_playbook_python }}'
+  changed_when: false
+  no_log: true
+
+- name: Require declared read-only result and feature order
+  ansible.builtin.assert:
+    that:
+      - not feature_info_native.changed
+      - >-
+        (feature_info_native is failed) ==
+        (feature_info_case.failed | default(false))
+      - >-
+        feature_info_case.failed | default(false) or
+        feature_info_native.exists ==
+        (feature_info_native.features | length > 0)
+      - >-
+        feature_info_case.names is not defined or
+        feature_info_native.features | map(attribute='name') | list ==
+        feature_info_case.names
+      - >-
+        not feature_info_case.all | default(false) or
+        feature_info_native.features | length ==
+        (feature_info_setup.stdout | from_json).before.features | length
+
+- name: Compare all public fields with declared module identity replacement
+  when: feature_info_compare | default(false) | bool
+  vars:
+    native_public: >-
+      {{ feature_info_native | dict2items |
+      rejectattr('key', 'in', ['invocation', 'exception']) |
+      list | items2dict }}
+    original_public: >-
+      {{ feature_info_original | dict2items |
+      rejectattr('key', 'in', ['invocation', 'exception']) |
+      list | items2dict }}
+    comparable_original: >-
+      {{ original_public | combine({'msg': original_public.msg |
+      replace('ansible.windows.win_feature_info',
+      'sustainablelobster.legacy_windows.win_feature_info')})
+      if feature_info_case.module_identity | default(false)
+      else original_public }}
+  ansible.builtin.assert:
+    that: [native_public == comparable_original]
+
+- name: Retain validated record
+  ansible.builtin.set_fact:
+    feature_info_results: >-
+      {{ feature_info_results[:-1] +
+      [feature_info_record | combine({'validated': true})] }}
+
+- name: Persist validated whole public evidence
+  ansible.builtin.copy:
+    content: >-
+      {{ {'results': feature_info_results,
+          'setup': feature_info_setup | default(none)} | to_nice_json }}
+    dest: '{{ feature_info_capture.path }}'
+    mode: '0600'
+  delegate_to: localhost
+  vars: *local
+  changed_when: false
+  no_log: true

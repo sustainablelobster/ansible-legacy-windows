@@ -1,0 +1,264 @@
+---
+- name: Compare real native and released async WUA access and strict recovery
+  hosts: legacy_windows
+  gather_facts: false
+  vars_files:
+    - vars/native_async.yml
+  vars:
+    updates_async_capture_path: >-
+      {{ playbook_dir + '/../../tmp/codex/evidence/' +
+         'win-updates-async-public-v1.json' }}
+    updates_async_staging_observer: >-
+      import glob,json,os,sys,tempfile;
+      assert sys.version_info[:3]==(3,4,4);
+      print(json.dumps({name:sorted(glob.glob(os.path.join(
+      tempfile.gettempdir(),pattern))) for name,pattern in
+      [('staging','ansible-tmp-*'),('workers','legacy-windows-updates-*')]}))
+  tasks:
+    - name: Establish private controller evidence directory before guest writes
+      ansible.builtin.file:
+        path: '{{ updates_async_capture_path | dirname }}'
+        state: directory
+        mode: '0700'
+      delegate_to: localhost
+      changed_when: false
+    - name: Journal complete original global staging and Updates workers
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "{{ updates_async_staging_observer }}""
+      register: updates_async_global_before
+      changed_when: false
+    - name: Capture complete original service configuration and runtime
+      sustainablelobster.legacy_windows.win_service_info:
+      register: updates_async_services_before
+      no_log: true
+    - name: Allocate uniquely owned Updates async access workspace
+      sustainablelobster.legacy_windows.win_tempfile:
+        prefix: legacy-windows-native-async-updates-
+        state: directory
+      register: updates_async_workspace
+    - name: Exercise real public async launch status and complete comparison
+      block:
+        - name: Journal literal registry executable network and sentinel
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - '-'
+              - '{{ updates_async_workspace.path }}'
+              - setup
+            stdin: '{{ native_async_program }}'
+          register: updates_async_setup
+          changed_when: false
+          no_log: true
+        - name: Persist complete original observations before WUA access
+          ansible.builtin.copy:
+            dest: '{{ updates_async_capture_path }}'
+            mode: '0600'
+            content: >-
+              {{ {'workspace': updates_async_workspace,
+                  'setup': updates_async_setup,
+                  'services_before': updates_async_services_before,
+                  'global_before': updates_async_global_before} |
+                  to_nice_json }}
+          delegate_to: localhost
+          no_log: true
+        - name: Launch native public Updates under the generic async wrapper
+          sustainablelobster.legacy_windows.win_updates:
+            _operation: test
+          async: 60
+          poll: 0
+          vars: &async_vars
+            ansible_remote_tmp: '{{ updates_async_workspace.path }}\staging'
+            ansible_async_dir: '{{ updates_async_workspace.path }}\cache'
+          register: updates_async_native_launch
+        - name: Record exact native watchdog identity
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - '-'
+              - '{{ updates_async_workspace.path }}'
+              - record
+              - '{{ updates_async_native_launch | to_json | b64encode }}'
+            stdin: '{{ native_async_program }}'
+          register: updates_async_native_identity
+          changed_when: false
+        - name: Reset the launching connection before status polling
+          ansible.builtin.meta: reset_connection
+        - name: Poll native Updates status with the public until interface
+          sustainablelobster.legacy_windows.async_status:
+            jid: '{{ updates_async_native_launch.ansible_job_id }}'
+          vars: *async_vars
+          register: updates_async_native_status
+          until: updates_async_native_status.finished
+          retries: 30
+          delay: 1
+        - name: Launch identical access through untouched released Updates
+          ansible.windows.win_updates:
+            _operation: test
+          async: 60
+          poll: 0
+          vars: *async_vars
+          register: updates_async_source_launch
+        - name: Record exact released watchdog identity
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - '-'
+              - '{{ updates_async_workspace.path }}'
+              - record
+              - '{{ updates_async_source_launch | to_json | b64encode }}'
+            stdin: '{{ native_async_program }}'
+          register: updates_async_source_identity
+          changed_when: false
+        - name: Poll complete released Updates status with the core interface
+          ansible.builtin.async_status:
+            jid: '{{ updates_async_source_launch.ansible_job_id }}'
+          vars: *async_vars
+          register: updates_async_source_status
+          until: updates_async_source_status.finished
+          retries: 30
+          delay: 1
+        - name: Compare every typed public launch and completed status field
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - '-'
+              - '{{ updates_async_workspace.path }}'
+              - compare
+              - >-
+                {{ {'native_launch': updates_async_native_launch,
+                    'native_status': updates_async_native_status,
+                    'original_launch': updates_async_source_launch,
+                    'original_status': updates_async_source_status} |
+                    to_json | b64encode }}
+            stdin: '{{ native_async_program }}'
+          register: updates_async_comparison
+          changed_when: false
+        - name: Require real async launch and the complete empty access result
+          ansible.builtin.assert:
+            that:
+              - updates_async_native_launch.started
+              - not updates_async_native_launch.finished
+              - not updates_async_native_launch.changed
+              - updates_async_native_status.finished
+              - updates_async_native_status.found_update_count == 0
+              - updates_async_native_status.failed_update_count == 0
+              - updates_async_native_status.installed_update_count == 0
+              - updates_async_native_status.updates == {}
+              - updates_async_native_status.filtered_updates == {}
+              - not updates_async_native_status.rebooted
+              - >-
+                (updates_async_comparison.stdout |
+                from_json).complete_typed_public_equal
+        - name: Erase the completed native public cache
+          sustainablelobster.legacy_windows.async_status:
+            jid: '{{ updates_async_native_launch.ansible_job_id }}'
+            mode: cleanup
+          vars: *async_vars
+          register: updates_async_native_erased
+        - name: Erase the completed released cache with the native interface
+          sustainablelobster.legacy_windows.async_status:
+            jid: '{{ updates_async_source_launch.ansible_job_id }}'
+            mode: cleanup
+          vars: *async_vars
+          register: updates_async_source_erased
+      always:
+        - name: Recover owned watchdogs and retain literal protected state
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - '-'
+              - '{{ updates_async_workspace.path }}'
+              - cleanup
+            stdin: '{{ native_async_program }}'
+          register: updates_async_recovery
+          failed_when: false
+          changed_when: false
+          no_log: true
+        - name: Capture complete service effects before any bounded restoration
+          sustainablelobster.legacy_windows.win_service_info:
+          register: updates_async_services_after
+          no_log: true
+        - name: Restore only originally stopped WUA runtime states
+          sustainablelobster.legacy_windows.win_service:
+            name: '{{ item }}'
+            state: stopped
+          loop: [TrustedInstaller, wuauserv]
+          when:
+            - >-
+              (updates_async_services_before.services |
+              selectattr('name', 'equalto', item) | first).state == 'stopped'
+            - >-
+              (updates_async_services_after.services |
+              selectattr('name', 'equalto', item) | first).state != 'stopped'
+          no_log: true
+        - name: Capture complete final service configuration and runtime
+          sustainablelobster.legacy_windows.win_service_info:
+          register: updates_async_services_final
+          no_log: true
+        - name: Retain full raw launch status comparison and cleanup results
+          ansible.builtin.copy:
+            dest: '{{ updates_async_capture_path }}'
+            mode: '0600'
+            content: >-
+              {{ {'workspace': updates_async_workspace,
+                  'setup': updates_async_setup | default(none),
+                  'native_launch': updates_async_native_launch | default(none),
+                  'native_identity':
+                    updates_async_native_identity | default(none),
+                  'native_status': updates_async_native_status | default(none),
+                  'source_launch': updates_async_source_launch | default(none),
+                  'source_identity':
+                    updates_async_source_identity | default(none),
+                  'source_status': updates_async_source_status | default(none),
+                  'comparison': updates_async_comparison | default(none),
+                  'native_erased': updates_async_native_erased | default(none),
+                  'source_erased': updates_async_source_erased | default(none),
+                  'services_before': updates_async_services_before,
+                  'services_after': updates_async_services_after,
+                  'services_final': updates_async_services_final,
+                  'recovery': updates_async_recovery,
+                  'global_before': updates_async_global_before} |
+                  to_nice_json }}
+          delegate_to: localhost
+          no_log: true
+        - name: Require protected recovery before owned workspace removal
+          ansible.builtin.assert:
+            that:
+              - updates_async_recovery.rc == 0
+              - (updates_async_recovery.stdout | from_json).restored
+        - name: Remove only the proven uniquely owned async fixture workspace
+          sustainablelobster.legacy_windows.win_file:
+            path: '{{ updates_async_workspace.path }}'
+            state: absent
+        - name: Require exact final global staging and Updates worker absence
+          ansible.builtin.raw: >-
+            cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+            "{{ updates_async_staging_observer }};
+            assert not os.path.exists(r'{{ updates_async_workspace.path }}')""
+          register: updates_async_global_after
+          changed_when: false
+          failed_when: >-
+            updates_async_global_after.rc != 0 or
+            (updates_async_global_after.stdout | from_json) !=
+            (updates_async_global_before.stdout | from_json)
+        - name: Preserve final literal global closure and service observations
+          ansible.builtin.copy:
+            dest: '{{ updates_async_capture_path }}'
+            mode: '0600'
+            content: >-
+              {{ (lookup('ansible.builtin.file', updates_async_capture_path) |
+                  from_json) |
+                  combine({'global_after': updates_async_global_after}) |
+                  to_nice_json }}
+          delegate_to: localhost
+          no_log: true
+        - name: Require literal whole original service state after owned cleanup
+          ansible.builtin.assert:
+            that:
+              - >-
+                updates_async_services_final.services ==
+                updates_async_services_before.services
+          no_log: true
+        - name: Close this owner's persistent SSH connection after recovery
+          ansible.builtin.meta: reset_connection

@@ -1,0 +1,357 @@
+---
+- name: Verify file transfers and remote copies on Windows Python 3.4.4
+  hosts: legacy_windows
+  gather_facts: false
+  vars:
+    copy_root: '{{ copy_workspace.path }}'
+    fixture_root: '{{ controller_workspace.path }}'
+    replacement_content: "Replacement Café 雪\n"
+  tasks:
+    - name: Require Python 3.4.4 and record existing task directories
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import glob, json, os, sys, tempfile;
+        assert sys.version_info[:3] == (3, 4, 4);
+        print(json.dumps(sorted(glob.glob(os.path.join(tempfile.gettempdir(),
+        'ansible-tmp-*')))))""
+      register: task_directories_before
+      changed_when: false
+      check_mode: false
+
+    - name: Exercise copies only inside disposable workspaces
+      block:
+        - name: Allocate the guest workspace
+          # WANT_JSON arguments are verified by the subsequent behavior checks.
+          sustainablelobster.legacy_windows.win_tempfile:  # noqa: args[module]
+            state: directory
+            prefix: legacy-windows-copy-
+          register: copy_workspace
+          check_mode: false
+
+        - name: Allocate controller fixtures
+          ansible.builtin.tempfile:
+            state: directory
+            prefix: legacy-windows-copy-
+          register: controller_workspace
+          delegate_to: localhost
+          check_mode: false
+          vars:
+            ansible_connection: local
+            ansible_shell_type: sh
+            ansible_python_interpreter: '{{ ansible_playbook_python }}'
+
+        - name: Generate public binary and Unicode fixtures
+          ansible.builtin.command:
+            argv:
+              - '{{ ansible_playbook_python }}'
+              - -c
+              - |
+                import os, sys, time
+                root = sys.argv[1]
+                os.makedirs(os.path.join(root, 'tree', 'empty'))
+                os.makedirs(os.path.join(root, 'tree', 'nested'))
+                data = bytes(bytearray(range(256))) * 4
+                for name in ('single.bin', 'tree/nested/payload.bin'):
+                    with open(os.path.join(root, name), 'wb') as stream:
+                        stream.write(data)
+                with open(os.path.join(root, 'tree', 'Café 雪 [x].txt'),
+                          'wb') as stream:
+                    stream.write('Public fixture % ! &\r\n'.encode('utf-8'))
+                stamp = time.mktime((2000, 1, 2, 3, 4, 4, 0, 0, -1))
+                for folder, unused, names in os.walk(root):
+                    for name in names:
+                        os.utime(os.path.join(folder, name), (stamp, stamp))
+              - '{{ fixture_root }}'
+          changed_when: true
+          delegate_to: localhost
+          check_mode: false
+          vars:
+            ansible_connection: local
+            ansible_shell_type: sh
+            ansible_python_interpreter: '{{ ansible_playbook_python }}'
+
+        - name: Predict a new file without transferring its contents
+          # The action and native payload jointly provide this interface.
+          sustainablelobster.legacy_windows.win_copy:  # noqa: args[module]
+            src: '{{ fixture_root }}/single.bin'
+            dest: '{{ copy_root }}\predicted.bin'
+          check_mode: true
+          register: predicted_file
+
+        - name: Copy a binary file from the controller
+          sustainablelobster.legacy_windows.win_copy:  # noqa: args[module]
+            src: '{{ fixture_root }}/single.bin'
+            dest: '{{ copy_root }}\first.bin'
+          register: first_copy
+
+        - name: Require unchanged files in normal and check mode
+          sustainablelobster.legacy_windows.win_copy:  # noqa: args[module]
+            src: '{{ fixture_root }}/single.bin'
+            dest: '{{ copy_root }}\first.bin'
+          check_mode: '{{ item }}'
+          loop: [false, true]
+          register: repeated_copy
+
+        - name: Preserve an existing file when force is false
+          sustainablelobster.legacy_windows.win_copy:  # noqa: args[module]
+            content: do not replace the binary file
+            dest: '{{ copy_root }}\first.bin'
+            force: false
+          register: force_preserved
+
+        - name: Replace a file and retain its original bytes in a backup
+          sustainablelobster.legacy_windows.win_copy:  # noqa: args[module]
+            content: '{{ replacement_content }}'
+            dest: '{{ copy_root }}\first.bin'
+            backup: true
+          diff: true
+          register: replaced_copy
+
+        - name: Create a missing file without calculating a checksum
+          sustainablelobster.legacy_windows.win_copy:  # noqa: args[module]
+            src: '{{ fixture_root }}/single.bin'
+            dest: '{{ copy_root }}\no-checksum.bin'
+            force: false
+          register: force_created
+
+        - name: Keep the source name below a missing destination directory
+          sustainablelobster.legacy_windows.win_copy:  # noqa: args[module]
+            src: '{{ fixture_root }}/single.bin'
+            dest: '{{ copy_root }}\new-parent\child\'
+          register: directory_destination
+
+        - name: Copy a complete directory including its source name
+          sustainablelobster.legacy_windows.win_copy:  # noqa: args[module]
+            src: '{{ fixture_root }}/tree'
+            dest: '{{ copy_root }}\named'
+          register: named_tree
+
+        - name: Copy directory contents and then repeat the same request
+          sustainablelobster.legacy_windows.win_copy:  # noqa: args[module]
+            src: '{{ fixture_root }}/tree/'
+            dest: '{{ copy_root }}\contents'
+          loop: [first, repeat]
+          register: content_tree
+
+        - name: Predict a directory tree without creating it
+          sustainablelobster.legacy_windows.win_copy:  # noqa: args[module]
+            src: '{{ fixture_root }}/tree/'
+            dest: '{{ copy_root }}\predicted-tree'
+          check_mode: true
+          register: predicted_tree
+
+        - name: Copy a remote file and repeat the request
+          sustainablelobster.legacy_windows.win_copy:  # noqa: args[module]
+            src: '{{ copy_root }}\no-checksum.bin'
+            dest: '{{ copy_root }}\remote.bin'
+            remote_src: true
+          loop: [first, repeat]
+          register: remote_file
+
+        - name: Predict a remote file without creating it
+          sustainablelobster.legacy_windows.win_copy:  # noqa: args[module]
+            src: '{{ copy_root }}\no-checksum.bin'
+            dest: '{{ copy_root }}\predicted-remote.bin'
+            remote_src: true
+          check_mode: true
+          register: predicted_remote
+
+        - name: Copy remote directory contents and repeat the request
+          sustainablelobster.legacy_windows.win_copy:  # noqa: args[module]
+            src: '{{ copy_root }}\contents\'
+            dest: '{{ copy_root }}\remote-contents'
+            remote_src: true
+          diff: true
+          loop: [first, repeat]
+          register: remote_tree
+
+        - name: Copy a remote directory with its name
+          sustainablelobster.legacy_windows.win_copy:  # noqa: args[module]
+            src: '{{ copy_root }}\contents'
+            dest: '{{ copy_root }}\remote-named'
+            remote_src: true
+          register: remote_named
+
+        - name: Verify observable results and idempotence
+          ansible.builtin.assert:
+            that:
+              - predicted_file is changed
+              - predicted_tree is changed
+              - predicted_remote is changed
+              - predicted_remote.size == None
+              - first_copy is changed
+              - first_copy.operation == 'file_copy'
+              - first_copy.original_basename == 'single.bin'
+              - first_copy.size == 1024
+              - first_copy.checksum | length == 40
+              - repeated_copy.results | select('changed') | list | length == 0
+              - repeated_copy.results[0].checksum == first_copy.checksum
+              - force_preserved is not changed
+              - force_preserved.checksum == None
+              - force_created is changed
+              - force_created.checksum == None
+              - replaced_copy is changed
+              - replaced_copy.backup_file.startswith(copy_root + '\\first.bin.')
+              - replaced_copy.backup_file.endswith('.bak')
+              - replaced_copy.diff is defined
+              - directory_destination is changed
+              - directory_destination.dest.endswith('\\single.bin')
+              - named_tree is changed
+              - named_tree.operation == 'folder_copy'
+              - content_tree.results[0] is changed
+              - content_tree.results[1] is not changed
+              - remote_file.results[0] is changed
+              - remote_file.results[1] is not changed
+              - remote_file.results[0].checksum == first_copy.checksum
+              - remote_file.results[0].size == 1024
+              - remote_tree.results[0] is changed
+              - remote_tree.results[1] is not changed
+              - remote_tree.results[1].diff.prepared == ''
+              - remote_named is changed
+              - remote_named.dest.endswith('\\remote-named\\contents')
+
+        - name: Assert expected failures without abandoning cleanup
+          block:
+            - name: Reject invalid copies  # noqa: args[module]
+              # Each mapping is a literal invalid case, checked in rescue.
+              sustainablelobster.legacy_windows.win_copy: '{{ item }}'
+              loop:
+                - {dest: '{{ copy_root }}\invalid.bin'}
+                - src: '{{ fixture_root }}/single.bin'
+                  content: mutually exclusive
+                  dest: '{{ copy_root }}\invalid.bin'
+                - {content: invalid destination, dest: '{{ copy_root }}\'}
+                - src: '{{ fixture_root }}/missing.bin'
+                  dest: '{{ copy_root }}\invalid.bin'
+                - src: '{{ copy_root }}\missing.bin'
+                  dest: '{{ copy_root }}\invalid.bin'
+                  remote_src: true
+                - src: '{{ fixture_root }}/single.bin'
+                  dest: '{{ copy_root }}\missing-parent\invalid.bin'
+                - src: '{{ copy_root }}\no-checksum.bin'
+                  dest: '{{ copy_root }}\first.bin\invalid.bin'
+                  remote_src: true
+              register: invalid_copies
+
+            - name: Reject unexpected success from invalid copies
+              ansible.builtin.fail:
+                msg: An invalid copy unexpectedly succeeded
+          rescue:
+            - name: Require every invalid copy to fail with an explanation
+              ansible.builtin.assert:
+                that:
+                  - invalid_copies.results | length == 7
+                  - >-
+                    invalid_copies.results | reject('failed') | list
+                    | length == 0
+                  - >-
+                    invalid_copies.results | selectattr('msg', 'defined')
+                    | list | length == 7
+
+        - name: Recover with a valid transfer after the failures
+          sustainablelobster.legacy_windows.win_copy:  # noqa: args[module]
+            src: '{{ fixture_root }}/single.bin'
+            dest: '{{ copy_root }}\recovered.bin'
+          register: recovered_copy
+
+        - name: Independently verify all bytes and directory boundaries
+          # The observer checks actual disk contents without collection helpers.
+          sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - |
+                import hashlib, json, os, sys, time
+                assert sys.version_info[:3] == (3, 4, 4)
+                data = json.loads(sys.stdin.buffer.read().decode('utf-8'))
+                root = data['root']
+                binary = bytes(bytearray(range(256))) * 4
+                assert hashlib.sha1(binary).hexdigest() == data['checksum']
+                expected = {
+                    'first.bin': data['replacement'].encode('utf-8'),
+                    'no-checksum.bin': binary,
+                    'new-parent/child/single.bin': binary,
+                    'remote.bin': binary,
+                    'recovered.bin': binary,
+                }
+                for tree in ('named/tree', 'contents', 'remote-contents',
+                             'remote-named/contents'):
+                    expected[tree + '/nested/payload.bin'] = binary
+                    expected[tree + '/Café 雪 [x].txt'] = (
+                        b'Public fixture % ! &\r\n')
+                    assert os.path.isdir(os.path.join(root, tree, 'empty'))
+                    for name in ('nested/payload.bin', 'Café 雪 [x].txt'):
+                        modified = os.stat(os.path.join(root, tree, name))
+                        assert time.localtime(modified.st_mtime)[:6] == (
+                            2000, 1, 2, 3, 4, 4), (tree, name)
+                expected[os.path.relpath(data['backup'], root)] = binary
+                for name, content in expected.items():
+                    with open(os.path.join(root, name), 'rb') as stream:
+                        assert stream.read() == content, name
+                actual = set()
+                for directory, unused, files in os.walk(root):
+                    for name in files:
+                        actual.add(os.path.normcase(os.path.relpath(
+                            os.path.join(directory, name), root)))
+                assert actual == set(os.path.normcase(name)
+                                     for name in expected), sorted(actual)
+                for name in ('predicted.bin', 'predicted-tree',
+                             'predicted-remote.bin', 'missing-parent'):
+                    assert not os.path.exists(os.path.join(root, name)), name
+                print('bytes, backups, directory boundaries and check mode'
+                      ' verified')
+            stdin: >-
+              {{ {'root': copy_root, 'backup': replaced_copy.backup_file,
+                  'replacement': replacement_content,
+                  'checksum': first_copy.checksum} | to_json }}
+          changed_when: false
+
+        - name: Require successful recovery
+          ansible.builtin.assert:
+            that:
+              - recovered_copy is changed
+              - recovered_copy.checksum == first_copy.checksum
+
+        - name: Verify reference-observed target-local copy boundaries
+          ansible.builtin.include_tasks: tasks/win_copy_boundaries.yml
+          vars:
+            boundary_root: '{{ copy_root }}\boundaries'
+      always:
+        - name: Remove the guest workspace created by this test
+          sustainablelobster.legacy_windows.win_file:  # noqa: args[module]
+            path: '{{ copy_workspace.path }}'
+            state: absent
+          when: copy_workspace.path is defined
+          check_mode: false
+
+        - name: Remove the controller workspace created by this test
+          ansible.builtin.file:
+            path: '{{ controller_workspace.path }}'
+            state: absent
+          when: controller_workspace.path is defined
+          delegate_to: localhost
+          check_mode: false
+          vars:
+            ansible_connection: local
+            ansible_shell_type: sh
+            ansible_python_interpreter: '{{ ansible_playbook_python }}'
+
+        - name: Record remaining task directories and verify workspace removal
+          ansible.builtin.raw: >-
+            cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+            "import glob, json, os, sys, tempfile;
+            assert not os.path.exists(sys.argv[1]);
+            print(json.dumps(sorted(glob.glob(os.path.join(tempfile.gettempdir(),
+            'ansible-tmp-*')))))" "{{ copy_workspace.path }}""
+          when: copy_workspace.path is defined
+          register: task_directories_after
+          changed_when: false
+          check_mode: false
+
+        - name: Require task cleanup after successful and failed copies
+          ansible.builtin.assert:
+            that:
+              - >-
+                (task_directories_before.stdout | from_json) ==
+                (task_directories_after.stdout | from_json)
+          when: copy_workspace.path is defined

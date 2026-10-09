@@ -1,0 +1,220 @@
+---
+- name: Bind the exact declared public request
+  ansible.builtin.set_fact:
+    setup_native: {}
+    setup_original: {}
+    setup_before_native: {}
+    setup_after_native: {}
+    setup_before_original: {}
+    setup_after_original: {}
+    setup_case_parameters: >-
+      {{ setup_case.params | combine(
+           {'fact_path': setup_workspace.path + '\\' +
+            setup_case.fact_directory}
+           if setup_case.fact_directory is defined else {}) }}
+
+- name: Observe protected values and independent clock before native request
+  sustainablelobster.legacy_windows.win_command: # noqa: args[module]
+    argv:
+      - '{{ ansible_python_interpreter }}'
+      - '-'
+      - '{{ setup_workspace.path }}'
+      - observe
+    stdin: '{{ setup_fixture }}'
+  register: setup_before_native
+  changed_when: false
+  no_log: true
+
+- name: Gather the selected facts through the public native module
+  sustainablelobster.legacy_windows.setup: # noqa: args[module]
+  args: '{{ setup_case_parameters }}'
+  check_mode: '{{ setup_case.check | default(false) }}'
+  register: setup_native
+  no_log: true
+
+- name: Observe unchanged protected values after native request
+  sustainablelobster.legacy_windows.win_command: # noqa: args[module]
+    argv:
+      - '{{ ansible_python_interpreter }}'
+      - '-'
+      - '{{ setup_workspace.path }}'
+      - observe
+    stdin: '{{ setup_fixture }}'
+  register: setup_after_native
+  changed_when: false
+  no_log: true
+
+- name: Observe protected values and independent clock before source request
+  sustainablelobster.legacy_windows.win_command: # noqa: args[module]
+    argv:
+      - '{{ ansible_python_interpreter }}'
+      - '-'
+      - '{{ setup_workspace.path }}'
+      - observe
+    stdin: '{{ setup_fixture }}'
+  register: setup_before_original
+  changed_when: false
+  no_log: true
+  when: setup_compare | bool
+
+- name: Gather identical facts through the untouched released source
+  ansible.windows.setup:
+  args: '{{ setup_case_parameters }}'
+  check_mode: '{{ setup_case.check | default(false) }}'
+  register: setup_original
+  no_log: true
+  when: setup_compare | bool
+
+- name: Observe unchanged protected values after source request
+  sustainablelobster.legacy_windows.win_command: # noqa: args[module]
+    argv:
+      - '{{ ansible_python_interpreter }}'
+      - '-'
+      - '{{ setup_workspace.path }}'
+      - observe
+    stdin: '{{ setup_fixture }}'
+  register: setup_after_original
+  changed_when: false
+  no_log: true
+  when: setup_compare | bool
+
+- name: Retain complete results and independent observations before validation
+  ansible.builtin.set_fact:
+    setup_record:
+      name: '{{ setup_case.name }}'
+      parameters: '{{ setup_case_parameters }}'
+      check: '{{ setup_case.check | default(false) }}'
+      native: '{{ setup_native }}'
+      original: '{{ setup_original if setup_compare | bool else none }}'
+      before_native: '{{ setup_before_native }}'
+      after_native: '{{ setup_after_native }}'
+      before_original: >-
+        {{ setup_before_original if setup_compare | bool else none }}
+      after_original: >-
+        {{ setup_after_original if setup_compare | bool else none }}
+      validated: false
+  no_log: true
+
+- name: Append the raw unvalidated case
+  ansible.builtin.set_fact:
+    setup_results: '{{ setup_results | default([]) + [setup_record] }}'
+  no_log: true
+
+- name: Preserve complete case evidence privately before any comparison
+  ansible.builtin.copy:
+    dest: '{{ setup_capture.path }}'
+    mode: '0600'
+    content: '{{ {"results": setup_results} | to_nice_json }}'
+  delegate_to: localhost
+  changed_when: false
+  no_log: true
+
+- name: Require unchanged successful facts and literal protected state
+  ansible.builtin.assert:
+    that:
+      - setup_native is not changed
+      - setup_native is not failed
+      - setup_native.ansible_facts.module_setup
+      - >-
+        (setup_before_native.stdout | from_json).protected ==
+        (setup_after_native.stdout | from_json).protected
+      - >-
+        (setup_before_native.stdout | from_json).configuration ==
+        (setup_after_native.stdout | from_json).configuration
+  no_log: true
+
+- name: Require independently bounded native subset durations
+  ansible.builtin.assert:
+    that:
+      - item.value is number
+      - item.value >= 0
+      - >-
+        item.value <= (setup_after_native.stdout | from_json).epoch -
+                      (setup_before_native.stdout | from_json).epoch
+  loop: >-
+    {{ setup_native.ansible_facts.measure_info | default({}) | dict2items }}
+  when: setup_case.measure | default(false)
+  no_log: true
+
+- name: Require timed-out native script process identity and actual shutdown
+  ansible.builtin.assert:
+    that:
+      - (setup_after_native.stdout | from_json).timeout_process is not none
+      - (setup_after_native.stdout | from_json).timeout_process.stopped
+      - >-
+        setup_native.warnings | default([]) | sort ==
+        ['Failed to collect local due to timeout',
+         'Using a template for task args is unsafe in some situations ('
+         + 'see https://docs.ansible.com/ansible/devel/reference_appendices/'
+         + 'faq.html'
+         + '#argsplat-unsafe).'] | sort
+      - setup_native.ansible_facts.keys() | list | sort ==
+        ['gather_subset', 'module_setup']
+      - >-
+        (setup_after_native.stdout | from_json).epoch -
+        (setup_before_native.stdout | from_json).epoch < 30
+  when: setup_case.timeout | default(false)
+  no_log: true
+
+- name: Require independently bounded source subset durations
+  ansible.builtin.assert:
+    that:
+      - item.value is number
+      - item.value >= 0
+      - >-
+        item.value <= (setup_after_original.stdout | from_json).epoch -
+                      (setup_before_original.stdout | from_json).epoch
+      - >-
+        (item.value | type_debug) ==
+        (setup_native.ansible_facts.measure_info[item.key] | type_debug)
+  loop: >-
+    {{ setup_original.ansible_facts.measure_info | default({}) | dict2items }}
+  when: setup_compare | bool and setup_case.measure | default(false)
+  no_log: true
+
+- name: Compare every public field literally with only declared duration bounds
+  vars:
+    native_public: >-
+      {{ setup_native | dict2items |
+         rejectattr('key', 'in', ['invocation', 'exception']) | items2dict }}
+    original_public: >-
+      {{ setup_original | dict2items |
+         rejectattr('key', 'in', ['invocation', 'exception']) | items2dict }}
+    native_measures: >-
+      {{ dict(setup_native.ansible_facts.measure_info | default({}) | list |
+              zip([0] * (setup_native.ansible_facts.measure_info |
+                         default({}) | length))) }}
+    original_measures: >-
+      {{ dict(setup_original.ansible_facts.measure_info | default({}) | list |
+              zip([0] * (setup_original.ansible_facts.measure_info |
+                         default({}) | length))) }}
+    native_comparable: >-
+      {{ native_public | combine({'ansible_facts': native_public.ansible_facts |
+           combine({'measure_info': native_measures})})
+         if setup_case.measure | default(false) else native_public }}
+    original_comparable: >-
+      {{ original_public | combine({'ansible_facts':
+         original_public.ansible_facts |
+           combine({'measure_info': original_measures})})
+         if setup_case.measure | default(false) else original_public }}
+  ansible.builtin.assert:
+    that:
+      - >-
+        (native_comparable | to_json(sort_keys=true)) ==
+        (original_comparable | to_json(sort_keys=true))
+      - setup_original is not changed
+      - setup_original is not failed
+      - >-
+        (setup_before_original.stdout | from_json).protected ==
+        (setup_after_original.stdout | from_json).protected
+      - >-
+        (setup_before_original.stdout | from_json).configuration ==
+        (setup_after_original.stdout | from_json).configuration
+  when: setup_compare | bool
+  no_log: true
+
+- name: Mark only the fully validated case
+  ansible.builtin.set_fact:
+    setup_results: >-
+      {{ setup_results[:-1] + [setup_record | combine({'validated': true})] }}
+  no_log: true

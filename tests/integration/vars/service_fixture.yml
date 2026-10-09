@@ -1,0 +1,393 @@
+---
+# SPDX-License-Identifier: GPL-3.0-or-later
+# This fixture deliberately uses independent native calls and registry reads.
+service_fixture: |
+  import ctypes
+  import json
+  import os
+  import sys
+  import time
+  import uuid
+  import winreg
+
+  assert sys.version_info[:3] == (3, 4, 4)
+  workspace, operation = sys.argv[1:3]
+  journal_path = os.path.join(workspace, 'service-journal.json')
+  script_path = os.path.join(workspace, 'dispatcher.py')
+  dword, pointer, wide = ctypes.c_uint32, ctypes.c_void_p, ctypes.c_wchar_p
+  advapi = ctypes.WinDLL('advapi32', use_last_error=True)
+  kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+  for name, arguments, result in (
+      ('OpenSCManagerW', [wide, wide, dword], pointer),
+      ('OpenServiceW', [pointer, wide, dword], pointer),
+      ('CloseServiceHandle', [pointer], ctypes.c_int),
+      ('QueryServiceStatusEx', [pointer, dword, pointer, dword, pointer],
+       ctypes.c_int),
+      ('ControlService', [pointer, dword, pointer], ctypes.c_int),
+      ('DeleteService', [pointer], ctypes.c_int),
+      ('EnumDependentServicesW',
+       [pointer, dword, pointer, dword, pointer, pointer], ctypes.c_int),
+  ):
+      function = getattr(advapi, name)
+      function.argtypes, function.restype = arguments, result
+  kernel.OpenProcess.argtypes = [dword, ctypes.c_int, dword]
+  kernel.OpenProcess.restype = pointer
+  kernel.WaitForSingleObject.argtypes = [pointer, dword]
+  kernel.WaitForSingleObject.restype = dword
+  kernel.CloseHandle.argtypes = [pointer]
+  kernel.CloseHandle.restype = ctypes.c_int
+  kernel.GetProcessTimes.argtypes = [pointer] * 5
+  kernel.GetProcessTimes.restype = ctypes.c_int
+
+  dispatcher = r'''
+  import ctypes
+  import json
+  import os
+  import sys
+  import time
+
+  assert sys.version_info[:3] == (3, 4, 4)
+  name, token = sys.argv[1:3]
+  dword, pointer, wide = ctypes.c_uint32, ctypes.c_void_p, ctypes.c_wchar_p
+  advapi = ctypes.WinDLL('advapi32', use_last_error=True)
+  kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+  service_main_type = ctypes.WINFUNCTYPE(None, dword, ctypes.POINTER(wide))
+  handler_type = ctypes.WINFUNCTYPE(dword, dword, dword, pointer, pointer)
+  class Status(ctypes.Structure):
+      _fields_ = [(field, dword) for field in ('type', 'state', 'controls',
+          'win32_exit', 'service_exit', 'checkpoint', 'wait_hint')]
+  class Entry(ctypes.Structure):
+      _fields_ = [('name', wide), ('main', service_main_type)]
+  advapi.RegisterServiceCtrlHandlerExW.argtypes = [wide, handler_type, pointer]
+  advapi.RegisterServiceCtrlHandlerExW.restype = pointer
+  advapi.SetServiceStatus.argtypes = [pointer, ctypes.POINTER(Status)]
+  advapi.SetServiceStatus.restype = ctypes.c_int
+  advapi.StartServiceCtrlDispatcherW.argtypes = [ctypes.POINTER(Entry)]
+  advapi.StartServiceCtrlDispatcherW.restype = ctypes.c_int
+  kernel.CreateEventW.argtypes = [pointer, ctypes.c_int, ctypes.c_int, wide]
+  kernel.CreateEventW.restype = pointer
+  kernel.SetEvent.argtypes = [pointer]
+  kernel.SetEvent.restype = ctypes.c_int
+  kernel.WaitForSingleObject.argtypes = [pointer, dword]
+  kernel.WaitForSingleObject.restype = dword
+  kernel.CloseHandle.argtypes = [pointer]
+  kernel.CloseHandle.restype = ctypes.c_int
+  kernel.GetCurrentProcess.argtypes = []
+  kernel.GetCurrentProcess.restype = pointer
+  kernel.GetProcessTimes.argtypes = [pointer] * 5
+  kernel.GetProcessTimes.restype = ctypes.c_int
+  advapi.OpenProcessToken.argtypes = [pointer, dword, ctypes.POINTER(pointer)]
+  advapi.OpenProcessToken.restype = ctypes.c_int
+  advapi.GetTokenInformation.argtypes = [pointer, ctypes.c_int, pointer,
+                                         dword, ctypes.POINTER(dword)]
+  advapi.GetTokenInformation.restype = ctypes.c_int
+  advapi.ConvertSidToStringSidW.argtypes = [pointer, ctypes.POINTER(pointer)]
+  advapi.ConvertSidToStringSidW.restype = ctypes.c_int
+  advapi.DuplicateTokenEx.argtypes = [pointer, dword, pointer, ctypes.c_int,
+                                     ctypes.c_int, ctypes.POINTER(pointer)]
+  advapi.DuplicateTokenEx.restype = ctypes.c_int
+  kernel.LocalFree.argtypes = [pointer]
+  kernel.LocalFree.restype = pointer
+  handle, event = None, None
+  current = 2
+
+  def token_observation():
+      source, duplicate, sid_text = pointer(), pointer(), pointer()
+      try:
+          if not advapi.OpenProcessToken(kernel.GetCurrentProcess(), 0xf,
+                                         ctypes.byref(source)):
+              raise ctypes.WinError(ctypes.get_last_error())
+          needed = dword()
+          advapi.GetTokenInformation(source, 1, None, 0, ctypes.byref(needed))
+          information = ctypes.create_string_buffer(needed.value)
+          if not advapi.GetTokenInformation(source, 1, information,
+                                            needed.value, ctypes.byref(needed)):
+              raise ctypes.WinError(ctypes.get_last_error())
+          sid = pointer.from_buffer(information)
+          if not advapi.ConvertSidToStringSidW(sid, ctypes.byref(sid_text)):
+              raise ctypes.WinError(ctypes.get_last_error())
+          identity = ctypes.wstring_at(sid_text)
+          copied = bool(advapi.DuplicateTokenEx(source, 0x02000000, None, 2, 1,
+                                               ctypes.byref(duplicate)))
+          return {'sid': identity, 'token_access': 0xf,
+                  'primary_token_duplicate': copied,
+                  'duplicate_error': (None if copied else
+                                      ctypes.get_last_error())}
+      finally:
+          if sid_text:
+              kernel.LocalFree(sid_text)
+          if duplicate:
+              kernel.CloseHandle(duplicate)
+          if source:
+              kernel.CloseHandle(source)
+
+  def report(state):
+      global current
+      pending = state in (2, 3, 5, 6)
+      status = Status(0x10, state, 0 if pending or state == 1 else 3,
+                      0, 0, 1 if pending else 0, 5000 if pending else 0)
+      if not advapi.SetServiceStatus(handle, ctypes.byref(status)):
+          raise ctypes.WinError(ctypes.get_last_error())
+      current = state
+
+  def diagnostic(error):
+      path = os.path.join(os.path.dirname(__file__), name + '.error')
+      with open(path, 'a') as stream:
+          stream.write(str(error) + '\n')
+
+  @handler_type
+  def handler(control, event_type, data, context):
+      try:
+          if control == 1:
+              report(3)
+              if not kernel.SetEvent(event):
+                  raise ctypes.WinError(ctypes.get_last_error())
+          elif control == 2:
+              report(6)
+              report(7)
+          elif control == 3:
+              report(5)
+              report(4)
+          elif control == 4:
+              report(current)
+          else:
+              return 120
+          return 0
+      except Exception as error:
+          diagnostic(error)
+          return 1
+
+  @service_main_type
+  def main(count, arguments):
+      global handle, event
+      try:
+          handle = advapi.RegisterServiceCtrlHandlerExW(name, handler, None)
+          if not handle:
+              raise ctypes.WinError(ctypes.get_last_error())
+          report(2)
+          event = kernel.CreateEventW(None, True, False, None)
+          if not event:
+              raise ctypes.WinError(ctypes.get_last_error())
+          times = [ctypes.c_uint64() for unused in range(4)]
+          if not kernel.GetProcessTimes(kernel.GetCurrentProcess(),
+                  *(ctypes.byref(value) for value in times)):
+              raise ctypes.WinError(ctypes.get_last_error())
+          path = os.path.join(os.path.dirname(__file__), name + '.started')
+          with open(path, 'w') as stream:
+              json.dump({'token': token, 'pid': os.getpid(),
+                         'creation': times[0].value,
+                         'version': list(sys.version_info[:3]),
+                         'identity': token_observation()}, stream)
+              stream.flush()
+              os.fsync(stream.fileno())
+          report(4)
+          if kernel.WaitForSingleObject(event, 0xffffffff) != 0:
+              raise ctypes.WinError(ctypes.get_last_error())
+          kernel.CloseHandle(event)
+          event = None
+          report(1)
+      except Exception as error:
+          diagnostic(error)
+          if handle:
+              status = Status(0x10, 1, 0, 1, 0, 0, 0)
+              advapi.SetServiceStatus(handle, ctypes.byref(status))
+      finally:
+          if event:
+              kernel.CloseHandle(event)
+
+  table = (Entry * 2)()
+  table[0] = Entry(name, main)
+  if not advapi.StartServiceCtrlDispatcherW(table):
+      diagnostic(ctypes.WinError(ctypes.get_last_error()))
+      sys.exit(1)
+  '''
+
+  def save(data):
+      temporary = journal_path + '.new'
+      with open(temporary, 'w', encoding='utf-8') as stream:
+          json.dump(data, stream, sort_keys=True)
+          stream.flush()
+          os.fsync(stream.fileno())
+      os.replace(temporary, journal_path)
+
+  def open_service(manager, name, access):
+      service = advapi.OpenServiceW(manager, name, access)
+      if not service:
+          error = ctypes.get_last_error()
+          if error == 1060:
+              return None
+          raise ctypes.WinError(error)
+      return service
+
+  def status(service):
+      native = (dword * 9)()
+      needed = dword()
+      if not advapi.QueryServiceStatusEx(service, 0, native,
+              ctypes.sizeof(native), ctypes.byref(needed)):
+          raise ctypes.WinError(ctypes.get_last_error())
+      return {'state': native[1], 'controls': native[2], 'pid': native[7],
+              'exit_code': native[3]}
+
+  def process_handle(identity):
+      deadline = time.monotonic() + 30
+      while True:
+          process = kernel.OpenProcess(0x100000 | 0x400, False, identity['pid'])
+          if process:
+              break
+          error = ctypes.get_last_error()
+          if error == 87:
+              return None
+          # A just-stopped service briefly denied access in the paired run.
+          # Retry, but never infer process absence from denied access.
+          if error != 5 or time.monotonic() >= deadline:
+              raise ctypes.WinError(error)
+          time.sleep(0.05)
+      times = [ctypes.c_uint64() for unused in range(4)]
+      if not kernel.GetProcessTimes(process,
+              *(ctypes.byref(value) for value in times)):
+          kernel.CloseHandle(process)
+          raise ctypes.WinError(ctypes.get_last_error())
+      if times[0].value != identity['creation']:
+          kernel.CloseHandle(process)
+          return None  # The old owned process exited; its PID has been reused.
+      return process
+
+  def registry(name):
+      try:
+          key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,
+                  'SYSTEM\\CurrentControlSet\\Services\\' + name)
+      except OSError as error:
+          if error.winerror == 2:
+              return None
+          raise
+      values = {}
+      with key:
+          index = 0
+          while True:
+              try:
+                  field, value, kind = winreg.EnumValue(key, index)
+              except OSError as error:
+                  if error.winerror == 259:
+                      break
+                  raise
+              if kind == winreg.REG_BINARY:
+                  value = list(bytearray(value))
+              values[field] = value
+              index += 1
+      return values
+
+  manager = advapi.OpenSCManagerW(None, None, 1)
+  if not manager:
+      raise ctypes.WinError(ctypes.get_last_error())
+  try:
+      if operation == 'setup':
+          assert not os.path.exists(journal_path)
+          token = uuid.uuid4().hex
+          names = {'companion': 'legacy_service_' + token + '_companion',
+                   'primary': 'legacy_service_' + token + '_primary'}
+          commands = {role: '"{0}" "{1}" {2} {3}'.format(
+                              sys.executable, script_path, name, token)
+                      for role, name in names.items()}
+          for name in names.values():
+              service = open_service(manager, name, 4)
+              if service:
+                  advapi.CloseServiceHandle(service)
+                  raise ValueError('Unique service is occupied: ' + name)
+              assert registry(name) is None
+          journal = {'workspace': workspace, 'token': token, 'names': names,
+                     'commands': commands, 'initial_absence': True,
+                     'windows_major': sys.getwindowsversion().major}
+          save(journal)
+          with open(script_path, 'w', encoding='utf-8') as stream:
+              stream.write(dispatcher)
+              stream.flush()
+              os.fsync(stream.fileno())
+          print(json.dumps(journal))
+      else:
+          with open(journal_path, encoding='utf-8') as stream:
+              journal = json.load(stream)
+          assert journal['workspace'] == workspace
+          assert journal['initial_absence']
+          observations = {}
+          processes = []
+          history = journal.setdefault('process_history', [])
+          for role in ('primary', 'companion'):
+              name = journal['names'][role]
+              started_path = os.path.join(workspace, name + '.started')
+              started = None
+              if os.path.exists(started_path):
+                  with open(started_path) as stream:
+                      started = json.load(stream)
+                  assert started['token'] == journal['token']
+                  assert started['version'] == [3, 4, 4]
+                  if started not in history:
+                      history.append(started)
+                      save(journal)
+              values = registry(name)
+              if (values is not None and
+                      values['ImagePath'] != journal['commands'][role]):
+                  raise ValueError('Owned name has an unexpected command line; '
+                                   'journal retained: ' + name)
+              service = open_service(manager, name, 4 | 8 | 32 | 0x10000)
+              try:
+                  native = status(service) if service else None
+                  observations[role] = {'registry': values, 'status': native,
+                                        'dispatcher': started}
+                  if operation == 'cleanup' and service:
+                      if native['pid'] and (started is None or
+                              native['pid'] != started['pid']):
+                          raise ValueError('Owned service PID lacks identity; '
+                                           'journal retained.')
+                      if native['state'] != 1:
+                          pending = (dword * 7)()
+                          if not advapi.ControlService(service, 1, pending):
+                              raise ctypes.WinError(ctypes.get_last_error())
+                          deadline = time.monotonic() + 30
+                          while status(service)['state'] != 1:
+                              if time.monotonic() > deadline:
+                                  raise ValueError('Dispatcher did not stop: '
+                                                   + name)
+                              time.sleep(0.05)
+                      if not advapi.DeleteService(service):
+                          raise ctypes.WinError(ctypes.get_last_error())
+              finally:
+                  if service:
+                      advapi.CloseServiceHandle(service)
+          if operation == 'cleanup':
+              try:
+                  for identity in history:
+                      process = process_handle(identity)
+                      if process:
+                          processes.append(process)
+                  for process in processes:
+                      if kernel.WaitForSingleObject(process, 30000) != 0:
+                          raise ValueError('Dispatcher did not exit; '
+                                           'journal retained.')
+              finally:
+                  for process in processes:
+                      kernel.CloseHandle(process)
+              for name in journal['names'].values():
+                  deadline = time.monotonic() + 30
+                  while True:
+                      try:
+                          service = open_service(manager, name, 4)
+                      except OSError as error:
+                          if error.winerror != 1072:
+                              raise
+                          service = True
+                      if service is None and registry(name) is None:
+                          break
+                      if service is not True and service is not None:
+                          advapi.CloseServiceHandle(service)
+                      if time.monotonic() > deadline:
+                          raise ValueError('Deletion remains pending; '
+                                           'journal retained: ' + name)
+                      time.sleep(0.05)
+              print(json.dumps({'restored': True, 'before': observations,
+                                'names': journal['names']}))
+          elif operation == 'observe':
+              print(json.dumps(observations, sort_keys=True))
+          else:
+              raise ValueError('Unknown fixture operation: ' + operation)
+  finally:
+      advapi.CloseServiceHandle(manager)

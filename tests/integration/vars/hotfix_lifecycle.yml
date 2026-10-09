@@ -1,0 +1,60 @@
+---
+hotfix_lifecycle_cases:
+  - name: Preview installation from an absent package
+    check: true
+    changed: true
+    params:
+      source: '{{ hotfix_lifecycle_workspace }}\package.msu'
+      state: present
+  - name: Reject a mismatched official package KB without servicing
+    failed: true
+    params:
+      source: '{{ hotfix_lifecycle_workspace }}\package.msu'
+      hotfix_kb: KB0000000
+      state: present
+  - name: Install the genuinely absent official package
+    changed: true
+    params:
+      source: '{{ hotfix_lifecycle_workspace }}\package.msu'
+      hotfix_identifier: '{{ hotfix_lifecycle_identifier }}'
+      hotfix_kb: '{{ hotfix_lifecycle_kb }}'
+      state: present
+  - name: Repeat installation before any requested restart
+    params:
+      source: '{{ hotfix_lifecycle_workspace }}\package.msu'
+      state: present
+  - name: Preview repeated installation before any requested restart
+    check: true
+    restart_after: true
+    params:
+      source: '{{ hotfix_lifecycle_workspace }}\package.msu'
+      state: present
+  - name: Repeat installation after satisfying the package restart
+    params:
+      source: '{{ hotfix_lifecycle_workspace }}\package.msu'
+      state: present
+  - name: Preview removal of the installed package
+    check: true
+    changed: true
+    params:
+      hotfix_identifier: '{{ hotfix_lifecycle_identifier }}'
+      state: absent
+  - name: Remove the genuinely installed official package
+    changed: true
+    params:
+      hotfix_identifier: '{{ hotfix_lifecycle_identifier }}'
+      state: absent
+  - name: Repeat removal before any requested restart
+    restart_after: true
+    params:
+      hotfix_identifier: '{{ hotfix_lifecycle_identifier }}'
+      state: absent
+  - name: Repeat removal after satisfying the package restart
+    params:
+      hotfix_identifier: '{{ hotfix_lifecycle_identifier }}'
+      state: absent
+  - name: Preview removal of the already absent package
+    check: true
+    params:
+      hotfix_identifier: '{{ hotfix_lifecycle_identifier }}'
+      state: absent

@@ -1,0 +1,135 @@
+---
+# SPDX-License-Identifier: GPL-3.0-or-later
+- name: Verify native staging preserves an unrestricted ACL on Python 3.4.4
+  hosts: legacy_windows
+  gather_facts: false
+  vars:
+    runas_acl_helper_names:
+      - legacy_windows_account.py
+      - legacy_windows_s4u.py
+      - legacy_windows_system_token.py
+      - legacy_windows_runas_token.py
+      - legacy_windows_runas.py
+    runas_acl_helper_source: '{{ playbook_dir }}/../../plugins/module_utils'
+    runas_acl_hashes: {}
+  tasks:
+    - name: Record original staging and require actual Python 3.4.4
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import glob,json,os,sys,tempfile;assert sys.version_info[:3]==(3,4,4);
+        print(json.dumps(sorted(glob.glob(os.path.join(tempfile.gettempdir(),'ansible-tmp-*')))))""
+      register: runas_acl_staging_before
+      changed_when: false
+
+    - name: Record exact controller helper byte identities
+      ansible.builtin.set_fact:
+        runas_acl_hashes: >-
+          {{ runas_acl_hashes | combine({item:
+          lookup('ansible.builtin.file', runas_acl_helper_source + '/' + item,
+          rstrip=false) | hash('sha256')}) }}
+      loop: '{{ runas_acl_helper_names }}'
+
+    - name: Allocate private controller evidence
+      ansible.builtin.tempfile:
+        state: file
+        path: '{{ playbook_dir }}/../../tmp'
+        prefix: 'runas-acl-{{ inventory_hostname }}-'
+        suffix: .json
+      register: runas_acl_capture
+      delegate_to: localhost
+      vars: &controller
+        ansible_connection: local
+        ansible_shell_type: sh
+        ansible_python_interpreter: '{{ ansible_playbook_python }}'
+      changed_when: false
+
+    - name: Exercise only owned ACL state with mandatory directory cleanup
+      block:
+        - name: Allocate owned helper workspace
+          sustainablelobster.legacy_windows.win_tempfile:
+            state: directory
+            prefix: legacy-windows-runas-acl-
+          register: runas_acl_workspace
+
+        - name: Copy exact target helper closure
+          sustainablelobster.legacy_windows.win_copy:
+            src: '{{ runas_acl_helper_source }}/{{ item }}'
+            dest: '{{ runas_acl_workspace.path }}\{{ item }}'
+          loop: '{{ runas_acl_helper_names }}'
+
+        - name: Exercise NULL-DACL preservation and literal ACL restoration
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - '-'
+              - '{{ runas_acl_workspace.path }}'
+              - '{{ runas_acl_hashes | to_json }}'
+            stdin: >-
+              {{ lookup('ansible.builtin.file',
+              playbook_dir + '/fixtures/runas_acl_fixture.py', rstrip=false) }}
+          register: runas_acl_result
+          changed_when: false
+
+        - name: Require complete native ACL observations
+          vars:
+            actual: '{{ runas_acl_result.stdout | from_json }}'
+          ansible.builtin.assert:
+            that:
+              - actual.python == [3, 4, 4]
+              - actual.helper_hashes == runas_acl_hashes
+              - actual.null_before and actual.null_after
+              - actual.before == actual.after
+              - actual.original == actual.restored
+              - actual.owned_child_absent
+      always:
+        - name: Preserve raw observations before deletion
+          ansible.builtin.copy:
+            content: >-
+              {{ {'result': runas_acl_result | default(none),
+              'helper_hashes': runas_acl_hashes} | to_nice_json }}
+            dest: '{{ runas_acl_capture.path }}'
+            mode: '0600'
+          delegate_to: localhost
+          vars: *controller
+          changed_when: false
+
+        - name: Remove only owned helper workspace
+          sustainablelobster.legacy_windows.win_file:
+            path: '{{ runas_acl_workspace.path }}'
+            state: absent
+          when: runas_acl_workspace.path is defined
+
+        - name: Check original staging and owned workspace absence
+          ansible.builtin.raw: >-
+            cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+            "import glob,json,os,sys,tempfile;
+            assert not os.path.exists(sys.argv[1]);
+            print(json.dumps(sorted(glob.glob(os.path.join(tempfile.gettempdir(),'ansible-tmp-*')))))"
+            "{{ runas_acl_workspace.path }}""
+          register: runas_acl_staging_after
+          changed_when: false
+          when: runas_acl_workspace.path is defined
+
+        - name: Require original staging literally
+          ansible.builtin.assert:
+            that:
+              - >-
+                (runas_acl_staging_before.stdout | from_json) ==
+                (runas_acl_staging_after.stdout | from_json)
+
+        - name: Retain complete cleanup evidence
+          ansible.builtin.copy:
+            content: >-
+              {{ {'result': runas_acl_result | default(none),
+              'helper_hashes': runas_acl_hashes,
+              'staging_before': runas_acl_staging_before,
+              'staging_after': runas_acl_staging_after,
+              'workspace_absent': true} | to_nice_json }}
+            dest: '{{ runas_acl_capture.path }}'
+            mode: '0600'
+          delegate_to: localhost
+          vars: *controller
+          changed_when: false
+
+        - name: Close the owner-scoped standard SSH connection
+          ansible.builtin.meta: reset_connection

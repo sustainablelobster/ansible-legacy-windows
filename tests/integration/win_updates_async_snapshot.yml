@@ -1,0 +1,332 @@
+---
+# SPDX-License-Identifier: GPL-3.0-or-later
+- name: Journal or verify the exact owned Updates servicing snapshot
+  hosts: legacy_windows
+  gather_facts: false
+  vars_files:
+    - vars/native_async.yml
+  vars:
+    updates_snapshot_journal: >-
+      {{ playbook_dir + '/../../tmp/codex/evidence/' +
+         'win-updates-async-snapshot-original-v1.json' }}
+    updates_snapshot_stable: >-
+      {{ playbook_dir + '/../../tmp/codex/evidence/' +
+         'win-updates-async-snapshot-stable-v1.json' }}
+    updates_snapshot_current: >-
+      {{ playbook_dir + '/../../tmp/codex/evidence/' +
+         'win-updates-async-snapshot-' +
+         updates_snapshot_phase + '-v1.json' }}
+    updates_snapshot_cache_compressed: >-
+      {{ lookup('ansible.builtin.file', playbook_dir +
+        '/../../tmp/codex/artifacts/' +
+        'win-updates-cache-observer-gzip-v1.b64') }}
+    updates_snapshot_catalog_program: |
+      HELPER_SOURCES = {
+          'legacy_windows_wmi': {{ lookup('ansible.builtin.file',
+            playbook_dir + '/../../plugins/module_utils/' +
+            'legacy_windows_wmi.py') | to_json }},
+          'legacy_windows_updates_native': {{ lookup('ansible.builtin.file',
+            playbook_dir + '/../../plugins/module_utils/' +
+            'legacy_windows_updates_native.py') | to_json }}
+      }
+      {{ lookup('ansible.builtin.file',
+         playbook_dir + '/fixtures/win_updates.py') }}
+    updates_snapshot_protected_program: |
+      import json,sys
+      assert sys.version_info[:3] == (3,4,4)
+      namespace = {'__name__':'updates_snapshot_protected'}
+      source = {{ lookup('ansible.builtin.file',
+          playbook_dir + '/fixtures/native_async.py').split(
+          'def _read(path):')[0] | to_json }}
+      namespace['WMI_SOURCE'] = {{ lookup('ansible.builtin.file',
+          playbook_dir + '/../../plugins/module_utils/' +
+          'legacy_windows_wmi.py') | to_json }}
+      exec(compile(source, 'updates_snapshot_protected', 'exec'), namespace)
+      value = namespace['_protected']()
+      configuration = dict(value)
+      configuration['services'] = namespace.get(
+          '_service_configuration', lambda rows: [
+              {name:item for name,item in row.items() if name != 'State'}
+              for row in rows])(value['services'])
+      print(json.dumps({'complete':value, 'configuration':configuration}))
+    updates_snapshot_staging_program: >-
+      import glob,json,os,sys,tempfile;
+      assert sys.version_info[:3]==(3,4,4);
+      print(json.dumps({name:sorted(glob.glob(os.path.join(
+      tempfile.gettempdir(),pattern))) for name,pattern in
+      [('staging','ansible-tmp-*'),('workers','legacy-windows-updates-*'),
+      ('workspaces','legacy-windows-native-async-updates-*')]}))
+  tasks:
+    - name: Quiesce the exact native WUA writer immediately after rollback
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import base64;exec(compile(base64.b64decode(
+        '{{ lookup('ansible.builtin.file', playbook_dir +
+        '/fixtures/win_updates_quiesce.py') | b64encode }}'),
+        'owned-wua-quiesce.py','exec'))""
+      register: updates_snapshot_quiesce
+      changed_when: false
+      failed_when: false
+      when: updates_snapshot_phase != 'prepare'
+      no_log: true
+
+    - name: Read restored cache bytes before any helper staging latency
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import base64,gzip;exec(compile(gzip.decompress(base64.b64decode(
+        '{{ updates_snapshot_cache_compressed }}')),
+        'owned-wua-cache.py','exec'))" observe"
+      register: updates_snapshot_raw_cache
+      changed_when: false
+      failed_when: false
+      when: updates_snapshot_phase != 'prepare'
+      no_log: true
+
+    - name: Retain exact immediate quiesce and restored bytes before staging
+      ansible.builtin.copy:
+        content: >-
+          {{ {'quiesce': updates_snapshot_quiesce,
+              'cache': updates_snapshot_raw_cache} | to_nice_json }}
+        dest: >-
+          {{ playbook_dir + '/../../tmp/codex/evidence/' +
+             'win-updates-async-first-recovery-' +
+             updates_snapshot_phase + '-v1.json' }}
+        mode: '0600'
+      delegate_to: localhost
+      vars: &local
+        ansible_connection: local
+        ansible_shell_type: sh
+        ansible_python_interpreter: '{{ ansible_playbook_python }}'
+      when: updates_snapshot_phase != 'prepare'
+      no_log: true
+
+    - name: Capture complete original runtime before preparation writes
+      sustainablelobster.legacy_windows.win_service_info:
+      register: updates_snapshot_original_services
+      when: updates_snapshot_phase == 'prepare'
+      no_log: true
+
+    - name: Observe cached pending and installed identities without EULA writes
+      sustainablelobster.legacy_windows.win_command:
+        argv: ['{{ ansible_python_interpreter }}', '-', cached,
+               'IsInstalled = 0 or IsInstalled = 1']
+        stdin: '{{ updates_snapshot_catalog_program }}'
+      register: updates_snapshot_catalog
+      changed_when: false
+      failed_when: false
+      when: updates_snapshot_phase == 'prepare'
+      no_log: true
+
+    - name: Retain original services and cached catalog before runtime writes
+      ansible.builtin.copy:
+        content: >-
+          {{ {'services': updates_snapshot_original_services,
+              'catalog': updates_snapshot_catalog} | to_nice_json }}
+        dest: '{{ updates_snapshot_journal }}'
+        mode: '0600'
+      delegate_to: localhost
+      vars: *local
+      when: updates_snapshot_phase == 'prepare'
+      no_log: true
+
+    - name: Require measured cached update access before servicing preparation
+      ansible.builtin.assert:
+        that:
+          - updates_snapshot_catalog.rc == 0
+          - (updates_snapshot_catalog.stdout | from_json).result_code in [2, 3]
+      when: updates_snapshot_phase == 'prepare'
+      no_log: true
+
+    - name: Observe complete fresh cache writer states before bounded stop
+      sustainablelobster.legacy_windows.win_service_info:
+      register: updates_snapshot_writers
+      no_log: true
+
+    - name: Journal exact writer transitions before runtime writes
+      ansible.builtin.copy:
+        content: '{{ updates_snapshot_writers | to_nice_json }}'
+        dest: >-
+          {{ playbook_dir + '/../../tmp/codex/evidence/' +
+             'win-updates-async-writers-' +
+             updates_snapshot_phase + '-v1.json' }}
+        mode: '0600'
+      delegate_to: localhost
+      vars: *local
+      no_log: true
+
+    - name: Stop only measured active cache writers without configuration writes
+      sustainablelobster.legacy_windows.win_service:
+        name: '{{ item }}'
+        state: stopped
+      loop: [wuauserv, BITS]
+      when: >-
+        (updates_snapshot_writers.services |
+         selectattr('name', 'equalto', item) | first).state != 'stopped'
+      register: updates_snapshot_stopped
+      no_log: true
+
+    - name: Observe every original cache path attribute timestamp and byte hash
+      sustainablelobster.legacy_windows.win_command:
+        argv: ['{{ ansible_python_interpreter }}', '-', observe]
+        stdin: >-
+          {{ lookup('ansible.builtin.file',
+             playbook_dir + '/fixtures/win_updates_cache.py') }}
+      register: updates_snapshot_prepared_cache
+      when: updates_snapshot_phase == 'prepare'
+      changed_when: false
+      failed_when: false
+      no_log: true
+
+    - name: Select the complete raw cache observation without changing fields
+      ansible.builtin.set_fact:
+        updates_snapshot_cache: >-
+          {{ updates_snapshot_prepared_cache if
+             updates_snapshot_phase == 'prepare' else
+             updates_snapshot_raw_cache }}
+      no_log: true
+
+    - name: Observe protected registry executable network and service catalogue
+      sustainablelobster.legacy_windows.win_command:
+        argv: ['{{ ansible_python_interpreter }}', '-']
+        stdin: '{{ updates_snapshot_protected_program }}'
+      register: updates_snapshot_protected
+      changed_when: false
+      no_log: true
+
+    - name: Observe complete independently measured service rows
+      sustainablelobster.legacy_windows.win_service_info:
+      register: updates_snapshot_services
+      no_log: true
+
+    - name: Verify the released modern native readiness marker after restore
+      sustainablelobster.legacy_windows.win_command:
+        argv: ['{{ ansible_python_interpreter }}', '-']
+        stdin: |
+          import json,sys,winreg
+          assert sys.version_info[:3] == (3,4,4)
+          marker = (r'SOFTWARE\Microsoft\Windows NT\CurrentVersion'
+                    r'\Winlogon\AutoLogonChecked')
+          with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, marker):
+              print(json.dumps({'python':list(sys.version_info[:3]),
+                                'ready':True,'signal':marker}))
+      register: updates_snapshot_readiness
+      changed_when: false
+      no_log: true
+
+    - name: Read exact global staging worker and fixture workspace absence
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "{{ updates_snapshot_staging_program }}""
+      register: updates_snapshot_global
+      changed_when: false
+
+    - name: Retain all original or failed recovery evidence before assertions
+      ansible.builtin.copy:
+        content: >-
+          {{ {'cache': updates_snapshot_cache,
+              'protected': updates_snapshot_protected,
+              'services': updates_snapshot_services,
+              'writers': updates_snapshot_writers,
+              'stopped': updates_snapshot_stopped,
+              'readiness': updates_snapshot_readiness,
+              'global': updates_snapshot_global} | to_nice_json }}
+        dest: >-
+          {{ updates_snapshot_stable if updates_snapshot_phase == 'prepare'
+             else updates_snapshot_current }}
+        mode: '0600'
+      delegate_to: localhost
+      vars: *local
+      no_log: true
+
+    - name: Require a stable whole cache with stopped measured writers
+      ansible.builtin.assert:
+        that:
+          - updates_snapshot_cache.rc == 0
+          - (updates_snapshot_cache.stdout | from_json).files | length > 0
+          - >-
+            (updates_snapshot_services.services |
+             selectattr('name', 'equalto', 'wuauserv') |
+             first).state == 'stopped'
+          - >-
+            (updates_snapshot_services.services |
+             selectattr('name', 'equalto', 'BITS') | first).state == 'stopped'
+      no_log: true
+
+    - name: Require literal cache and protected recovery without PID claims
+      ansible.builtin.assert:
+        that:
+          - >-
+            (updates_snapshot_cache.stdout | from_json) ==
+            ((lookup('ansible.builtin.file', updates_snapshot_stable) |
+              from_json).cache.stdout | from_json)
+          - >-
+            (updates_snapshot_global.stdout | from_json) ==
+            ((lookup('ansible.builtin.file', updates_snapshot_stable) |
+              from_json).global.stdout | from_json)
+          - >-
+            (updates_snapshot_protected.stdout | from_json).configuration ==
+            ((lookup('ansible.builtin.file', updates_snapshot_stable) |
+              from_json).protected.stdout | from_json).configuration
+      when: updates_snapshot_phase != 'prepare'
+      no_log: true
+
+    - name: Observe writer states before original-runtime restoration
+      sustainablelobster.legacy_windows.win_service_info:
+      register: updates_snapshot_before_release
+      when: updates_snapshot_phase == 'release'
+      no_log: true
+
+    - name: Restore only exact original WUA and BITS runtime states
+      sustainablelobster.legacy_windows.win_service:
+        name: '{{ item }}'
+        state: >-
+          {{ 'started' if ((lookup('ansible.builtin.file',
+            updates_snapshot_journal) | from_json).services.services |
+            selectattr('name', 'equalto', item) | first).state == 'started'
+            else 'stopped' }}
+      loop: [wuauserv, BITS]
+      register: updates_snapshot_release_runtime
+      when: updates_snapshot_phase == 'release'
+      no_log: true
+
+    - name: Capture final service configuration and all runtime differences
+      sustainablelobster.legacy_windows.win_service_info:
+      register: updates_snapshot_final_services
+      when: updates_snapshot_phase == 'release'
+      no_log: true
+
+    - name: Retain complete original-runtime recovery without a new WUA search
+      ansible.builtin.copy:
+        content: >-
+          {{ {'before': updates_snapshot_before_release,
+              'restoration': updates_snapshot_release_runtime,
+              'final': updates_snapshot_final_services} | to_nice_json }}
+        dest: >-
+          {{ playbook_dir + '/../../tmp/codex/evidence/' +
+             'win-updates-async-release-final-v1.json' }}
+        mode: '0600'
+      delegate_to: localhost
+      vars: *local
+      when: updates_snapshot_phase == 'release'
+      no_log: true
+
+    - name: Require literal original writer runtime after final restoration
+      ansible.builtin.assert:
+        that:
+          - >-
+            ((updates_snapshot_final_services.services |
+              selectattr('name', 'equalto', 'wuauserv') | first).state) ==
+            ((lookup('ansible.builtin.file', updates_snapshot_journal) |
+              from_json).services.services |
+              selectattr('name', 'equalto', 'wuauserv') | first).state
+          - >-
+            ((updates_snapshot_final_services.services |
+              selectattr('name', 'equalto', 'BITS') | first).state) ==
+            ((lookup('ansible.builtin.file', updates_snapshot_journal) |
+              from_json).services.services |
+              selectattr('name', 'equalto', 'BITS') | first).state
+      when: updates_snapshot_phase == 'release'
+      no_log: true
+
+    - name: Close the dedicated connection before snapshot or release
+      ansible.builtin.meta: reset_connection

@@ -1,0 +1,249 @@
+---
+# SPDX-License-Identifier: GPL-3.0-or-later
+- name: Verify read-only certificate information on Windows Python 3.4.4
+  hosts: legacy_windows
+  gather_facts: false
+  vars_files:
+    - vars/certificate_observation.yml
+  vars:
+    observed: '{{ native_before.stdout | from_json }}'
+    required_certificate_fields:
+      - archived
+      - dns_names
+      - extensions
+      - friendly_name
+      - has_private_key
+      - issued_by
+      - issued_to
+      - issuer
+      - public_key
+      - raw
+      - serial_number
+      - signature_algorithm
+      - subject
+      - thumbprint
+      - valid_from
+      - valid_from_iso8601
+      - valid_to
+      - valid_to_iso8601
+      - version
+  tasks:
+    - name: Require Python 3.4.4 and an initially clean staging area
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import glob, os, sys, tempfile;
+        assert sys.version_info[:3] == (3, 4, 4);
+        assert not glob.glob(os.path.join(tempfile.gettempdir(),
+        'ansible-tmp-*'));
+        print('Python 3.4.4 and clean staging verified')""
+      changed_when: false
+      check_mode: false
+
+    - name: Exercise certificate reads and validation recovery
+      block:
+        - name: Observe existing certificates and registry state independently
+          sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - import sys;exec(sys.stdin.read())
+            stdin: '{{ certificate_observation_code }}'
+          register: native_before
+          changed_when: false
+          check_mode: false
+          no_log: true
+
+        - name: Require existing root certificates for selection tests
+          ansible.builtin.assert:
+            that:
+              - observed.python == [3, 4, 4]
+              - observed.stores['LocalMachine/Root'] | length > 0
+          no_log: true
+
+        - name: Read machine root certificates
+          sustainablelobster.legacy_windows.win_certificate_info:
+            store_name: Root
+          register: roots
+          no_log: true
+
+        - name: Repeat the root read
+          sustainablelobster.legacy_windows.win_certificate_info:
+            store_name: Root
+          register: repeated
+          no_log: true
+
+        - name: Read roots in check mode
+          sustainablelobster.legacy_windows.win_certificate_info:
+            store_name: Root
+          check_mode: true
+          diff: true
+          register: checked
+          no_log: true
+
+        - name: Require stable sorted certificates and independent DER matches
+          ansible.builtin.assert:
+            that:
+              - item is not changed
+              - item is not skipped
+              - item.diff is not defined
+              - item.exists
+              - item.certificates == roots.certificates
+              - >-
+                item.certificates | map(attribute='thumbprint') | list ==
+                observed.stores['LocalMachine/Root'] |
+                map(attribute='thumbprint') | list
+              - >-
+                item.certificates | map(attribute='raw') | list ==
+                observed.stores['LocalMachine/Root'] |
+                map(attribute='raw') | list
+          loop: ['{{ roots }}', '{{ repeated }}', '{{ checked }}']
+          no_log: true
+
+        - name: Require complete certificate metadata and public result types
+          ansible.builtin.assert:
+            that:
+              - >-
+                required_certificate_fields | difference(item.keys()) |
+                length == 0
+              - item.thumbprint is match('^[0-9A-F]{40}$')
+              - item.serial_number is match('^[0-9A-F]+$')
+              - item.archived == false
+              - item.has_private_key is boolean
+              - item.subject is string
+              - item.issuer is string
+              - item.dns_names is sequence and item.dns_names is not string
+              - item.dns_names[0] == item.issued_to
+              - item.extensions is sequence and item.extensions is not string
+              - item.valid_from is number
+              - item.valid_to is number
+              - item.valid_from_iso8601 is string
+              - item.valid_to_iso8601 is string
+              - item.version in [1, 2, 3]
+              - item.cert_data is not defined
+          loop: '{{ roots.certificates }}'
+          no_log: true
+
+        - name: Read default personal and explicit current-user stores
+          sustainablelobster.legacy_windows.win_certificate_info: '{{ item }}'
+          loop:
+            - {}
+            - {store_name: Root, store_location: CurrentUser}
+            - {store_name: My, store_location: CurrentUser}
+          register: stores
+          no_log: true
+
+        - name: Match each store against independently enumerated certificates
+          vars:
+            selected_store: >-
+              {{ (item.item.store_location | default('LocalMachine')) ~ '/' ~
+              (item.item.store_name | default('My')) }}
+          ansible.builtin.assert:
+            that:
+              - item is not changed
+              - item.exists == (observed.stores[selected_store] | length > 0)
+              - >-
+                item.certificates | map(attribute='raw') | list ==
+                observed.stores[selected_store] | map(attribute='raw') | list
+          loop: '{{ stores.results }}'
+          no_log: true
+
+        - name: Select by literal thumbprint and upstream permissive hex parsing
+          sustainablelobster.legacy_windows.win_certificate_info:
+            store_name: root
+            store_location: localmachine
+            thumbprint: '{{ item }}'
+          loop:
+            - '{{ roots.certificates[0].thumbprint }}'
+            - '{{ roots.certificates[0].thumbprint | lower }}'
+            - '{{ roots.certificates[0].thumbprint | list | join(" ") }}'
+            - '{{ roots.certificates[0].thumbprint }}F'
+            - ''
+            - not-a-thumbprint
+          register: selected
+          no_log: true
+
+        - name: Require exact selections or successful empty results
+          ansible.builtin.assert:
+            that:
+              - item is not changed
+              - item.exists == (item.item not in ['', 'not-a-thumbprint'])
+              - >-
+                item.certificates ==
+                ([] if item.item in ['', 'not-a-thumbprint']
+                else roots.certificates[:1])
+          loop: '{{ selected.results }}'
+          no_log: true
+
+        - name: Verify invalid inputs without partial certificate results
+          block:
+            - name: Supply unsupported options and invalid store arguments
+              sustainablelobster.legacy_windows.win_certificate_info:
+                '{{ item }}'
+              loop:
+                - {unexpected_option: true}
+                - {store_location: nowhere}
+                - {store_location: null}
+                - {store_name: ''}
+              register: invalid
+              no_log: true
+            - name: Reject unexpectedly accepted invalid inputs
+              ansible.builtin.fail:
+                msg: Certificate module accepted invalid inputs
+          rescue:
+            - name: Require all four failures without changes or partial results
+              ansible.builtin.assert:
+                that:
+                  - invalid.results | length == 4
+                  - invalid.results | rejectattr('failed') | list | length == 0
+                  - invalid.results | selectattr('changed') | list | length == 0
+                  - >-
+                    invalid.results | selectattr('certificates', 'defined') |
+                    list | length == 0
+                  - "'unexpected_option' in invalid.results[0].msg"
+                  - "'store_location' in invalid.results[1].msg"
+                  - "'StoreLocation' in invalid.results[2].msg"
+                  - "'Open' in invalid.results[3].msg"
+              no_log: true
+
+        - name: Read certificates after validation and native failures
+          sustainablelobster.legacy_windows.win_certificate_info:
+            store_name: Root
+          register: recovered
+          no_log: true
+
+        - name: Require unchanged recovery results
+          ansible.builtin.assert:
+            that:
+              - recovered is not changed
+              - recovered.certificates == roots.certificates
+              - recovered.exists
+          no_log: true
+
+        - name: Recheck independently observed certificate and registry state
+          sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - import sys;exec(sys.stdin.read())
+            stdin: '{{ certificate_observation_code }}'
+          register: native_after
+          changed_when: false
+          check_mode: false
+          no_log: true
+
+        - name: Require unchanged stores after all reads
+          ansible.builtin.assert:
+            that:
+              - native_after.stdout | from_json == observed
+          no_log: true
+      always:
+        - name: Require task-directory cleanup under the target runtime
+          ansible.builtin.raw: >-
+            cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+            "import glob, os, sys, tempfile;
+            assert sys.version_info[:3] == (3, 4, 4);
+            assert not glob.glob(os.path.join(tempfile.gettempdir(),
+            'ansible-tmp-*'));
+            print('Python 3.4.4 and task-directory cleanup verified')""
+          changed_when: false
+          check_mode: false

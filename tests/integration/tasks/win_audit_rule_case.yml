@@ -1,0 +1,190 @@
+---
+- name: Initialize the retained audit case
+  ansible.builtin.set_fact:
+    audit_rule_before: {}
+    audit_rule_after: {}
+    audit_rule_result: null
+    audit_rule_validated: false
+  no_log: true
+
+- name: Capture audit-rule public behavior and independent native state
+  vars:
+    audit_rule_record:
+      name: '{{ audit_rule_case.name }}'
+      case: '{{ audit_rule_case }}'
+      result: '{{ audit_rule_result }}'
+      before: '{{ audit_rule_before }}'
+      after: '{{ audit_rule_after }}'
+      validated: '{{ audit_rule_validated }}'
+  block:
+    - name: Observe journaled resources before the public call
+      sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+        argv:
+          - '{{ ansible_python_interpreter }}'
+          - '-'
+          - '{{ audit_rule_workspace.path }}'
+          - observe
+        stdin: '{{ audit_rule_fixture }}'
+      register: audit_rule_before
+      changed_when: false
+      check_mode: false
+      no_log: true
+
+    - name: Retain the complete public result including expected failures
+      block:
+        - name: Apply the audit-rule request # noqa: args[module]
+          sustainablelobster.legacy_windows.win_audit_rule:
+            path: '{{ audit_rule_paths[audit_rule_case.role] }}'
+            user: '{{ audit_rule_case.user | default("Everyone") }}'
+            rights: '{{ audit_rule_case.rights | default(omit) }}'
+            inheritance_flags: >-
+              {{ audit_rule_case.inheritance_flags | default(omit) }}
+            propagation_flags: >-
+              {{ audit_rule_case.propagation_flags | default(omit) }}
+            audit_flags: '{{ audit_rule_case.audit_flags | default(omit) }}'
+            state: '{{ audit_rule_case.state | default("present") }}'
+          check_mode: '{{ audit_rule_case.check | default(false) }}'
+          diff: true
+          register: audit_rule_result
+          no_log: true
+      rescue:
+        - name: Preserve the failed request for native observation
+          ansible.builtin.assert:
+            that: audit_rule_result is failed
+          no_log: true
+
+    - name: Observe journaled resources after the public call
+      sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+        argv:
+          - '{{ ansible_python_interpreter }}'
+          - '-'
+          - '{{ audit_rule_workspace.path }}'
+          - observe
+        stdin: '{{ audit_rule_fixture }}'
+      register: audit_rule_after
+      changed_when: false
+      check_mode: false
+      no_log: true
+
+    - name: Save raw public and native evidence before assertion
+      ansible.builtin.copy:
+        content: >-
+          {{ audit_rule_capture | combine({'results':
+             audit_rule_results + [audit_rule_record]}) | to_nice_json }}
+        dest: '{{ audit_rule_capture_file.path }}'
+        mode: '0600'
+      delegate_to: localhost
+      vars: &audit_rule_local
+        ansible_connection: local
+        ansible_shell_type: sh
+        ansible_python_interpreter: '{{ ansible_playbook_python }}'
+      changed_when: false
+      no_log: true
+
+    - name: Verify public results and whole-snapshot nonmutation
+      ansible.builtin.assert:
+        that:
+          - audit_rule_result.changed == audit_rule_case.changed
+          - >-
+            (audit_rule_result is failed) ==
+            (audit_rule_case.failed | default(false))
+          - audit_rule_result.diff is not defined
+          - audit_rule_result.warnings | default([]) == []
+          - >-
+            audit_rule_result.msg | default('') ==
+            audit_rule_case.message | default('')
+          - >-
+            not ((audit_rule_case.check | default(false))
+            or not audit_rule_case.changed
+            or (audit_rule_case.native_unchanged | default(false)))
+            or (audit_rule_before.stdout | from_json)
+            == (audit_rule_after.stdout | from_json)
+          - >-
+            audit_rule_result.path_type | default(none) ==
+            (none if (audit_rule_case.wrapper_failure | default(false)) else
+            'registry' if 'registry' in audit_rule_case.role else
+            'directory' if 'directory' in audit_rule_case.role else 'file')
+      no_log: true
+
+    - name: Verify the provider-selected sibling leaves the literal unchanged
+      ansible.builtin.assert:
+        that: >-
+          (audit_rule_before.stdout | from_json)[audit_rule_case.role]
+          == (audit_rule_after.stdout | from_json)[audit_rule_case.role]
+      when: audit_rule_case.observe_role is defined
+      no_log: true
+
+    - name: Verify the getter-selected object's complete state is unchanged
+      ansible.builtin.assert:
+        that: >-
+          (audit_rule_before.stdout | from_json)[audit_rule_case.read_role]
+          == (audit_rule_after.stdout | from_json)[audit_rule_case.read_role]
+      when: audit_rule_case.read_role is defined
+      no_log: true
+
+    - name: Verify independent literal ACE bytes and account identity
+      vars:
+        entries: >-
+          {{ (audit_rule_after.stdout | from_json)[
+             audit_rule_case.observe_role
+             | default(audit_rule_case.role)].aces }}
+      ansible.builtin.assert:
+        that:
+          - entries | map(attribute='type') | list == [2] * (entries | length)
+          - >-
+            entries | map(attribute='flags') | list ==
+            audit_rule_case.aces | map('first') | list
+          - >-
+            entries | map(attribute='mask') | list ==
+            audit_rule_case.aces | map(attribute=1) | list
+          - >-
+            entries | map(attribute='sid') | list ==
+            audit_rule_case.aces | map(attribute=2) | list
+      no_log: true
+
+    - name: Verify unrelated owner group and access permissions
+      vars:
+        actual: '{{ (audit_rule_after.stdout | from_json)[item.key] }}'
+        original: '{{ audit_rule_baseline[item.key] }}'
+      ansible.builtin.assert:
+        that:
+          - actual.owner == original.owner
+          - actual.group == original.group
+          - actual.dacl == original.dacl
+      loop: '{{ audit_rule_paths | dict2items }}'
+      no_log: true
+
+    - name: Verify the requested SACL protection boundary
+      ansible.builtin.assert:
+        that: >-
+          ((audit_rule_after.stdout | from_json)[audit_rule_case.role].control
+          | int) % 16384 // 8192 == audit_rule_case.protected | int
+      when: audit_rule_case.protected is defined
+      no_log: true
+
+    - name: Verify explicitly expected stored public rules
+      ansible.builtin.assert:
+        that: >-
+          audit_rule_result.current_audit_rules == audit_rule_case.public_rules
+      when: audit_rule_case.public_rules is defined
+      no_log: true
+
+    - name: Mark completed validation
+      ansible.builtin.set_fact:
+        audit_rule_validated: true
+      no_log: true
+  always:
+    - name: Retain the case even when observation or validation fails
+      ansible.builtin.set_fact:
+        audit_rule_results: '{{ audit_rule_results + [audit_rule_record] }}'
+      no_log: true
+
+    - name: Save private case evidence
+      ansible.builtin.copy:
+        content: '{{ audit_rule_capture | to_nice_json }}'
+        dest: '{{ audit_rule_capture_file.path }}'
+        mode: '0600'
+      delegate_to: localhost
+      vars: *audit_rule_local
+      changed_when: false
+      no_log: true

@@ -1,0 +1,14 @@
+---
+- name: Exercise inheritance transitions and repeated requests
+  ansible.builtin.include_tasks: win_acl_inheritance_case.yml
+  # Identical loop items preserve ordering across hosts with different paths.
+  loop: '{{ range(acl_inheritance_cases | length) | list }}'
+  loop_control:
+    loop_var: acl_inheritance_case_index
+    label: '{{ acl_inheritance_cases[acl_inheritance_case_index].name }}'
+  vars:
+    acl_inheritance_case: >-
+      {{ acl_inheritance_cases[acl_inheritance_case_index] }}
+    acl_inheritance_kind: >-
+      {{ "registry" if acl_inheritance_target == "key" else "filesystem" }}
+    acl_inheritance_path: '{{ acl_inheritance_paths[acl_inheritance_target] }}'

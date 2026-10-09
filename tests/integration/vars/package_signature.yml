@@ -1,0 +1,76 @@
+---
+package_compare: false
+package_signature_product: '{48C49ACE-90CF-4161-9C6E-9162115A54DD}'
+package_signature_controller_source: '{{ playbook_dir }}/../../tmp'
+package_signature_selected_cases: >-
+  {{ package_signature_case_indices |
+  default(range(package_signature_cases | length) | list) |
+  map('extract', package_signature_cases) | list }}
+package_signature_cases:
+  - name: Unsigned MSI is rejected before installation
+    params:
+      path: '{{ package_signature_workspace.path }}\patch.msi'
+      verify_signature: true
+    initial: absent
+    failed: true
+    expected: absent
+  - name: Unsigned MSI preview skips signature policy
+    params:
+      path: '{{ package_signature_workspace.path }}\patch.msi'
+      verify_signature: true
+    initial: absent
+    check: true
+    changed: true
+    expected: absent
+  - name: Invalid unsigned executable has the complete signature failure
+    params:
+      path: '{{ package_signature_workspace.path }}\unsigned.exe'
+      verify_signature: true
+    initial: absent
+    failed: true
+    expected: absent
+  - name: Signed owned command executable verifies and executes
+    params:
+      path: '{{ package_signature_workspace.path }}\signed cmd.exe'
+      arguments: /c exit 0
+      verify_signature: true
+    initial: absent
+    changed: true
+    expected: absent
+  - name: Signed owned command preview executes nothing
+    params:
+      path: '{{ package_signature_workspace.path }}\signed cmd.exe'
+      arguments: /c exit 0
+      verify_signature: true
+    initial: absent
+    check: true
+    changed: true
+    expected: absent
+  - name: Installed MSI skips unsigned signature verification
+    params:
+      path: '{{ package_signature_workspace.path }}\patch.msi'
+      verify_signature: true
+    initial: base
+    expected: base
+  - name: Installed MSI preview skips unsigned signature verification
+    params:
+      path: '{{ package_signature_workspace.path }}\patch.msi'
+      verify_signature: true
+    initial: base
+    check: true
+    expected: base
+  - name: Disabled signature policy permits owned MSI installation
+    params:
+      path: '{{ package_signature_workspace.path }}\patch.msi'
+      verify_signature: false
+    initial: absent
+    changed: true
+    expected: base
+  - name: Altered signed executable is rejected without execution
+    params:
+      path: '{{ package_signature_workspace.path }}\altered cmd.exe'
+      arguments: /c exit 0
+      verify_signature: true
+    initial: absent
+    failed: true
+    expected: absent

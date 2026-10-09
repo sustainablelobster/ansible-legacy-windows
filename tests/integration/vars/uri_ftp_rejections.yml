@@ -1,0 +1,26 @@
+---
+# SPDX-License-Identifier: GPL-3.0-or-later
+uri_ftp_rejection_cases:
+  - name: size_rejected
+    failed: true
+    params: {url_method: SIZE, status_code: [213], return_content: true}
+  - name: size_accepted_error
+    params: {url_method: SIZE, status_code: [550], return_content: true}
+  - name: missing_rejected
+    failed: true
+    params:
+      url: ftp://127.0.0.1:2121/missing.bin
+      status_code: [226]
+      return_content: true
+  - name: missing_accepted_error
+    params:
+      url: ftp://127.0.0.1:2121/missing.bin
+      status_code: [550]
+      return_content: true
+  - name: login_rejected
+    failed: true
+    params:
+      url_username: fixture
+      url_password: incorrect
+      status_code: [226]
+      return_content: true

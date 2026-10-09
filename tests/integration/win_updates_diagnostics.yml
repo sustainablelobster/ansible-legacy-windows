@@ -1,0 +1,300 @@
+---
+# Copyright 2026 Joe Lustri
+# SPDX-License-Identifier: GPL-3.0-or-later
+- name: Verify native update diagnostics and safe provider failure recovery
+  hosts: legacy_windows
+  gather_facts: false
+  vars:
+    updates_diagnostics_failure: true
+    updates_diagnostics_async: false
+    updates_diagnostics_force_cleanup_failure: false
+    updates_diagnostics_helper_root: >-
+      {{ lookup('env', 'ANSIBLE_COLLECTIONS_PATH') +
+         '/ansible_collections/sustainablelobster/legacy_windows' +
+         '/plugins/module_utils' }}
+    updates_diagnostics_staging: >-
+      import glob,json,os,tempfile;print(json.dumps(sorted(glob.glob(
+      os.path.join(tempfile.gettempdir(),'ansible-tmp-*'))+glob.glob(
+      os.path.join(tempfile.gettempdir(),'legacy-windows-updates-*'))+glob.glob(
+      os.path.join(tempfile.gettempdir(),'legacy-windows-async-*')))))
+  tasks:
+    - name: Observe original staging and update workers independently
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "{{ updates_diagnostics_staging }}""
+      register: updates_diagnostics_before
+      changed_when: false
+
+    - name: Allocate a private diagnostic capture
+      ansible.builtin.tempfile:
+        path: '{{ playbook_dir }}/../../tmp/codex/evidence'
+        state: file
+        prefix: 'updates-diagnostics-{{ inventory_hostname }}-'
+        suffix: .json
+      register: updates_diagnostics_capture
+      delegate_to: localhost
+      vars: &local
+        ansible_connection: local
+        ansible_shell_type: sh
+        ansible_python_interpreter: '{{ ansible_playbook_python }}'
+      changed_when: false
+
+    - name: Allocate an owned target workspace
+      sustainablelobster.legacy_windows.win_tempfile:
+        state: directory
+        prefix: legacy-windows-updates-diagnostics-
+      register: updates_diagnostics_workspace
+
+    - name: Exercise real native lookup and a bounded WUA search failure
+      block:
+        - name: Copy the immutable installed native helper closure
+          sustainablelobster.legacy_windows.win_copy:
+            src: '{{ updates_diagnostics_helper_root }}/{{ item }}'
+            dest: '{{ updates_diagnostics_workspace.path }}\{{ item }}'
+          loop:
+            - legacy_windows_wmi.py
+            - legacy_windows_updates_native.py
+
+        - name: Copy the minimum-runtime observer
+          sustainablelobster.legacy_windows.win_copy:
+            src: '{{ playbook_dir }}/fixtures/updates_diagnostics.py'
+            dest: '{{ updates_diagnostics_workspace.path }}\observe.py'
+
+        - name: Read real Windows descriptions without WUA operations
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - '{{ updates_diagnostics_workspace.path }}\observe.py'
+          register: updates_diagnostics_observation
+          changed_when: false
+
+        - name: Require actual floor execution signed equivalence and fallback
+          vars:
+            observed: '{{ updates_diagnostics_observation.stdout | from_json }}'
+          ansible.builtin.assert:
+            that:
+              - observed.python == [3, 4, 4]
+              - observed.messages['2147942405'] is string
+              - observed.messages['2147942405'] | length > 0
+              - >-
+                observed.messages['2147942405'] ==
+                observed.messages['-2147024891']
+              - observed.messages['2147943458'] is string
+              - observed.messages['3735928559'] is none
+
+        - name: Preserve original WUA service configuration and runtime
+          when: updates_diagnostics_failure | bool
+          sustainablelobster.legacy_windows.win_service_info:
+            name: wuauserv
+          register: updates_diagnostics_service_before
+          no_log: true
+
+        - name: Require a readable recoverable service baseline before writes
+          when: updates_diagnostics_failure | bool
+          ansible.builtin.assert:
+            that:
+              - updates_diagnostics_service_before.services | length == 1
+              - >-
+                updates_diagnostics_service_before.services[0].start_mode in
+                ['auto', 'delayed', 'manual', 'disabled']
+              - >-
+                updates_diagnostics_service_before.services[0].state in
+                ['started', 'stopped']
+
+        - name: Disable only WUA so a search fails before catalog access
+          when: updates_diagnostics_failure | bool
+          sustainablelobster.legacy_windows.win_service:
+            name: wuauserv
+            start_mode: disabled
+            state: stopped
+          register: updates_diagnostics_service_change
+
+        - name: Capture the genuine synchronous public WUA provider failure
+          when:
+            - updates_diagnostics_failure | bool
+            - not updates_diagnostics_async | bool
+          sustainablelobster.legacy_windows.win_updates:
+            state: searched
+            server_selection: managed_server
+            category_names: ['*']
+            reject_list: ['.*']
+          register: updates_diagnostics_result
+          ignore_errors: true
+          no_log: true
+
+        - name: Launch the genuine async WUA provider failure
+          when:
+            - updates_diagnostics_failure | bool
+            - updates_diagnostics_async | bool
+          sustainablelobster.legacy_windows.win_updates:
+            state: searched
+            server_selection: managed_server
+            category_names: ['*']
+            reject_list: ['.*']
+          async: 60
+          poll: 0
+          register: updates_diagnostics_job
+          no_log: true
+
+        - name: Close the launching connection before status retrieval
+          when:
+            - updates_diagnostics_failure | bool
+            - updates_diagnostics_async | bool
+          ansible.builtin.meta: reset_connection
+
+        - name: Retrieve the complete failed async result after reconnecting
+          when:
+            - updates_diagnostics_failure | bool
+            - updates_diagnostics_async | bool
+          sustainablelobster.legacy_windows.async_status:
+            jid: '{{ updates_diagnostics_job.ansible_job_id }}'
+          register: updates_diagnostics_async_result
+          until: updates_diagnostics_async_result.finished
+          retries: 30
+          delay: 1
+          ignore_errors: true
+          no_log: true
+
+        - name: Select the asynchronous public result for the same assertions
+          when:
+            - updates_diagnostics_failure | bool
+            - updates_diagnostics_async | bool
+          ansible.builtin.set_fact:
+            updates_diagnostics_result: '{{ updates_diagnostics_async_result }}'
+          no_log: true
+
+        - name: Require the stable code and actual target description in output
+          when: updates_diagnostics_failure | bool
+          vars:
+            observed: '{{ updates_diagnostics_observation.stdout | from_json }}'
+          ansible.builtin.assert:
+            that:
+              - updates_diagnostics_result.failed
+              - not updates_diagnostics_result.changed
+              - updates_diagnostics_result.updates == {}
+              - >-
+                not updates_diagnostics_async | bool or
+                (updates_diagnostics_result.hresult == -2147023838 and
+                 updates_diagnostics_result.finished == 1)
+              - >-
+                'Windows Update HRESULT 0x80070422' in
+                updates_diagnostics_result.msg
+              - >-
+                observed.messages['2147943458'] in
+                updates_diagnostics_result.msg
+          no_log: true
+      always:
+        - name: Clean async results without making baseline recovery conditional
+          block:
+            - name: Remove the exact owned async result cache
+              when:
+                - updates_diagnostics_job.ansible_job_id is defined
+              sustainablelobster.legacy_windows.async_status:
+                jid: '{{ updates_diagnostics_job.ansible_job_id }}'
+                mode: cleanup
+              register: updates_diagnostics_job_cleanup
+
+            - name: Independently require async result cache absence
+              when:
+                - updates_diagnostics_job.results_file is defined
+              sustainablelobster.legacy_windows.win_stat:
+                path: '{{ updates_diagnostics_job.results_file }}'
+              register: updates_diagnostics_cache_after
+              failed_when: updates_diagnostics_cache_after.stat.exists
+
+            - name: Exercise recovery after an injected cache-cleanup failure
+              when:
+                - updates_diagnostics_async | bool
+                - updates_diagnostics_force_cleanup_failure | bool
+              ansible.builtin.fail:
+                msg: Injected diagnostic cache-cleanup failure
+          always:
+            - name: Restore WUA independently of cache-cleanup success
+              block:
+                - name: Restore original WUA mode and state
+                  when:
+                    - updates_diagnostics_service_change is defined
+                    - updates_diagnostics_service_change is not skipped
+                  vars:
+                    original_service: >-
+                      {{ updates_diagnostics_service_before.services[0] }}
+                  sustainablelobster.legacy_windows.win_service:
+                    name: wuauserv
+                    start_mode: '{{ original_service.start_mode }}'
+                    state: '{{ original_service.state }}'
+                  register: updates_diagnostics_service_restore
+
+                - name: Require restored WUA configuration and state
+                  when:
+                    - updates_diagnostics_service_change is defined
+                    - updates_diagnostics_service_change is not skipped
+                  sustainablelobster.legacy_windows.win_service_info:
+                    name: wuauserv
+                  register: updates_diagnostics_service_after
+                  failed_when: >-
+                    updates_diagnostics_service_after.services[0].start_mode !=
+                    updates_diagnostics_service_before.services[0].start_mode or
+                    updates_diagnostics_service_after.services[0].state !=
+                    updates_diagnostics_service_before.services[0].state
+                  no_log: true
+              always:
+                - name: Clean owned observations while always retaining evidence
+                  block:
+                    - name: Remove only the owned observer and copied helpers
+                      sustainablelobster.legacy_windows.win_file:
+                        path: '{{ updates_diagnostics_workspace.path }}'
+                        state: absent
+
+                    - name: Require owned target workspace absence
+                      sustainablelobster.legacy_windows.win_stat:
+                        path: '{{ updates_diagnostics_workspace.path }}'
+                      register: updates_diagnostics_workspace_after
+                      failed_when: >-
+                        updates_diagnostics_workspace_after.stat.exists
+
+                    - name: Observe final staging and native worker closure
+                      ansible.builtin.raw: >-
+                        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+                        "{{ updates_diagnostics_staging }}""
+                      register: updates_diagnostics_after
+                      changed_when: false
+
+                    - name: Require unchanged staging and worker-directory sets
+                      ansible.builtin.assert:
+                        that:
+                          - >-
+                            (updates_diagnostics_before.stdout | from_json) ==
+                            (updates_diagnostics_after.stdout | from_json)
+                  always:
+                    - name: Preserve diagnostic and recovery evidence
+                      ansible.builtin.copy:
+                        dest: '{{ updates_diagnostics_capture.path }}'
+                        mode: '0600'
+                        content: >-
+                          {{ {
+                          'observation': updates_diagnostics_observation |
+                            default(none),
+                          'result': updates_diagnostics_result | default(none),
+                          'async_job': updates_diagnostics_job | default(none),
+                          'async_cleanup': updates_diagnostics_job_cleanup |
+                            default(none),
+                          'async_cache_after': updates_diagnostics_cache_after |
+                            default(none),
+                          'service_before': updates_diagnostics_service_before |
+                            default(none),
+                          'service_after': updates_diagnostics_service_after |
+                            default(none),
+                          'workspace': updates_diagnostics_workspace,
+                          'workspace_after':
+                            updates_diagnostics_workspace_after |
+                            default(none),
+                          'staging_before': updates_diagnostics_before,
+                          'staging_after': updates_diagnostics_after |
+                            default(none)} | to_nice_json }}
+                      delegate_to: localhost
+                      vars: *local
+                      changed_when: false
+                      no_log: true
+
+                    - name: Close the owned diagnostic connection
+                      ansible.builtin.meta: reset_connection

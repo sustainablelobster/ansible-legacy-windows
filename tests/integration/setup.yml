@@ -1,0 +1,159 @@
+---
+- name: Verify native setup subsets and custom facts with protected recovery
+  hosts: legacy_windows
+  gather_facts: false
+  vars_files:
+    - vars/setup.yml
+  tasks:
+    - name: Require actual Python 3.4.4 and capture original global staging
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import glob,json,os,sys,tempfile;
+        assert sys.version_info[:3] == (3,4,4);
+        print(json.dumps(sorted(glob.glob(os.path.join(tempfile.gettempdir(),
+        'ansible-tmp-*')))))""
+      register: setup_staging_before
+      changed_when: false
+
+    - name: Allocate a unique private evidence capture before target writes
+      ansible.builtin.tempfile:
+        state: file
+        path: '{{ playbook_dir }}/../../tmp'
+        prefix: 'setup-{{ inventory_hostname }}-'
+        suffix: .json
+      register: setup_capture
+      delegate_to: localhost
+
+    - name: Exercise declared public facts under journaled ownership
+      block:
+        - name: Allocate an isolated custom-facts workspace
+          sustainablelobster.legacy_windows.win_tempfile: # noqa: args[module]
+            state: directory
+            prefix: legacy-windows-setup-
+          register: setup_workspace
+
+        - name: Journal protected configuration before preparing custom inputs
+          sustainablelobster.legacy_windows.win_command: # noqa: args[module]
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - '-'
+              - '{{ setup_workspace.path }}'
+              - prepare
+            stdin: '{{ setup_fixture }}'
+          register: setup_preparation
+          changed_when: true
+          no_log: true
+
+        - name: Exercise each declared complete public request
+          ansible.builtin.include_tasks: tasks/setup_case.yml
+          loop: '{{ setup_cases[setup_case_start | default(0) | int :] }}'
+          loop_control:
+            loop_var: setup_case
+            label: '{{ setup_case.name }}'
+          when: >-
+            not setup_case.script | default(false) or setup_script_facts | bool
+
+        - name: Verify complete dynamic facts against independent native bounds
+          ansible.builtin.include_tasks: tasks/setup_dynamic.yml
+          when: setup_dynamic | default(false) | bool
+      always:
+        - name: Require exact protected state and journal-owned input names
+          sustainablelobster.legacy_windows.win_command: # noqa: args[module]
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - '-'
+              - '{{ setup_workspace.path }}'
+              - cleanup
+            stdin: '{{ setup_fixture }}'
+          register: setup_recovery
+          changed_when: false
+          failed_when: false
+          no_log: true
+          when: setup_workspace.path is defined
+
+        - name: Preserve original failure and complete recovery observations
+          ansible.builtin.copy:
+            dest: '{{ setup_capture.path }}'
+            mode: '0600'
+            content: >-
+              {{ {'results': setup_results | default([]),
+                  'preparation': setup_preparation | default({}),
+                  'workspace': setup_workspace.path | default(none),
+                  'recovery': setup_recovery | default({}),
+                  'interrupted_native': setup_native | default({}),
+                  'interrupted_original': setup_original | default({}),
+                  'interrupted_parameters':
+                      setup_case_parameters | default({}),
+                  'interrupted_before_native':
+                      setup_before_native | default({}),
+                  'interrupted_after_native':
+                      setup_after_native | default({}),
+                  'interrupted_before_original':
+                      setup_before_original | default({}),
+                  'interrupted_after_original':
+                      setup_after_original | default({}),
+                  'staging_before': setup_staging_before} | to_nice_json }}
+          delegate_to: localhost
+          no_log: true
+
+        - name: Require literal protected recovery before discarding the journal
+          ansible.builtin.assert:
+            that:
+              - setup_recovery.rc == 0
+              - (setup_recovery.stdout | from_json).restored
+              - >-
+                (setup_recovery.stdout | from_json).before ==
+                (setup_recovery.stdout | from_json).after
+          when: setup_workspace.path is defined
+          no_log: true
+
+        - name: Remove only the verified uniquely allocated workspace
+          sustainablelobster.legacy_windows.win_file: # noqa: args[module]
+            path: '{{ setup_workspace.path }}'
+            state: absent
+          when: setup_workspace.path is defined
+
+        - name: Require owned workspace absence and observe final staging
+          ansible.builtin.raw: >-
+            cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+            "import glob,json,os,sys,tempfile;
+            assert not os.path.exists(sys.argv[1]);
+            print(json.dumps(sorted(glob.glob(os.path.join(tempfile.gettempdir(),
+            'ansible-tmp-*')))))" "{{ setup_workspace.path }}""
+          register: setup_staging_after
+          changed_when: false
+          when: setup_workspace.path is defined
+
+        - name: Require literal global staging recovery
+          ansible.builtin.assert:
+            that: >-
+              (setup_staging_before.stdout | from_json) ==
+              (setup_staging_after.stdout | from_json)
+          when: setup_workspace.path is defined
+
+        - name: Preserve complete final verified cleanup separately from results
+          ansible.builtin.copy:
+            dest: '{{ setup_capture.path }}'
+            mode: '0600'
+            content: >-
+              {{ {'results': setup_results | default([]),
+                  'preparation': setup_preparation | default({}),
+                  'workspace': setup_workspace.path | default(none),
+                  'recovery': setup_recovery | default({}),
+                  'interrupted_native': setup_native | default({}),
+                  'interrupted_original': setup_original | default({}),
+                  'interrupted_parameters':
+                      setup_case_parameters | default({}),
+                  'interrupted_before_native':
+                      setup_before_native | default({}),
+                  'interrupted_after_native':
+                      setup_after_native | default({}),
+                  'interrupted_before_original':
+                      setup_before_original | default({}),
+                  'interrupted_after_original':
+                      setup_after_original | default({}),
+                  'staging_before': setup_staging_before,
+                  'staging_after': setup_staging_after | default({}),
+                  'workspace_absent': true} | to_nice_json }}
+          delegate_to: localhost
+          no_log: true

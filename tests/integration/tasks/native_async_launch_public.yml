@@ -1,0 +1,103 @@
+---
+# Copyright 2026 Joe Lustri
+# SPDX-License-Identifier: GPL-3.0-or-later
+- name: Launch with a Unicode environment and explicit directory
+  sustainablelobster.legacy_windows.win_command:
+    argv:
+      - '{{ ansible_python_interpreter }}'
+      - '-'
+      - >-
+        {{ native_async_launch_workspace.path + '\\' +
+        native_async_launch_case.name + '.counter' }}
+    stdin: '{{ native_async_launch_program }}'
+    chdir: '{{ native_async_launch_workspace.path }}'
+  environment:
+    ASYNC_LAUNCH_MARKER: 'café λ'
+  async: 30
+  poll: '{{ native_async_launch_case.poll }}'
+  become: '{{ native_async_launch_case.runas }}'
+  become_method: ansible.builtin.runas
+  become_user: '{{ native_async_launch_case.user | default(ansible_user) }}'
+  vars:
+    ansible_become_password: >-
+      {{ native_async_launch_case.password | default(ansible_password) }}
+    ansible_remote_tmp: >-
+      {{ native_async_launch_workspace.path }}\public-staging
+    ansible_async_dir: '{{ native_async_launch_workspace.path }}\public-cache'
+  register: native_async_launch_public_job
+  no_log: true
+
+- name: Close the launching connection before manual polling
+  ansible.builtin.meta: reset_connection
+  when: native_async_launch_case.poll == 0
+
+- name: Retrieve the complete manually polled job after reconnecting
+  sustainablelobster.legacy_windows.async_status:
+    jid: '{{ native_async_launch_public_job.ansible_job_id }}'
+  become: '{{ native_async_launch_case.runas }}'
+  become_method: ansible.builtin.runas
+  become_user: '{{ native_async_launch_case.user | default(ansible_user) }}'
+  vars:
+    ansible_become_password: >-
+      {{ native_async_launch_case.password | default(ansible_password) }}
+    ansible_async_dir: '{{ native_async_launch_workspace.path }}\public-cache'
+  register: native_async_launch_public_status
+  until: native_async_launch_public_status.finished
+  retries: 30
+  delay: 1
+  when: native_async_launch_case.poll == 0
+  no_log: true
+
+- name: Select the actual completed public result
+  ansible.builtin.set_fact:
+    native_async_launch_public_result: >-
+      {{ native_async_launch_public_status if native_async_launch_case.poll == 0
+      else native_async_launch_public_job }}
+  no_log: true
+
+- name: Require the effective account environment directory and success
+  ansible.builtin.assert:
+    that:
+      - native_async_launch_public_result.started
+      - native_async_launch_public_result.finished
+      - native_async_launch_public_result.rc == 0
+      - >-
+        (native_async_launch_public_result.stdout | from_json).marker ==
+        'café λ'
+      - >-
+        (native_async_launch_public_result.stdout | from_json).cwd ==
+        native_async_launch_workspace.path
+      - >-
+        (native_async_launch_public_result.stdout | from_json).user | lower ==
+        (native_async_launch_case.account |
+        default(native_async_launch_identity.account.account_name)) | lower
+  no_log: true
+
+- name: Read the exact once-only payload counter
+  sustainablelobster.legacy_windows.slurp:
+    src: >-
+      {{ native_async_launch_workspace.path + '\\' +
+      native_async_launch_case.name + '.counter' }}
+  register: native_async_launch_public_counter
+
+- name: Require one payload execution
+  ansible.builtin.assert:
+    that: native_async_launch_public_counter.content | b64decode == 'once\n'
+
+- name: Remove this completed manual job cache
+  sustainablelobster.legacy_windows.async_status:
+    jid: '{{ native_async_launch_public_job.ansible_job_id }}'
+    mode: cleanup
+  vars:
+    ansible_async_dir: '{{ native_async_launch_workspace.path }}\public-cache'
+  when: native_async_launch_case.poll == 0
+
+- name: Retain the completed public job result
+  ansible.builtin.set_fact:
+    native_async_launch_results: >-
+      {{ native_async_launch_results +
+      [{'case': native_async_launch_case,
+        'launch': native_async_launch_public_job,
+        'result': native_async_launch_public_result,
+        'counter': native_async_launch_public_counter}] }}
+  no_log: true

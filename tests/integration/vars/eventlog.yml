@@ -1,0 +1,316 @@
+---
+eventlog_cases:
+  - name: Reject creating a missing log without sources
+    params: { name: "{{ eventlog_names.log }}" }
+    changed: false
+    failed: true
+    message: You must specify one or more sources when creating a log for the
+      first time
+  - name: Reject clearing a missing log
+    params: { name: "{{ eventlog_names.log }}", state: clear }
+    changed: false
+    failed: true
+    message: "Cannot clear log {{ eventlog_names.log }} as it does not exist"
+  - name: Predict creation and return actual absence
+    params: &create
+      name: "{{ eventlog_names.log }}"
+      sources:
+        - "{{ eventlog_names.sources[0] }}"
+        - "{{ eventlog_names.sources[1] }}"
+    check: true
+    changed: true
+    expected: { exists: false }
+  - name: Create the log and two sources
+    params: *create
+    changed: true
+    sources_changed:
+      - "{{ eventlog_names.sources[0] }}"
+      - "{{ eventlog_names.sources[1] }}"
+    expected: { exists: true, entries: 0 }
+  - name: Repeat creation without changes
+    params: *create
+    changed: false
+  - name: Predict replacement with all three resources
+    params: &resources
+      name: "{{ eventlog_names.log }}"
+      sources: ["{{ eventlog_names.sources[0] }}"]
+      category_file: "{{ eventlog_workspace.path }}\\Categories-λ.dll"
+      message_file: "{{ eventlog_workspace.path }}\\Messages-λ.dll"
+      parameter_file: "{{ eventlog_workspace.path }}\\Parameters-λ.dll"
+    check: true
+    changed: true
+  - name: Replace the source with all three resource paths
+    params: *resources
+    changed: true
+    sources_changed: ["{{ eventlog_names.sources[0] }}"]
+    resources:
+      CategoryMessageFile: "{{ eventlog_workspace.path }}\\Categories-λ.dll"
+      EventMessageFile: "{{ eventlog_workspace.path }}\\Messages-λ.dll"
+      ParameterMessageFile: "{{ eventlog_workspace.path }}\\Parameters-λ.dll"
+      CategoryCount: 0
+  - name: Repeat resource replacement without changes
+    params: *resources
+    changed: false
+  - name: Replace one resource and reset omitted resource values
+    params: &message_only
+      name: "{{ eventlog_names.log }}"
+      sources: ["{{ eventlog_names.sources[0] }}"]
+      message_file: "{{ eventlog_workspace.path }}\\Replacement.dll"
+    changed: true
+    sources_changed: ["{{ eventlog_names.sources[0] }}"]
+    resources:
+      CategoryMessageFile:
+      CategoryCount:
+      ParameterMessageFile:
+      EventMessageFile: "{{ eventlog_workspace.path }}\\Replacement.dll"
+  - name: Repeat one-resource request without changes
+    params: *message_only
+    changed: false
+  - name: Predict size and retention changes
+    params: &limits
+      name: "{{ eventlog_names.log }}"
+      maximum_size: 128KB
+      overflow_action: OverwriteOlder
+      retention_days: 15
+    check: true
+    changed: true
+  - name: Configure size and retention
+    params: *limits
+    changed: true
+    expected:
+      maximum_size_kb: 128
+      overflow_action: OverwriteOlder
+      retention_days: 15
+  - name: Repeat limits without changes
+    params: *limits
+    changed: false
+  - name: Reject malformed maximum size
+    params: { name: "{{ eventlog_names.log }}", maximum_size: 256 MB }
+    changed: false
+    failed: true
+    message: Maximum size 256 MB is not properly specified
+  - name: Reject maximum size at the exclusive upper bound
+    params: { name: "{{ eventlog_names.log }}", maximum_size: 4GB }
+    changed: false
+    failed: true
+    message: Maximum size must be between 64KB and 4GB
+  - name: Reject indivisible maximum size
+    params: { name: "{{ eventlog_names.log }}", maximum_size: 129KB }
+    changed: false
+    failed: true
+    message: Maximum size must be divisible by 64KB
+  - name: Retain earlier source creation after maximum-size validation fails
+    params:
+      name: "{{ eventlog_names.log }}"
+      sources: ["{{ eventlog_names.sources[2] }}"]
+      maximum_size: 129KB
+    changed: true
+    failed: true
+    sources_changed: ["{{ eventlog_names.sources[2] }}"]
+    message: Maximum size must be divisible by 64KB
+  - name: Remove the source created before failure
+    params:
+      name: "{{ eventlog_names.log }}"
+      sources: ["{{ eventlog_names.sources[2] }}"]
+      state: absent
+    changed: true
+    sources_changed: ["{{ eventlog_names.sources[2] }}"]
+  - name: Reject modifying the default source
+    params:
+      name: "{{ eventlog_names.log }}"
+      sources: ["{{ eventlog_names.log }}"]
+      message_file: "C:\\not-required.dll"
+    changed: false
+    failed: true
+    message: >-
+      Cannot modify default source {{ eventlog_names.log }}
+      of log {{ eventlog_names.log }} - you must remove the log
+  - name: Reject removing the default source
+    params:
+      name: "{{ eventlog_names.log }}"
+      sources: ["{{ eventlog_names.log }}"]
+      state: absent
+    changed: false
+    failed: true
+    message: >-
+      Cannot remove default source {{ eventlog_names.log }}
+      from log {{ eventlog_names.log }} - you must remove the log
+  - name: Reject a globally registered source for a second absent log
+    params:
+      name: "{{ eventlog_names.missing }}"
+      sources: ["{{ eventlog_names.sources[0] }}"]
+    changed: false
+    failed: true
+    message: >-
+      Source {{ eventlog_names.sources[0] }}
+      already exists and cannot be created
+  - name: Reject a source registered in another log
+    params: { name: "{{ eventlog_names.log }}", sources: [Application] }
+    changed: false
+    failed: true
+    message: >-
+      Source Application does not belong to log {{ eventlog_names.log }}
+      and cannot be modified
+  - name: Keep all entries without overwriting
+    params: &keep
+      name: "{{ eventlog_names.log }}"
+      overflow_action: DoNotOverwrite
+    changed: true
+    expected: { overflow_action: DoNotOverwrite, retention_days: -1 }
+  - name: Repeat the no-overwrite policy
+    params: *keep
+    changed: false
+  - name: Reject retention with the no-overwrite policy
+    params: { name: "{{ eventlog_names.log }}", retention_days: 7 }
+    changed: false
+    failed: true
+    message: Retention days is valid only if the overflow action is
+      "OverwriteOlder". Please change  and try again.
+  - name: Select overwrite-as-needed
+    params:
+      name: "{{ eventlog_names.log }}"
+      overflow_action: OverwriteAsNeeded
+    changed: true
+    expected: { overflow_action: OverwriteAsNeeded, retention_days: 0 }
+  - name: Restore an older-entry retention policy
+    params:
+      name: "{{ eventlog_names.log }}"
+      overflow_action: OverwriteOlder
+      retention_days: 7
+    changed: true
+    expected: { overflow_action: OverwriteOlder, retention_days: 7 }
+  - name: Ignore a zero retention request
+    params: { name: "{{ eventlog_names.log }}", retention_days: 0 }
+    changed: false
+  - name: Observe one native event and predict clearing
+    write: true
+    params: &clear
+      name: "{{ eventlog_names.log }}"
+      state: clear
+    check: true
+    changed: true
+    expected: { entries: 1 }
+  - name: Clear the owned log
+    params: *clear
+    changed: true
+    expected: { entries: 0 }
+  - name: Repeat clearing an empty log
+    params: *clear
+    changed: false
+    expected: { entries: 0 }
+  - name: Predict source removal
+    params: &remove_source
+      name: "{{ eventlog_names.log }}"
+      sources: ["{{ eventlog_names.sources[0] }}"]
+      state: absent
+    check: true
+    changed: true
+  - name: Remove one source
+    params: *remove_source
+    changed: true
+    sources_changed: ["{{ eventlog_names.sources[0] }}"]
+  - name: Repeat source removal without changes
+    params: *remove_source
+    changed: false
+  - name: Predict whole-log removal
+    params: &remove
+      name: "{{ eventlog_names.log }}"
+      state: absent
+    check: true
+    changed: true
+    expected: { exists: true }
+  - name: Remove the log and remaining sources
+    params: *remove
+    changed: true
+    sources_changed:
+      - "{{ eventlog_names.log }}"
+      - "{{ eventlog_names.sources[1] }}"
+    expected: { exists: false }
+  - name: Repeat whole-log removal without changes
+    params: *remove
+    changed: false
+    expected: { exists: false }
+
+eventlog_name_cases:
+  - name: Treat a built-in nested source path as absent
+    params: { name: 'Application\Application', state: absent }
+    protect_builtin: true
+    changed: false
+    expected: { exists: false }
+  - name: Reject clearing a built-in nested source path
+    params: { name: 'Application\Application', state: clear }
+    protect_builtin: true
+    changed: false
+    failed: true
+    message: 'Cannot clear log Application\Application as it does not exist'
+  - name: Reject creating a log with the Application file prefix
+    params:
+      name: 'AppEvent{{ eventlog_names.log }}'
+      sources: ['{{ eventlog_names.sources[0] }}']
+    protect_builtin: true
+    changed: false
+    failed: true
+    message: invalid for customer log creation.
+  - name: Reject creating a log with the Security file prefix
+    params:
+      name: 'sEcEvEnT{{ eventlog_names.log }}'
+      sources: ['{{ eventlog_names.sources[0] }}']
+    protect_builtin: true
+    changed: false
+    failed: true
+    message: invalid for customer log creation.
+  - name: Reject creating a log with the System file prefix
+    params:
+      name: 'SYSEVENT{{ eventlog_names.log }}'
+      sources: ['{{ eventlog_names.sources[0] }}']
+    protect_builtin: true
+    changed: false
+    failed: true
+    message: invalid for customer log creation.
+  - name: Reject a control character in a new log name
+    params:
+      name: "{{ eventlog_names.log }}\u007f"
+      sources: ['{{ eventlog_names.sources[0] }}']
+    protect_builtin: true
+    changed: false
+    failed: true
+    message: Event log names must consist of printable characters
+  - name: Predict creation of a log with ordinary spaces
+    params: &spaced_log
+      name: '{{ eventlog_names.missing }}'
+      sources: ['{{ eventlog_names.missing }}Source']
+    observed_log: missing
+    check: true
+    changed: true
+    expected: { exists: false }
+  - name: Create a log with ordinary spaces
+    params: *spaced_log
+    observed_log: missing
+    changed: true
+    sources_changed: ['{{ eventlog_names.missing }}Source']
+    expected: { exists: true, entries: 0 }
+  - name: Repeat creation of a spaced log without changes
+    params: *spaced_log
+    observed_log: missing
+    changed: false
+  - name: Predict removal of a spaced log
+    params: &remove_spaced_log
+      name: '{{ eventlog_names.missing }}'
+      state: absent
+    observed_log: missing
+    check: true
+    changed: true
+    expected: { exists: true }
+  - name: Remove the spaced log and its sources
+    params: *remove_spaced_log
+    observed_log: missing
+    changed: true
+    sources_changed:
+      - '{{ eventlog_names.missing }}'
+      - '{{ eventlog_names.missing }}Source'
+    expected: { exists: false }
+  - name: Repeat spaced-log removal without changes
+    params: *remove_spaced_log
+    observed_log: missing
+    changed: false
+    expected: { exists: false }

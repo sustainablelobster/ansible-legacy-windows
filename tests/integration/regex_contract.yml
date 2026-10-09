@@ -1,0 +1,234 @@
+---
+# SPDX-License-Identifier: GPL-3.0-or-later
+- name: Verify terminal anchors and explicit unsupported regex failures
+  hosts: legacy_windows
+  gather_facts: false
+  vars:
+    regex_contract_program: >-
+      {{ lookup('file', playbook_dir + '/fixtures/regex_contract.py',
+      rstrip=false) }}
+    regex_contract_staging: >-
+      import glob,json,os,sys,tempfile;assert sys.version_info[:3]==(3,4,4);
+      print(json.dumps(sorted(glob.glob(os.path.join(tempfile.gettempdir(),'ansible-tmp-*')))))
+    regex_contract_wait_cases:
+      - {file: none, pattern: 'done\z', state: present}
+      - {file: lf, pattern: 'done\Z', state: present}
+      - {file: lf, pattern: 'done\z', state: absent}
+      - {file: crlf, pattern: 'done\Z', state: absent}
+      - {file: crlf, pattern: 'done\r\Z', state: present}
+      - {file: double, pattern: 'done\Z', state: absent}
+      - {file: lf, pattern: 'done\Z\n\z', state: present}
+      - {file: more, pattern: '(?m)done\Z', state: absent}
+      - {file: named, pattern: '(?<item>done)\k<item>\Z', state: present}
+    regex_contract_find_cases:
+      - {pattern: '(?i)^done2?[.]txt\z', names: [done.txt, DONE2.txt]}
+      - {pattern: '^DONE2[.]txt\Z', names: [DONE2.txt]}
+      - {pattern: '^\p{L}+[.]txt\z', names: [done.txt, Å.txt]}
+  tasks:
+    - name: Record original staging and require the real minimum runtime
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "{{ regex_contract_staging }}""
+      register: regex_contract_before
+      changed_when: false
+
+    - name: Allocate private evidence before target writes
+      ansible.builtin.tempfile:
+        path: '{{ playbook_dir }}/../../tmp/codex/evidence'
+        prefix: 'regex-contract-{{ inventory_hostname }}-'
+        suffix: .json
+      register: regex_contract_capture
+      delegate_to: localhost
+      vars: &controller
+        ansible_connection: local
+        ansible_shell_type: sh
+        ansible_python_interpreter: '{{ ansible_playbook_python }}'
+      changed_when: false
+
+    - name: Allocate an exclusively owned inert-file workspace
+      sustainablelobster.legacy_windows.win_tempfile:
+        prefix: legacy-windows-regex-contract-
+        state: directory
+      register: regex_contract_workspace
+
+    - name: Exercise public regex requests with mandatory recovery
+      block:
+        - name: Allocate helper directory inside the owned workspace
+          sustainablelobster.legacy_windows.win_file:
+            path: '{{ regex_contract_workspace.path }}\helpers'
+            state: directory
+
+        - name: Stage real selection helpers without contacting WUA
+          sustainablelobster.legacy_windows.win_copy:
+            src: '{{ playbook_dir }}/../../plugins/module_utils/{{ item }}'
+            dest: '{{ regex_contract_workspace.path }}\helpers\{{ item }}'
+          loop:
+            - legacy_windows_regex.py
+            - legacy_windows_regex_categories.py
+            - legacy_windows_updates.py
+            - legacy_windows_updates_native.py
+            - legacy_windows_reboot_request.py
+            - legacy_windows_boot.py
+            - legacy_windows_process.py
+            - legacy_windows_text.py
+            - legacy_windows_wmi.py
+
+        - name: Prepare and journal exact owned bytes
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - '-'
+              - prepare
+              - '{{ regex_contract_workspace.path }}'
+            stdin: '{{ regex_contract_program }}'
+          register: regex_contract_prepare
+          changed_when: false
+
+        - name: Verify content anchors through public Wait requests
+          sustainablelobster.legacy_windows.win_wait_for:
+            path: '{{ regex_contract_workspace.path }}\texts\{{ item.file }}'
+            regex: '{{ item.pattern }}'
+            state: '{{ item.state }}'
+            timeout: 2
+          loop: '{{ regex_contract_wait_cases }}'
+          register: regex_contract_wait
+
+        - name: Verify filename selection in normal and check modes
+          sustainablelobster.legacy_windows.win_find:
+            paths: ['{{ regex_contract_workspace.path }}\names']
+            patterns: ['{{ item.0.pattern }}']
+            use_regex: true
+            case_sensitive: true
+            get_checksum: false
+          check_mode: '{{ item.1 }}'
+          loop: >-
+            {{ regex_contract_find_cases | product([false, true]) | list }}
+          register: regex_contract_find
+
+        - name: Require exact selected filenames and unchanged results
+          ansible.builtin.assert:
+            that:
+              - not item.changed
+              - >-
+                (item.files | map(attribute='filename') | sort | list) ==
+                (item.item.0.names | sort | list)
+          loop: '{{ regex_contract_find.results }}'
+          loop_control:
+            label: '{{ item.item.0.pattern }}'
+
+        - name: Reject positional flags instead of broadening earlier matches
+          sustainablelobster.legacy_windows.win_find:
+            paths: ['{{ regex_contract_workspace.path }}\names']
+            patterns: ['^D(?i)one[.]txt\z']
+            use_regex: true
+            case_sensitive: true
+          register: regex_contract_flags
+          ignore_errors: true
+
+        - name: Retain the actionable unsupported advanced-pattern failure
+          sustainablelobster.legacy_windows.win_wait_for:
+            path: '{{ regex_contract_workspace.path }}\texts\none'
+            regex: '(?<left-right>done)'
+            timeout: 2
+          register: regex_contract_unsupported
+          ignore_errors: true
+
+        - name: Require both explicit failures without reporting success
+          ansible.builtin.assert:
+            that:
+              - regex_contract_flags is failed
+              - "'non-prefix inline options' in regex_contract_flags.msg"
+              - not regex_contract_flags.changed
+              - regex_contract_unsupported is failed
+              - "'balancing group' in regex_contract_unsupported.msg"
+              - not regex_contract_unsupported.changed
+              - >-
+                (regex_contract_wait.results | selectattr('changed') |
+                list) == []
+
+        - name: Exercise actual Update selection helpers
+            with controlled inputs
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - '-'
+              - updates
+              - '{{ regex_contract_workspace.path }}'
+            stdin: '{{ regex_contract_program }}'
+          register: regex_contract_updates
+          changed_when: false
+      always:
+        - name: Verify owned bytes are unchanged before cleanup
+          when: regex_contract_prepare.rc | default(1) == 0
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - '-'
+              - observe
+              - '{{ regex_contract_workspace.path }}'
+              - '{{ (regex_contract_prepare.stdout | from_json).nonce }}'
+            stdin: '{{ regex_contract_program }}'
+          register: regex_contract_observe
+          changed_when: false
+          failed_when: false
+
+        - name: Retain public results and pre-cleanup observations
+          ansible.builtin.copy:
+            content: >-
+              {{ {'prepare': regex_contract_prepare | default(none),
+                  'wait': regex_contract_wait | default(none),
+                  'find': regex_contract_find | default(none),
+                  'flags': regex_contract_flags | default(none),
+                  'unsupported': regex_contract_unsupported | default(none),
+                  'updates_helper': regex_contract_updates | default(none),
+                  'observe': regex_contract_observe | default(none),
+                  'staging_before': regex_contract_before} | to_nice_json }}
+            dest: '{{ regex_contract_capture.path }}'
+            mode: '0600'
+          delegate_to: localhost
+          vars: *controller
+          changed_when: false
+
+        - name: Remove only the exclusively allocated fixture workspace
+          sustainablelobster.legacy_windows.win_file:
+            path: '{{ regex_contract_workspace.path }}'
+            state: absent
+
+        - name: Independently verify workspace absence
+            and original staging
+          ansible.builtin.raw: >-
+            cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+            "import glob,json,os,sys,tempfile;
+            assert not os.path.exists(sys.argv[1]);
+            print(json.dumps(sorted(glob.glob(os.path.join(tempfile.gettempdir(),'ansible-tmp-*')))))"
+            "{{ regex_contract_workspace.path }}""
+          register: regex_contract_after
+          changed_when: false
+
+        - name: Retain recovery evidence before enforcing
+            final assertions
+          ansible.builtin.copy:
+            content: >-
+              {{ {'before': regex_contract_before,
+                  'after': regex_contract_after,
+                  'workspace': regex_contract_workspace,
+                  'workspace_absent': true} | to_nice_json }}
+            dest: '{{ regex_contract_capture.path }}.recovery.json'
+            mode: '0600'
+          delegate_to: localhost
+          vars: *controller
+          changed_when: false
+
+        - name: Require byte preservation and complete staging recovery
+          ansible.builtin.assert:
+            that:
+              - regex_contract_observe.rc == 0
+              - >-
+                (regex_contract_observe.stdout | from_json) ==
+                (regex_contract_prepare.stdout | from_json)
+              - >-
+                (regex_contract_before.stdout | from_json) ==
+                (regex_contract_after.stdout | from_json)
+
+        - name: Close the owned connection after retained recovery
+          ansible.builtin.meta: reset_connection

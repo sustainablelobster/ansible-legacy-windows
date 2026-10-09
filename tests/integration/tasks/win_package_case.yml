@@ -1,0 +1,136 @@
+---
+- name: Establish the owned prerequisite state for native operation
+  sustainablelobster.legacy_windows.win_command:
+    argv: ['{{ ansible_python_interpreter }}', '-',
+           '{{ package_workspace.path }}',
+           prepare, '{{ package_case.initial | default("absent") }}']
+    stdin: '{{ package_program }}'
+  register: package_before
+  changed_when: false
+  no_log: true
+
+- name: Capture native public package behavior
+  block:
+    - name: Request native package behavior  # noqa: args[module]
+      sustainablelobster.legacy_windows.win_package: '{{ package_case.params }}'
+      register: package_native
+      check_mode: '{{ package_case.check | default(false) }}'
+  rescue:
+    - name: Retain native failure without changing its public flag
+      ansible.builtin.debug:
+        msg: Native package result retained.
+
+- name: Capture native complete observable effects
+  sustainablelobster.legacy_windows.win_command:
+    argv: ['{{ ansible_python_interpreter }}', '-',
+           '{{ package_workspace.path }}', observe]
+    stdin: '{{ package_program }}'
+  register: package_after_native
+  changed_when: false
+  no_log: true
+
+- name: Establish the same owned prerequisite for released source
+  when: package_compare | bool
+  sustainablelobster.legacy_windows.win_command:
+    argv: ['{{ ansible_python_interpreter }}', '-',
+           '{{ package_workspace.path }}',
+           prepare, '{{ package_case.initial | default("absent") }}']
+    stdin: '{{ package_program }}'
+  register: package_before_original
+  changed_when: false
+  no_log: true
+
+- name: Capture untouched released public package behavior
+  when: package_compare | bool
+  block:
+    - name: Request original package behavior
+      ansible.windows.win_package: '{{ package_case.params }}'
+      register: package_original
+      check_mode: '{{ package_case.check | default(false) }}'
+      vars:
+        ansible_shell_type: cmd
+        ansible_remote_tmp: '{{ package_workspace.path }}'
+  rescue:
+    - name: Retain original failure without changing its public flag
+      ansible.builtin.debug:
+        msg: Original package result retained.
+
+- name: Capture original complete observable effects
+  when: package_compare | bool
+  sustainablelobster.legacy_windows.win_command:
+    argv: ['{{ ansible_python_interpreter }}', '-',
+           '{{ package_workspace.path }}', observe]
+    stdin: '{{ package_program }}'
+  register: package_after_original
+  changed_when: false
+  no_log: true
+
+- name: Append raw evidence before assertions
+  ansible.builtin.set_fact:
+    package_results: >-
+      {{ package_results + [{'name': package_case.name,
+      'params': package_case.params,
+      'check': package_case.check | default(false),
+      'native': package_native,
+      'original': package_original | default(none), 'before': package_before,
+      'before_original': package_before_original | default(none),
+      'after_native': package_after_native,
+      'after_original': package_after_original | default(none),
+      'validated': false}] }}
+
+- name: Persist raw case results
+  ansible.builtin.copy:
+    content: >-
+      {{ {"results": package_results,
+      "journal": package_journal} | to_nice_json }}
+    dest: '{{ package_capture.path }}'
+    mode: '0600'
+  delegate_to: localhost
+  vars: &controller
+    ansible_connection: local
+    ansible_shell_type: sh
+    ansible_python_interpreter: '{{ ansible_playbook_python }}'
+  changed_when: false
+  no_log: true
+
+- name: Require declared whole public result and installed file effects
+  vars:
+    after: '{{ package_after_native.stdout | from_json }}'
+  ansible.builtin.assert:
+    that:
+      - (package_native is failed) == (package_case.failed | default(false))
+      - package_native.changed == (package_case.changed | default(false))
+      - not package_native.reboot_required | default(false)
+      - >-
+        after.states[package_product_id] ==
+        (5 if package_case.installed | default(false) else -1)
+      - >-
+        after.outputs | length ==
+        (2 if package_case.installed | default(false) else 0)
+
+- name: Compare all released public fields and JSON types
+  when: package_compare | bool
+  vars:
+    native_public: >-
+      {{ package_native | dict2items |
+      rejectattr('key', 'in', ['invocation', 'exception']) | items2dict }}
+    original_public: >-
+      {{ package_original | dict2items |
+      rejectattr('key', 'in', ['invocation', 'exception']) | items2dict }}
+  ansible.builtin.assert:
+    that:
+      - >-
+        (native_public | to_json(sort_keys=true)) ==
+        (original_public | to_json(sort_keys=true))
+      - >-
+        (package_before.stdout | from_json) ==
+        (package_before_original.stdout | from_json)
+      - >-
+        (package_after_native.stdout | from_json) ==
+        (package_after_original.stdout | from_json)
+
+- name: Mark only fully validated case evidence
+  ansible.builtin.set_fact:
+    package_results: >-
+      {{ package_results[:-1] +
+      [package_results[-1] | combine({'validated': true})] }}

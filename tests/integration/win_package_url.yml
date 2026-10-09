@@ -1,0 +1,166 @@
+---
+- name: Verify owned HTTP package lifecycle and literal protected recovery
+  hosts: legacy_windows
+  gather_facts: false
+  vars_files:
+    - vars/package_url.yml
+    - vars/package_url_fixture.yml
+  tasks:
+    - name: Require actual Python 3.4.4 and record original staging
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import glob,json,os,sys,tempfile;assert sys.version_info[:3]==(3,4,4);
+        print(json.dumps(sorted(glob.glob(os.path.join(tempfile.gettempdir(),'ansible-tmp-*')))))""
+      register: package_url_staging_before
+      changed_when: false
+
+    - name: Allocate private raw evidence
+      ansible.builtin.tempfile:
+        state: file
+        path: '{{ playbook_dir }}/../../tmp'
+        prefix: 'package-url-{{ inventory_hostname }}-'
+        suffix: .json
+      register: package_url_capture
+      delegate_to: localhost
+      vars: &controller
+        ansible_connection: local
+        ansible_shell_type: sh
+        ansible_python_interpreter: '{{ ansible_playbook_python }}'
+      changed_when: false
+
+    - name: Initialize URL observations
+      ansible.builtin.set_fact:
+        package_url_results: []
+
+    - name: Exercise owned official sample fixtures with mandatory cleanup
+      block:
+        - name: Allocate owned package URL workspace  # noqa: args[module]
+          sustainablelobster.legacy_windows.win_tempfile:
+            state: directory
+            prefix: legacy-windows-package-url-test-
+          register: package_url_workspace
+
+        - name: Journal absent product and protected state before transfer
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}', '-',
+                   '{{ package_url_workspace.path }}', journal]
+            stdin: '{{ package_url_program }}'
+          register: package_url_journal
+          changed_when: false
+          no_log: true
+
+        - name: Transfer official owned package fixtures  # noqa: args[module]
+          sustainablelobster.legacy_windows.win_copy:
+            src: '{{ package_url_controller_source }}/package-patch.{{ item }}'
+            dest: '{{ package_url_workspace.path }}\patch.{{ item }}'
+          loop: [msi, msp]
+
+        - name: Transfer owned HTTP fixture server  # noqa: args[module]
+          sustainablelobster.legacy_windows.win_copy:
+            src: '{{ playbook_dir }}/fixtures/package_url_server.py'
+            dest: '{{ package_url_workspace.path }}\server.py'
+
+        - name: Verify fixture hashes and native identities before servicing
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}', '-',
+                   '{{ package_url_workspace.path }}', setup]
+            stdin: '{{ package_url_program }}'
+          register: package_url_setup
+          changed_when: false
+          no_log: true
+
+        - name: Exercise maintained URL cases
+          ansible.builtin.include_tasks: tasks/win_package_url_case.yml
+          loop: '{{ package_url_selected_cases }}'
+          loop_control:
+            loop_var: package_url_case
+            label: '{{ package_url_case.name }}'
+      always:
+        - name: Retain complete current raw state before cleanup
+          ansible.builtin.copy:
+            content: >-
+              {{ {'results': package_url_results,
+              'journal': package_url_journal | default(none),
+              'setup': package_url_setup | default(none),
+              'latest_native': package_url_native | default(none),
+              'latest_original': package_url_original | default(none)} |
+              to_nice_json }}
+            dest: '{{ package_url_capture.path }}'
+            mode: '0600'
+          delegate_to: localhost
+          vars: *controller
+          changed_when: false
+          no_log: true
+
+        - name: Remove only owned product and recover protected state
+          when: package_url_workspace.path is defined
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}', '-',
+                   '{{ package_url_workspace.path }}', cleanup]
+            stdin: '{{ package_url_program }}'
+          register: package_url_recovery
+          changed_when: false
+          no_log: true
+
+        - name: Require literal recovery before any resource deletion
+          ansible.builtin.assert:
+            that: [(package_url_recovery.stdout | from_json).restored]
+
+        - name: Re-observe recovery before removing the verified journal
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}', '-',
+                   '{{ package_url_workspace.path }}', finalize]
+            stdin: '{{ package_url_program }}'
+          changed_when: false
+          no_log: true
+
+        - name: Remove verified owned workspace  # noqa: args[module]
+          sustainablelobster.legacy_windows.win_file:
+            path: '{{ package_url_workspace.path }}'
+            state: absent
+
+        - name: Independently verify workspace absence and exact staging
+          ansible.builtin.raw: >-
+            cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+            "import glob,json,os,sys,tempfile;
+            assert not os.path.exists(sys.argv[1]);
+            print(json.dumps(sorted(glob.glob(os.path.join(tempfile.gettempdir(),'ansible-tmp-*')))))"
+            "{{ package_url_workspace.path }}""
+          register: package_url_staging_after
+          changed_when: false
+
+        - name: Require original staging literally
+          ansible.builtin.assert:
+            that:
+              - >-
+                (package_url_staging_before.stdout | from_json) ==
+                (package_url_staging_after.stdout | from_json)
+
+        - name: Retain full results and recovery evidence
+          ansible.builtin.copy:
+            content: >-
+              {{ {'results': package_url_results,
+              'journal': package_url_journal | default(none),
+              'setup': package_url_setup | default(none),
+              'latest_native': package_url_native | default(none),
+              'latest_original': package_url_original | default(none),
+              'recovery': package_url_recovery,
+              'workspace_absent': true,
+              'staging_before': package_url_staging_before,
+              'staging_after': package_url_staging_after} | to_nice_json }}
+            dest: '{{ package_url_capture.path }}'
+            mode: '0600'
+          delegate_to: localhost
+          vars: *controller
+          changed_when: false
+          no_log: true
+
+        - name: Require every selected observation validated
+          ansible.builtin.assert:
+            that:
+              - >-
+                package_url_results | length ==
+                package_url_selected_cases | length
+              - >-
+                package_url_results | selectattr('validated', 'equalto', true) |
+                list | length == package_url_results | length

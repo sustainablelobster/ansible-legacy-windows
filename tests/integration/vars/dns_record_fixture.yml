@@ -1,0 +1,162 @@
+---
+dns_record_fixture_program: |
+  import sys, types
+  for helper_name, source in (
+      ('legacy_windows_wmi', {{ lookup('ansible.builtin.file',
+          (dns_record_source_root | default(playbook_dir + '/../..')) +
+          '/plugins/module_utils/legacy_windows_wmi.py', rstrip=false) |
+          to_json }}),
+      ('legacy_windows_dns_classic', {{ lookup('ansible.builtin.file',
+          (dns_record_source_root | default(playbook_dir + '/../..')) +
+          '/plugins/module_utils/legacy_windows_dns_classic.py', rstrip=false) |
+          to_json }}),
+      ('legacy_windows_dns_record', {{ lookup('ansible.builtin.file',
+          (dns_record_source_root | default(playbook_dir + '/../..')) +
+          '/plugins/module_utils/legacy_windows_dns_record.py', rstrip=false) |
+          to_json }})):
+      helper = types.ModuleType(helper_name)
+      sys.modules[helper_name] = helper
+      exec(source, helper.__dict__)
+  {{ lookup('ansible.builtin.file',
+      (dns_record_source_root | default(playbook_dir + '/../..')) +
+      '/tests/integration/fixtures/win_dns_record.py', rstrip=false) }}
+
+dns_record_cases:
+  - id: create-a
+    args: {type: A, value: '192.0.2.1'}
+  - id: repeat-a
+    seed: {type: A, value: ['192.0.2.1']}
+    args: {type: A, value: '192.0.2.1'}
+  - id: preview-a
+    check: true
+    args: {type: A, value: '192.0.2.1'}
+  - id: update-a-ttl
+    seed: {type: A, value: ['192.0.2.1'], ttl: 60}
+    args: {type: A, value: '192.0.2.1', ttl: 300}
+  - id: preview-a-ttl
+    seed: {type: A, value: ['192.0.2.1'], ttl: 60}
+    check: true
+    args: {type: A, value: '192.0.2.1', ttl: 300}
+  - id: replace-a-value
+    seed: {type: A, value: ['192.0.2.1']}
+    args: {type: A, value: '192.0.2.2'}
+  - id: preview-a-replacement
+    seed: {type: A, value: ['192.0.2.1']}
+    check: true
+    args: {type: A, value: '192.0.2.2'}
+  - id: remove-a
+    seed: {type: A, value: ['192.0.2.1']}
+    args: {type: A, state: absent}
+  - id: preview-a-removal
+    seed: {type: A, value: ['192.0.2.1']}
+    check: true
+    args: {type: A, state: absent}
+  - id: absent-missing
+    args: {type: A, state: absent}
+  - id: create-aaaa
+    args: {type: AAAA, value: '2001:db8::1'}
+  - id: create-cname
+    args: {type: CNAME, value: target.example.test}
+  - id: repeat-cname
+    seed: {type: CNAME, value: ['target.example.test.']}
+    args: {type: CNAME, value: target.example.test}
+  - id: create-ns
+    args: {type: NS, value: nameserver.example.test}
+  - id: create-ptr
+    args: {type: PTR, value: target.example.test}
+  - id: create-txt
+    args: {type: TXT, value: 'owned Unicode Ω record'}
+  - id: repeat-txt
+    seed: {type: TXT, value: ['owned text']}
+    args: {type: TXT, value: 'owned text'}
+  - id: create-srv
+    args: {type: SRV, value: target.example.test, port: 123, weight: 5,
+           priority: 7, ttl: 300}
+  - id: preview-srv
+    check: true
+    args: {type: SRV, value: target.example.test, port: 123, weight: 5,
+           priority: 7, ttl: 300}
+  - id: update-srv
+    seed: {type: SRV, value: ['target.example.test.'], port: 1, weight: 2,
+           priority: 3}
+    args: {type: SRV, value: target.example.test, port: 123, weight: 5,
+           priority: 7, ttl: 300}
+  - id: preview-srv-update
+    seed: {type: SRV, value: ['target.example.test.'], port: 1, weight: 2,
+           priority: 3}
+    check: true
+    args: {type: SRV, value: target.example.test, port: 123, weight: 5,
+           priority: 7, ttl: 300}
+  - id: create-aged-a
+    args: {type: A, value: '192.0.2.1', aging: true}
+  - id: replace-aged-a
+    seed: {type: A, value: ['192.0.2.1'], aging: true}
+    args: {type: A, value: '192.0.2.1', aging: false}
+  - id: preview-aging
+    seed: {type: A, value: ['192.0.2.1']}
+    check: true
+    args: {type: A, value: '192.0.2.1', aging: true}
+  - id: uppercase-state
+    args: {type: A, value: '192.0.2.1', state: PRESENT}
+  - id: lowercase-type
+    args: {type: a, value: '192.0.2.1'}
+  - id: value-alias
+    args: {type: A, values: ['192.0.2.1']}
+  - id: alias-overrides-canonical
+    args: {type: A, value: '192.0.2.2', values: ['192.0.2.1']}
+  - id: create-two-a-values
+    args: {type: A, value: ['192.0.2.2', '192.0.2.1']}
+  - id: retain-one-add-one-a-value
+    seed: {type: A, value: ['192.0.2.1']}
+    args: {type: A, value: ['192.0.2.1', '192.0.2.2']}
+  - id: retain-one-remove-one-a-value
+    seed: {type: A, value: ['192.0.2.2', '192.0.2.1']}
+    args: {type: A, value: '192.0.2.1'}
+  - id: reject-invalid-dhcid-preview
+    check: true
+    failed: true
+    args:
+      type: DHCID
+      value: >-
+        000101aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  - id: preview-dhcid
+    check: true
+    args:
+      type: DHCID
+      value: 'AAEBqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqo='
+  - id: create-dhcid
+    args:
+      type: DHCID
+      value: 'AAEBqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqo='
+  - id: preview-short-dhcid
+    check: true
+    args: {type: DHCID, value: 'AAEB'}
+  - id: preview-spaced-dhcid
+    check: true
+    args: {type: DHCID, value: "AAEB \t\r\n"}
+  - id: reject-malformed-dhcid-preview
+    check: true
+    failed: true
+    args: {type: DHCID, value: 'invalid!'}
+  - id: reject-empty-dhcid-preview
+    check: true
+    failed: true
+    args: {type: DHCID, value: ''}
+  - id: reject-empty-present
+    failed: true
+    args: {type: A}
+  - id: reject-nonempty-absent
+    failed: true
+    args: {type: A, state: absent, value: '192.0.2.1'}
+  - id: reject-zero-ttl
+    failed: true
+    args: {type: A, value: '192.0.2.1', ttl: 0}
+  - id: reject-excessive-ttl
+    failed: true
+    args: {type: A, value: '192.0.2.1', ttl: 31557601}
+  - id: reject-type
+    failed: true
+    args: {type: invalid, value: '192.0.2.1'}
+  - id: require-srv-numbers
+    failed: true
+    args: {type: SRV, value: target.example.test}

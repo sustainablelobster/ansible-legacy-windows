@@ -1,0 +1,271 @@
+---
+- name: Verify Windows quoting through real command parsers
+  hosts: legacy_windows
+  gather_facts: false
+  vars:
+    root: '{{ workspace.stdout | from_json }}'
+    report_arguments: 'import json, sys; print(json.dumps(sys.argv[1:]))'
+    crt_edge_value: |
+      before\
+    crt_edge_expected: |
+      before\\
+    cmd_edge_arguments:
+      - 'two words\'
+      - after
+    literal_arguments:
+      - ''
+      - plain
+      - two words
+      - 'embedded"quote'
+      - 'one\"quote'
+      - 'trailing\'
+      - 'two words\'
+      - '& echo unexpected'
+      - '%PATH% !pending! ^ (parentheses) | < >'
+      - 'Café 雪'
+      - "a'b‘c’d‚e‛f"
+      - '$($env:PATH) `text'
+      - "line one\nline two\r\n"
+      - "nonbreaking\u00a0space"
+    cmd_arguments:
+      - ''
+      - plain
+      - two words
+      - 'embedded"quote'
+      - 'trailing\'
+      - '& echo unexpected'
+      - '%PATH% !pending! ^ (parentheses) | < >'
+      - 'Café 雪'
+      - "a'b‘c’d‚e‛f"
+      - '$($env:PATH) `text'
+    msi_properties:
+      INSTALLDIR: 'C:\Program Files\Example'
+      MESSAGE: 'embedded"quote'
+      EMPTY: null
+    msi_arguments:
+      - 'INSTALLDIR=C:\Program Files\Example'
+      - 'MESSAGE=embedded"quote'
+      - 'EMPTY='
+  tasks:
+    - name: Require Python 3.4.4 and record task directories
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import glob, json, os, sys, tempfile;
+        assert sys.version_info[:3] == (3, 4, 4);
+        print(json.dumps(sorted(glob.glob(os.path.join(tempfile.gettempdir(),
+        'ansible-tmp-*')))))""
+      register: task_directories_before
+      changed_when: false
+      check_mode: false
+
+    - name: Allocate an isolated command workspace
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import json, tempfile;
+        print(json.dumps(tempfile.mkdtemp(prefix='legacy-windows-quote-')))""
+      register: workspace
+      changed_when: true
+      check_mode: false
+
+    - name: Exercise quoting inside the owned workspace
+      block:
+        - name: Round-trip C-runtime arguments and repeat the command
+          # WANT_JSON arguments are verified by the child process result.
+          sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+            cmd: >-
+              {{ ([ansible_python_interpreter, '-c', report_arguments]
+                  + literal_arguments)
+                 | sustainablelobster.legacy_windows.quote }}
+            chdir: '{{ root }}'
+          loop: [first, repeated]
+          register: c_results
+          changed_when: false
+
+        - name: Verify C-runtime argument boundaries and content
+          ansible.builtin.assert:
+            that:
+              - item.rc == 0
+              - item.stderr == ''
+              - (item.stdout | from_json) == literal_arguments
+          loop: '{{ c_results.results }}'
+          loop_control:
+            label: '{{ item.item }}'
+
+        - name: Preserve the pinned final-newline C-runtime behavior
+          # Upstream doubles backslashes immediately before a final newline.
+          sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+            cmd: >-
+              {{ [ansible_python_interpreter, '-c', report_arguments,
+                  crt_edge_value, 'after']
+                 | sustainablelobster.legacy_windows.quote }}
+            chdir: '{{ root }}'
+          register: crt_edge_result
+          changed_when: false
+
+        - name: Verify the measured upstream C-runtime limitation
+          ansible.builtin.assert:
+            that:
+              - crt_edge_result.rc == 0
+              - >-
+                (crt_edge_result.stdout | from_json) ==
+                [crt_edge_expected, 'after']
+
+        - name: Round-trip Command Prompt arguments without delayed expansion
+          # Command Prompt metacharacters must remain argument text.
+          sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+            cmd: >-
+              cmd.exe /d /v:off /s /c "{{
+                ([ansible_python_interpreter, '-c', report_arguments]
+                 + cmd_arguments)
+                | sustainablelobster.legacy_windows.quote(shell='cmd') }}"
+            chdir: '{{ root }}'
+          register: cmd_result
+          changed_when: false
+
+        - name: Verify Command Prompt argument boundaries and content
+          ansible.builtin.assert:
+            that:
+              - cmd_result.rc == 0
+              - cmd_result.stderr == ''
+              - (cmd_result.stdout | from_json) == cmd_arguments
+
+        - name: Preserve the pinned Command Prompt trailing-backslash behavior
+          # The upstream quoter merges these inputs; it is not a safe argv API.
+          sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+            cmd: >-
+              cmd.exe /d /v:off /s /c "{{
+                ([ansible_python_interpreter, '-c', report_arguments]
+                 + cmd_edge_arguments)
+                | sustainablelobster.legacy_windows.quote(shell='cmd') }}"
+            chdir: '{{ root }}'
+          register: cmd_edge_result
+          changed_when: false
+
+        - name: Verify the measured upstream Command Prompt limitation
+          ansible.builtin.assert:
+            fail_msg: 'Observed command arguments: {{ cmd_edge_result.stdout }}'
+            that:
+              - cmd_edge_result.rc == 0
+              - (cmd_edge_result.stdout | from_json) == ['two words" after']
+
+        - name: Pass MSI properties through both command-line modes
+          # MSI keys are controlled identifiers; the filter quotes values only.
+          sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+            cmd: >-
+              {{ ('cmd.exe /d /v:off /s /c "') if item == 'cmd' else '' }}{{
+                [ansible_python_interpreter, '-c', report_arguments,
+                 msi_properties]
+                | sustainablelobster.legacy_windows.quote(shell=item)
+              }}{{ '"' if item == 'cmd' else '' }}
+            chdir: '{{ root }}'
+          loop: [null, cmd]
+          register: msi_results
+          changed_when: false
+
+        - name: Verify dictionary property ordering and quoted values
+          ansible.builtin.assert:
+            that:
+              - item.rc == 0
+              - item.stderr == ''
+              - (item.stdout | from_json) == msi_arguments
+          loop: '{{ msi_results.results }}'
+          loop_control:
+            label: '{{ item.item | default("C runtime", true) }}'
+
+        - name: Evaluate PowerShell literals without native argument conversion
+          # EncodedCommand preserves the script's Unicode independently of CMD.
+          sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+            argv:
+              - powershell.exe
+              - -NoProfile
+              - -NonInteractive
+              - -EncodedCommand
+              - '{{ script | b64encode(encoding="utf-16-le") }}'
+            chdir: '{{ root }}'
+          vars:
+            script: |
+              $ErrorActionPreference = 'Stop'
+              $values = @({{
+                literal_arguments
+                | map('sustainablelobster.legacy_windows.quote',
+                      shell='powershell') | join(', ') }})
+              $json = ConvertTo-Json -InputObject $values -Compress
+              [Console]::Out.Write([Convert]::ToBase64String(
+                  [Text.Encoding]::UTF8.GetBytes($json)))
+          register: powershell_result
+          when: legacy_windows_expect_powershell | default(false) | bool
+          changed_when: false
+
+        - name: Verify PowerShell expression values or its expected absence
+          ansible.builtin.assert:
+            that:
+              - >-
+                (powershell_result is skipped) ==
+                (not (legacy_windows_expect_powershell | default(false) | bool))
+              - >-
+                powershell_result is skipped or
+                (powershell_result.stdout | b64decode | from_json) ==
+                literal_arguments
+              - >-
+                powershell_result is skipped or powershell_result.rc == 0
+
+        - name: Reject an unsupported shell before command execution
+          block:
+            - name: Reject an invalid quote selector  # noqa: args[module]
+              # Templating must fail before a target command can run.
+              sustainablelobster.legacy_windows.win_command:
+                cmd: >-
+                  {{ "unused" | sustainablelobster.legacy_windows.quote("sh") }}
+              register: invalid_shell
+
+            - name: Reject unexpected success with an invalid selector
+              ansible.builtin.fail:
+                msg: The filter accepted an unsupported shell
+          rescue:
+            - name: Verify an actionable filter failure without changes
+              ansible.builtin.assert:
+                that:
+                  - invalid_shell is failed
+                  - invalid_shell is not changed
+                  - "'Invalid shell' in invalid_shell.msg"
+
+        - name: Confirm quoted metacharacters created no extra files
+          # Redirection bugs would leave files in this isolated directory.
+          sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - 'import os, sys; assert not os.listdir(sys.argv[1])'
+              - '{{ root }}'
+          changed_when: false
+      always:
+        - name: Remove only the allocated workspace
+          # The prefix guard rejects an unrelated cleanup target.
+          sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - >-
+                import os, shutil, sys;
+                assert os.path.basename(sys.argv[1]).startswith(
+                'legacy-windows-quote-');
+                shutil.rmtree(sys.argv[1])
+              - '{{ root }}'
+          check_mode: false
+
+    - name: Record remaining task directories
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import glob, json, os, tempfile;
+        print(json.dumps(sorted(glob.glob(os.path.join(tempfile.gettempdir(),
+        'ansible-tmp-*')))))""
+      register: task_directories_after
+      changed_when: false
+      check_mode: false
+
+    - name: Verify task files were removed
+      ansible.builtin.assert:
+        that:
+          - >-
+            (task_directories_before.stdout | from_json) ==
+            (task_directories_after.stdout | from_json)

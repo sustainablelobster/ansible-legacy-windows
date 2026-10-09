@@ -1,0 +1,81 @@
+---
+- name: Await natural worker exit and require literal protected recovery
+  sustainablelobster.legacy_windows.win_command:
+    argv: ['{{ ansible_python_interpreter }}', '-',
+           '{{ setup_parallel_workspace.path }}', cleanup]
+    stdin: |
+      PRIOR_OBSERVATION = {{ setup_parallel_observation.stdout |
+        default('null', true) | to_json }}
+      {{ setup_parallel_program }}
+  register: setup_parallel_recovery
+  failed_when: false
+  changed_when: false
+  no_log: true
+
+- name: Preserve full raw results before cleanup assertions
+  ansible.builtin.copy:
+    dest: '{{ setup_parallel_capture.path }}'
+    mode: '0600'
+    content: >-
+      {{ {'workspace': setup_parallel_workspace,
+          'runtime': setup_parallel_runtime | default(none),
+          'setup': setup_parallel_setup | default(none),
+          'native': setup_parallel_native | default(none),
+          'source': setup_parallel_source | default(none),
+          'identity': setup_parallel_identity | default(none),
+          'observation': setup_parallel_observation | default(none),
+          'recovery': setup_parallel_recovery,
+          'staging_before': setup_parallel_staging_before}
+          | to_nice_json }}
+  delegate_to: localhost
+  vars:
+    ansible_connection: local
+    ansible_shell_type: sh
+    ansible_python_interpreter: '{{ ansible_playbook_python }}'
+  changed_when: false
+  no_log: true
+
+- name: Require verified recovery before any workspace deletion
+  ansible.builtin.assert:
+    that:
+      - setup_parallel_recovery.rc == 0
+      - (setup_parallel_recovery.stdout | from_json).persistent_restored
+  no_log: true
+
+- name: Remove only the verified owned workspace
+  sustainablelobster.legacy_windows.win_file:
+    path: '{{ setup_parallel_workspace.path }}'
+    state: absent
+
+- name: Verify workspace absence and original global staging
+  ansible.builtin.raw: >-
+    cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+    "import glob,json,os,sys,tempfile;
+    assert not os.path.exists(sys.argv[1]);
+    print(json.dumps(sorted(glob.glob(os.path.join(
+    tempfile.gettempdir(),'ansible-tmp-*')))))"
+    "{{ setup_parallel_workspace.path }}""
+  register: setup_parallel_staging_after
+  changed_when: false
+
+- name: Preserve final staging and workspace closure
+  ansible.builtin.copy:
+    dest: '{{ setup_parallel_capture.path }}.closure.json'
+    mode: '0600'
+    content: >-
+      {{ {'workspace_absent': true,
+          'before': setup_parallel_staging_before,
+          'after': setup_parallel_staging_after} | to_nice_json }}
+  delegate_to: localhost
+  vars:
+    ansible_connection: local
+    ansible_shell_type: sh
+    ansible_python_interpreter: '{{ ansible_playbook_python }}'
+  changed_when: false
+
+- name: Require literal staging closure
+  ansible.builtin.assert:
+    that:
+      - >-
+        (setup_parallel_staging_before.stdout | from_json) ==
+        (setup_parallel_staging_after.stdout | from_json)

@@ -1,0 +1,2391 @@
+{
+  "provenance": {
+    "upstream": "ansible.windows 3.8.0, ff0ac96011ee196742901f34c0dd134acddbe89a",
+    "reference": "Windows PowerShell 5.1 on Windows Server 2025 x64; current Pacific offset -420 minutes",
+    "native": "Python 3.4.4 OleAut and FILETIME observations on Windows XP x86, Server 2003 x86, and Server 2025 x64",
+    "scope": "Public dates and numeric conversion results only. No account names, hostnames, addresses, passwords, or connection settings.",
+    "source": "https://raw.githubusercontent.com/microsoft/referencesource/main/mscorlib/system/datetime.cs",
+    "storage": "Observed ToOADate, Put result, and NetAPI expiration; failed puts preserve the previous account value, which is omitted here.",
+    "native_rounding": "SYSTEMTIME and failures were identical across all three native runs; UTC seconds retain each observed current timezone offset."
+  },
+  "storage": [
+    {
+      "input": "2040-10-27T14:30:00.1Z",
+      "local_ticks": 643705326001000000,
+      "ole_date": 51436.31250115741,
+      "phase": "complete",
+      "seconds": 2234961000,
+      "stored": "2040-10-27T07:30:00"
+    },
+    {
+      "input": "2040-10-27T14:30:00.4999999Z",
+      "local_ticks": 643705326004999999,
+      "ole_date": 51436.312505775466,
+      "phase": "complete",
+      "seconds": 2234961000,
+      "stored": "2040-10-27T07:30:00"
+    },
+    {
+      "input": "2040-10-27T14:30:00.5Z",
+      "local_ticks": 643705326005000000,
+      "ole_date": 51436.312505787035,
+      "phase": "complete",
+      "seconds": 2234961000,
+      "stored": "2040-10-27T07:30:00"
+    },
+    {
+      "input": "2040-10-27T14:30:00.9Z",
+      "local_ticks": 643705326009000000,
+      "ole_date": 51436.31251041667,
+      "phase": "complete",
+      "seconds": 2234961001,
+      "stored": "2040-10-27T07:30:01"
+    },
+    {
+      "input": "2040-10-27T14:30:00.99Z",
+      "local_ticks": 643705326009900000,
+      "ole_date": 51436.31251145833,
+      "phase": "complete",
+      "seconds": 2234961001,
+      "stored": "2040-10-27T07:30:01"
+    },
+    {
+      "input": "2040-10-27T14:30:00.999Z",
+      "local_ticks": 643705326009990000,
+      "ole_date": 51436.3125115625,
+      "phase": "complete",
+      "seconds": 2234961001,
+      "stored": "2040-10-27T07:30:01"
+    },
+    {
+      "input": "2040-10-27T14:30:00.9994Z",
+      "local_ticks": 643705326009994000,
+      "ole_date": 51436.3125115625,
+      "phase": "complete",
+      "seconds": 2234961001,
+      "stored": "2040-10-27T07:30:01"
+    },
+    {
+      "input": "2040-10-27T14:30:00.9995Z",
+      "local_ticks": 643705326009995000,
+      "ole_date": 51436.3125115625,
+      "phase": "complete",
+      "seconds": 2234961001,
+      "stored": "2040-10-27T07:30:01"
+    },
+    {
+      "input": "2040-10-27T14:30:00.9999Z",
+      "local_ticks": 643705326009999000,
+      "ole_date": 51436.3125115625,
+      "phase": "complete",
+      "seconds": 2234961001,
+      "stored": "2040-10-27T07:30:01"
+    },
+    {
+      "input": "2040-10-27T14:30:00.9999999Z",
+      "local_ticks": 643705326009999999,
+      "ole_date": 51436.3125115625,
+      "phase": "complete",
+      "seconds": 2234961001,
+      "stored": "2040-10-27T07:30:01"
+    },
+    {
+      "input": "1969-12-31T23:59:59-08:00",
+      "local_ticks": 621355967990000000,
+      "ole_date": 25568.999988425927,
+      "phase": "complete",
+      "seconds": 4294967295,
+      "stored": "never"
+    },
+    {
+      "input": "1970-01-01T00:00:00-08:00",
+      "local_ticks": 621355968000000000,
+      "ole_date": 25569,
+      "phase": "complete",
+      "seconds": 4294967295,
+      "stored": "never"
+    },
+    {
+      "input": "1970-01-01T00:00:00.1-08:00",
+      "local_ticks": 621355968001000000,
+      "ole_date": 25569.00000115741,
+      "phase": "complete",
+      "seconds": 4294967295,
+      "stored": "never"
+    },
+    {
+      "input": "1970-01-01T00:00:01-08:00",
+      "local_ticks": 621355968010000000,
+      "ole_date": 25569.000011574073,
+      "phase": "complete",
+      "seconds": 4294967295,
+      "stored": "never"
+    },
+    {
+      "input": "1970-01-01T00:01:00-08:00",
+      "local_ticks": 621355968600000000,
+      "ole_date": 25569.000694444443,
+      "phase": "complete",
+      "seconds": 4294967295,
+      "stored": "never"
+    },
+    {
+      "input": "1970-01-01T01:00:00-08:00",
+      "local_ticks": 621356004000000000,
+      "ole_date": 25569.041666666668,
+      "phase": "complete",
+      "seconds": 4294967295,
+      "stored": "never"
+    },
+    {
+      "input": "1970-01-01T12:00:00-08:00",
+      "local_ticks": 621356400000000000,
+      "ole_date": 25569.5,
+      "phase": "complete",
+      "seconds": 4294967295,
+      "stored": "never"
+    },
+    {
+      "input": "1970-01-02T00:00:00-08:00",
+      "local_ticks": 621356832000000000,
+      "ole_date": 25570,
+      "phase": "complete",
+      "seconds": 111600,
+      "stored": "1970-01-02T00:00:00"
+    },
+    {
+      "input": "1970-01-01T07:59:59Z",
+      "local_ticks": 621355967990000000,
+      "ole_date": 25568.999988425927,
+      "phase": "complete",
+      "seconds": 4294967295,
+      "stored": "never"
+    },
+    {
+      "input": "1970-01-01T08:00:00Z",
+      "local_ticks": 621355968000000000,
+      "ole_date": 25569,
+      "phase": "complete",
+      "seconds": 4294967295,
+      "stored": "never"
+    },
+    {
+      "input": "1970-01-01T08:00:01Z",
+      "local_ticks": 621355968010000000,
+      "ole_date": 25569.000011574073,
+      "phase": "complete",
+      "seconds": 4294967295,
+      "stored": "never"
+    },
+    {
+      "input": "2038-01-19T03:14:07Z",
+      "local_ticks": 642830516470000000,
+      "ole_date": 50423.801469907405,
+      "phase": "complete",
+      "seconds": 2147480047,
+      "stored": "2038-01-18T19:14:07"
+    },
+    {
+      "input": "2040-01-01T00:00:00Z",
+      "local_ticks": 643445568000000000,
+      "ole_date": 51135.666666666664,
+      "phase": "complete",
+      "seconds": 2208985200,
+      "stored": "2039-12-31T16:00:00"
+    },
+    {
+      "input": "2050-01-01T00:00:00Z",
+      "local_ticks": 646601760000000000,
+      "ole_date": 54788.666666666664,
+      "phase": "complete",
+      "seconds": 2524604400,
+      "stored": "2049-12-31T16:00:00"
+    },
+    {
+      "input": "2090-01-01T00:00:00Z",
+      "local_ticks": 659224800000000000,
+      "ole_date": 69398.66666666667,
+      "phase": "complete",
+      "seconds": 3786908400,
+      "stored": "2089-12-31T16:00:00"
+    },
+    {
+      "input": "2099-01-01T00:00:00Z",
+      "local_ticks": 662064768000000000,
+      "ole_date": 72685.66666666667,
+      "phase": "complete",
+      "seconds": 4070905200,
+      "stored": "2098-12-31T16:00:00"
+    },
+    {
+      "input": "2100-01-01T00:00:00Z",
+      "local_ticks": 662380128000000000,
+      "ole_date": 73050.66666666667,
+      "phase": "complete",
+      "seconds": 4102441200,
+      "stored": "2099-12-31T16:00:00"
+    },
+    {
+      "input": "2105-01-01T00:00:00Z",
+      "local_ticks": 663957792000000000,
+      "ole_date": 74876.66666666667,
+      "phase": "complete",
+      "seconds": 4260207600,
+      "stored": "2104-12-31T16:00:00"
+    },
+    {
+      "input": "2106-02-05T00:00:00Z",
+      "local_ticks": 664303392000000000,
+      "ole_date": 75276.66666666667,
+      "phase": "complete",
+      "seconds": 4294767600,
+      "stored": "2106-02-04T16:00:00"
+    },
+    {
+      "input": "2106-02-06T00:00:00Z",
+      "local_ticks": 664304256000000000,
+      "ole_date": 75277.66666666667,
+      "phase": "complete",
+      "seconds": 4294854000,
+      "stored": "2106-02-05T16:00:00"
+    },
+    {
+      "input": "2106-02-06T22:28:14Z",
+      "local_ticks": 664305064940000000,
+      "ole_date": 75278.60293981481,
+      "phase": "complete",
+      "seconds": 4294967295,
+      "stored": "never"
+    },
+    {
+      "input": "2106-02-06T22:28:15Z",
+      "local_ticks": 664305064950000000,
+      "ole_date": 75278.6029513889,
+      "phase": "complete",
+      "seconds": 4294967295,
+      "stored": "never"
+    },
+    {
+      "input": "2106-02-07T00:00:00Z",
+      "local_ticks": 664305120000000000,
+      "ole_date": 75278.66666666667,
+      "phase": "complete",
+      "seconds": 4294967295,
+      "stored": "never"
+    },
+    {
+      "input": "2106-02-07T06:28:14Z",
+      "local_ticks": 664305352940000000,
+      "ole_date": 75278.93627314815,
+      "phase": "complete",
+      "seconds": 4294967295,
+      "stored": "never"
+    },
+    {
+      "input": "2106-02-07T06:28:14-08:00",
+      "local_ticks": 664305640940000000,
+      "ole_date": 75279.26960648148,
+      "phase": "complete",
+      "seconds": 4294967295,
+      "stored": "never"
+    },
+    {
+      "input": "0001-01-01T00:00:00-08:00",
+      "local_ticks": 0,
+      "ole_date": 0,
+      "phase": "complete",
+      "seconds": 4294967295,
+      "stored": "never"
+    },
+    {
+      "input": "0001-01-01T01:00:00-08:00",
+      "local_ticks": 36000000000,
+      "ole_date": 0.041666666666666664,
+      "phase": "complete",
+      "seconds": 4294967295,
+      "stored": "never"
+    },
+    {
+      "input": "0001-01-02T00:00:00-08:00",
+      "local_ticks": 864000000000,
+      "phase": "put",
+      "error": "Exception calling \"Put\" with \"2\" argument(s): \"Not a legal OleAut date.\""
+    },
+    {
+      "input": "0099-12-31T23:59:59-08:00",
+      "local_ticks": 31241375990000000,
+      "phase": "put",
+      "error": "Exception calling \"Put\" with \"2\" argument(s): \"Not a legal OleAut date.\""
+    },
+    {
+      "input": "0100-01-01T00:00:00-08:00",
+      "local_ticks": 31241376000000000,
+      "ole_date": -657434,
+      "phase": "put",
+      "error": "Exception calling \"Put\" with \"2\" argument(s): \"The parameter is incorrect. (Exception from HRESULT: 0x80070057 (E_INVALIDARG))\""
+    },
+    {
+      "input": "0100-01-02T00:00:00-08:00",
+      "local_ticks": 31242240000000000,
+      "ole_date": -657433,
+      "phase": "put",
+      "error": "Exception calling \"Put\" with \"2\" argument(s): \"The parameter is incorrect. (Exception from HRESULT: 0x80070057 (E_INVALIDARG))\""
+    },
+    {
+      "input": "1600-12-31T23:59:59-08:00",
+      "local_ticks": 504911231990000000,
+      "ole_date": -109206.99998842593,
+      "phase": "put",
+      "error": "Exception calling \"Put\" with \"2\" argument(s): \"The parameter is incorrect. (Exception from HRESULT: 0x80070057 (E_INVALIDARG))\""
+    },
+    {
+      "input": "1601-01-01T00:00:00-08:00",
+      "local_ticks": 504911232000000000,
+      "ole_date": -109205,
+      "phase": "complete",
+      "seconds": 4294967295,
+      "stored": "never"
+    },
+    {
+      "input": "1970-01-01T23:59:59-08:00",
+      "local_ticks": 621356831990000000,
+      "ole_date": 25569.999988425927,
+      "phase": "complete",
+      "seconds": 111599,
+      "stored": "1970-01-01T23:59:59"
+    },
+    {
+      "input": "1970-01-01T23:59:59.9-08:00",
+      "local_ticks": 621356831999000000,
+      "ole_date": 25569.99999884259,
+      "phase": "complete",
+      "seconds": 111600,
+      "stored": "1970-01-02T00:00:00"
+    },
+    {
+      "input": "2106-02-05T23:59:59-08:00",
+      "local_ticks": 664304543990000000,
+      "ole_date": 75277.99998842593,
+      "phase": "complete",
+      "seconds": 4294967295,
+      "stored": "never"
+    },
+    {
+      "input": "2106-02-06T00:00:00-08:00",
+      "local_ticks": 664304544000000000,
+      "ole_date": 75278,
+      "phase": "complete",
+      "seconds": 4294967295,
+      "stored": "never"
+    },
+    {
+      "input": "2106-02-06T00:00:01-08:00",
+      "local_ticks": 664304544010000000,
+      "ole_date": 75278.00001157407,
+      "phase": "complete",
+      "seconds": 4294967295,
+      "stored": "never"
+    },
+    {
+      "input": "2106-02-06T01:00:00-08:00",
+      "local_ticks": 664304580000000000,
+      "ole_date": 75278.04166666667,
+      "phase": "complete",
+      "seconds": 4294967295,
+      "stored": "never"
+    },
+    {
+      "input": "2106-02-06T06:00:00-08:00",
+      "local_ticks": 664304760000000000,
+      "ole_date": 75278.25,
+      "phase": "complete",
+      "seconds": 4294967295,
+      "stored": "never"
+    },
+    {
+      "input": "2106-02-06T07:00:00-08:00",
+      "local_ticks": 664304796000000000,
+      "ole_date": 75278.29166666667,
+      "phase": "complete",
+      "seconds": 4294967295,
+      "stored": "never"
+    },
+    {
+      "input": "2106-02-06T08:00:00-08:00",
+      "local_ticks": 664304832000000000,
+      "ole_date": 75278.33333333333,
+      "phase": "complete",
+      "seconds": 4294967295,
+      "stored": "never"
+    },
+    {
+      "input": "2106-02-06T12:00:00-08:00",
+      "local_ticks": 664304976000000000,
+      "ole_date": 75278.5,
+      "phase": "complete",
+      "seconds": 4294967295,
+      "stored": "never"
+    },
+    {
+      "input": "1970-01-01T16:59:59-08:00",
+      "local_ticks": 621356579990000000,
+      "ole_date": 25569.70832175926,
+      "phase": "complete",
+      "seconds": 4294967295,
+      "stored": "never"
+    },
+    {
+      "input": "1970-01-01T17:00:00-08:00",
+      "local_ticks": 621356580000000000,
+      "ole_date": 25569.708333333332,
+      "phase": "complete",
+      "seconds": 4294967295,
+      "stored": "never"
+    },
+    {
+      "input": "1970-01-01T17:00:01-08:00",
+      "local_ticks": 621356580010000000,
+      "ole_date": 25569.70834490741,
+      "phase": "complete",
+      "seconds": 86401,
+      "stored": "1970-01-01T17:00:01"
+    },
+    {
+      "input": "2106-02-05T23:28:14-08:00",
+      "local_ticks": 664304524940000000,
+      "ole_date": 75277.97793981481,
+      "phase": "complete",
+      "seconds": 4294880894,
+      "stored": "2106-02-05T23:28:14"
+    },
+    {
+      "input": "2106-02-05T23:28:15-08:00",
+      "local_ticks": 664304524950000000,
+      "ole_date": 75277.9779513889,
+      "phase": "complete",
+      "seconds": 4294967295,
+      "stored": "never"
+    },
+    {
+      "input": "2106-02-05T23:28:16-08:00",
+      "local_ticks": 664304524960000000,
+      "ole_date": 75277.97796296296,
+      "phase": "complete",
+      "seconds": 4294967295,
+      "stored": "never"
+    },
+    {
+      "input": "2025-11-02T01:30:00.1234567-07:00",
+      "local_ticks": 638976438001234567,
+      "ole_date": 45963.062501423614,
+      "phase": "complete",
+      "seconds": 1762072200,
+      "stored": "2025-11-02T01:30:00"
+    },
+    {
+      "input": "2025-11-02T01:30:00.1234567-08:00",
+      "local_ticks": 638976438001234567,
+      "ole_date": 45963.062501423614,
+      "phase": "complete",
+      "seconds": 1762072200,
+      "stored": "2025-11-02T01:30:00"
+    },
+    {
+      "input": "1970-01-01T12:00:00-08:00",
+      "local_ticks": 621356400000000000,
+      "ole_date": 25569.5,
+      "phase": "complete",
+      "seconds": 4294967295,
+      "stored": "never"
+    },
+    {
+      "input": "1970-01-01T13:00:00-08:00",
+      "local_ticks": 621356436000000000,
+      "ole_date": 25569.541666666668,
+      "phase": "complete",
+      "seconds": 4294967295,
+      "stored": "never"
+    },
+    {
+      "input": "1970-01-01T14:00:00-08:00",
+      "local_ticks": 621356472000000000,
+      "ole_date": 25569.583333333332,
+      "phase": "complete",
+      "seconds": 4294967295,
+      "stored": "never"
+    },
+    {
+      "input": "1970-01-01T15:00:00-08:00",
+      "local_ticks": 621356508000000000,
+      "ole_date": 25569.625,
+      "phase": "complete",
+      "seconds": 4294967295,
+      "stored": "never"
+    },
+    {
+      "input": "1970-01-01T16:00:00-08:00",
+      "local_ticks": 621356544000000000,
+      "ole_date": 25569.666666666668,
+      "phase": "complete",
+      "seconds": 4294967295,
+      "stored": "never"
+    },
+    {
+      "input": "1970-01-01T17:00:00-08:00",
+      "local_ticks": 621356580000000000,
+      "ole_date": 25569.708333333332,
+      "phase": "complete",
+      "seconds": 4294967295,
+      "stored": "never"
+    },
+    {
+      "input": "1970-01-01T18:00:00-08:00",
+      "local_ticks": 621356616000000000,
+      "ole_date": 25569.75,
+      "phase": "complete",
+      "seconds": 90000,
+      "stored": "1970-01-01T18:00:00"
+    },
+    {
+      "input": "1970-01-01T19:00:00-08:00",
+      "local_ticks": 621356652000000000,
+      "ole_date": 25569.791666666668,
+      "phase": "complete",
+      "seconds": 93600,
+      "stored": "1970-01-01T19:00:00"
+    },
+    {
+      "input": "1970-01-01T20:00:00-08:00",
+      "local_ticks": 621356688000000000,
+      "ole_date": 25569.833333333332,
+      "phase": "complete",
+      "seconds": 97200,
+      "stored": "1970-01-01T20:00:00"
+    },
+    {
+      "input": "1970-01-01T21:00:00-08:00",
+      "local_ticks": 621356724000000000,
+      "ole_date": 25569.875,
+      "phase": "complete",
+      "seconds": 100800,
+      "stored": "1970-01-01T21:00:00"
+    },
+    {
+      "input": "1970-01-01T22:00:00-08:00",
+      "local_ticks": 621356760000000000,
+      "ole_date": 25569.916666666668,
+      "phase": "complete",
+      "seconds": 104400,
+      "stored": "1970-01-01T22:00:00"
+    },
+    {
+      "input": "1970-01-01T23:00:00-08:00",
+      "local_ticks": 621356796000000000,
+      "ole_date": 25569.958333333332,
+      "phase": "complete",
+      "seconds": 108000,
+      "stored": "1970-01-01T23:00:00"
+    },
+    {
+      "input": "2106-02-05T16:00:00-08:00",
+      "local_ticks": 664304256000000000,
+      "ole_date": 75277.66666666667,
+      "phase": "complete",
+      "seconds": 4294854000,
+      "stored": "2106-02-05T16:00:00"
+    },
+    {
+      "input": "2106-02-05T17:00:00-08:00",
+      "local_ticks": 664304292000000000,
+      "ole_date": 75277.70833333333,
+      "phase": "complete",
+      "seconds": 4294857600,
+      "stored": "2106-02-05T17:00:00"
+    },
+    {
+      "input": "2106-02-05T18:00:00-08:00",
+      "local_ticks": 664304328000000000,
+      "ole_date": 75277.75,
+      "phase": "complete",
+      "seconds": 4294861200,
+      "stored": "2106-02-05T18:00:00"
+    },
+    {
+      "input": "2106-02-05T19:00:00-08:00",
+      "local_ticks": 664304364000000000,
+      "ole_date": 75277.79166666667,
+      "phase": "complete",
+      "seconds": 4294864800,
+      "stored": "2106-02-05T19:00:00"
+    },
+    {
+      "input": "2106-02-05T20:00:00-08:00",
+      "local_ticks": 664304400000000000,
+      "ole_date": 75277.83333333333,
+      "phase": "complete",
+      "seconds": 4294868400,
+      "stored": "2106-02-05T20:00:00"
+    },
+    {
+      "input": "2106-02-05T21:00:00-08:00",
+      "local_ticks": 664304436000000000,
+      "ole_date": 75277.875,
+      "phase": "complete",
+      "seconds": 4294872000,
+      "stored": "2106-02-05T21:00:00"
+    },
+    {
+      "input": "2106-02-05T22:00:00-08:00",
+      "local_ticks": 664304472000000000,
+      "ole_date": 75277.91666666667,
+      "phase": "complete",
+      "seconds": 4294875600,
+      "stored": "2106-02-05T22:00:00"
+    },
+    {
+      "input": "2106-02-05T23:00:00-08:00",
+      "local_ticks": 664304508000000000,
+      "ole_date": 75277.95833333333,
+      "phase": "complete",
+      "seconds": 4294879200,
+      "stored": "2106-02-05T23:00:00"
+    }
+  ],
+  "native": [
+    {
+      "input": "2040-10-27T14:30:00.1Z",
+      "system": {
+        "day": 27,
+        "hour": 7,
+        "millisecond": 0,
+        "minute": 30,
+        "month": 10,
+        "second": 0,
+        "weekday": 6,
+        "year": 2040
+      },
+      "variant_success": true,
+      "filetime_success": true,
+      "error": 0,
+      "conversions": [
+        {
+          "platform": "Windows XP x86",
+          "offset_minutes": -240,
+          "seconds": 2234950200
+        },
+        {
+          "platform": "Windows Server 2003 x86",
+          "offset_minutes": -240,
+          "seconds": 2234950200
+        },
+        {
+          "platform": "Windows Server 2025 x64",
+          "offset_minutes": -420,
+          "seconds": 2234961000
+        }
+      ]
+    },
+    {
+      "input": "2040-10-27T14:30:00.4999999Z",
+      "system": {
+        "day": 27,
+        "hour": 7,
+        "millisecond": 0,
+        "minute": 30,
+        "month": 10,
+        "second": 0,
+        "weekday": 6,
+        "year": 2040
+      },
+      "variant_success": true,
+      "filetime_success": true,
+      "error": 0,
+      "conversions": [
+        {
+          "platform": "Windows XP x86",
+          "offset_minutes": -240,
+          "seconds": 2234950200
+        },
+        {
+          "platform": "Windows Server 2003 x86",
+          "offset_minutes": -240,
+          "seconds": 2234950200
+        },
+        {
+          "platform": "Windows Server 2025 x64",
+          "offset_minutes": -420,
+          "seconds": 2234961000
+        }
+      ]
+    },
+    {
+      "input": "2040-10-27T14:30:00.5Z",
+      "system": {
+        "day": 27,
+        "hour": 7,
+        "millisecond": 0,
+        "minute": 30,
+        "month": 10,
+        "second": 0,
+        "weekday": 6,
+        "year": 2040
+      },
+      "variant_success": true,
+      "filetime_success": true,
+      "error": 0,
+      "conversions": [
+        {
+          "platform": "Windows XP x86",
+          "offset_minutes": -240,
+          "seconds": 2234950200
+        },
+        {
+          "platform": "Windows Server 2003 x86",
+          "offset_minutes": -240,
+          "seconds": 2234950200
+        },
+        {
+          "platform": "Windows Server 2025 x64",
+          "offset_minutes": -420,
+          "seconds": 2234961000
+        }
+      ]
+    },
+    {
+      "input": "2040-10-27T14:30:00.9Z",
+      "system": {
+        "day": 27,
+        "hour": 7,
+        "millisecond": 0,
+        "minute": 30,
+        "month": 10,
+        "second": 1,
+        "weekday": 6,
+        "year": 2040
+      },
+      "variant_success": true,
+      "filetime_success": true,
+      "error": 0,
+      "conversions": [
+        {
+          "platform": "Windows XP x86",
+          "offset_minutes": -240,
+          "seconds": 2234950201
+        },
+        {
+          "platform": "Windows Server 2003 x86",
+          "offset_minutes": -240,
+          "seconds": 2234950201
+        },
+        {
+          "platform": "Windows Server 2025 x64",
+          "offset_minutes": -420,
+          "seconds": 2234961001
+        }
+      ]
+    },
+    {
+      "input": "2040-10-27T14:30:00.99Z",
+      "system": {
+        "day": 27,
+        "hour": 7,
+        "millisecond": 0,
+        "minute": 30,
+        "month": 10,
+        "second": 1,
+        "weekday": 6,
+        "year": 2040
+      },
+      "variant_success": true,
+      "filetime_success": true,
+      "error": 0,
+      "conversions": [
+        {
+          "platform": "Windows XP x86",
+          "offset_minutes": -240,
+          "seconds": 2234950201
+        },
+        {
+          "platform": "Windows Server 2003 x86",
+          "offset_minutes": -240,
+          "seconds": 2234950201
+        },
+        {
+          "platform": "Windows Server 2025 x64",
+          "offset_minutes": -420,
+          "seconds": 2234961001
+        }
+      ]
+    },
+    {
+      "input": "2040-10-27T14:30:00.999Z",
+      "system": {
+        "day": 27,
+        "hour": 7,
+        "millisecond": 0,
+        "minute": 30,
+        "month": 10,
+        "second": 1,
+        "weekday": 6,
+        "year": 2040
+      },
+      "variant_success": true,
+      "filetime_success": true,
+      "error": 0,
+      "conversions": [
+        {
+          "platform": "Windows XP x86",
+          "offset_minutes": -240,
+          "seconds": 2234950201
+        },
+        {
+          "platform": "Windows Server 2003 x86",
+          "offset_minutes": -240,
+          "seconds": 2234950201
+        },
+        {
+          "platform": "Windows Server 2025 x64",
+          "offset_minutes": -420,
+          "seconds": 2234961001
+        }
+      ]
+    },
+    {
+      "input": "2040-10-27T14:30:00.9994Z",
+      "system": {
+        "day": 27,
+        "hour": 7,
+        "millisecond": 0,
+        "minute": 30,
+        "month": 10,
+        "second": 1,
+        "weekday": 6,
+        "year": 2040
+      },
+      "variant_success": true,
+      "filetime_success": true,
+      "error": 0,
+      "conversions": [
+        {
+          "platform": "Windows XP x86",
+          "offset_minutes": -240,
+          "seconds": 2234950201
+        },
+        {
+          "platform": "Windows Server 2003 x86",
+          "offset_minutes": -240,
+          "seconds": 2234950201
+        },
+        {
+          "platform": "Windows Server 2025 x64",
+          "offset_minutes": -420,
+          "seconds": 2234961001
+        }
+      ]
+    },
+    {
+      "input": "2040-10-27T14:30:00.9995Z",
+      "system": {
+        "day": 27,
+        "hour": 7,
+        "millisecond": 0,
+        "minute": 30,
+        "month": 10,
+        "second": 1,
+        "weekday": 6,
+        "year": 2040
+      },
+      "variant_success": true,
+      "filetime_success": true,
+      "error": 0,
+      "conversions": [
+        {
+          "platform": "Windows XP x86",
+          "offset_minutes": -240,
+          "seconds": 2234950201
+        },
+        {
+          "platform": "Windows Server 2003 x86",
+          "offset_minutes": -240,
+          "seconds": 2234950201
+        },
+        {
+          "platform": "Windows Server 2025 x64",
+          "offset_minutes": -420,
+          "seconds": 2234961001
+        }
+      ]
+    },
+    {
+      "input": "2040-10-27T14:30:00.9999Z",
+      "system": {
+        "day": 27,
+        "hour": 7,
+        "millisecond": 0,
+        "minute": 30,
+        "month": 10,
+        "second": 1,
+        "weekday": 6,
+        "year": 2040
+      },
+      "variant_success": true,
+      "filetime_success": true,
+      "error": 0,
+      "conversions": [
+        {
+          "platform": "Windows XP x86",
+          "offset_minutes": -240,
+          "seconds": 2234950201
+        },
+        {
+          "platform": "Windows Server 2003 x86",
+          "offset_minutes": -240,
+          "seconds": 2234950201
+        },
+        {
+          "platform": "Windows Server 2025 x64",
+          "offset_minutes": -420,
+          "seconds": 2234961001
+        }
+      ]
+    },
+    {
+      "input": "2040-10-27T14:30:00.9999999Z",
+      "system": {
+        "day": 27,
+        "hour": 7,
+        "millisecond": 0,
+        "minute": 30,
+        "month": 10,
+        "second": 1,
+        "weekday": 6,
+        "year": 2040
+      },
+      "variant_success": true,
+      "filetime_success": true,
+      "error": 0,
+      "conversions": [
+        {
+          "platform": "Windows XP x86",
+          "offset_minutes": -240,
+          "seconds": 2234950201
+        },
+        {
+          "platform": "Windows Server 2003 x86",
+          "offset_minutes": -240,
+          "seconds": 2234950201
+        },
+        {
+          "platform": "Windows Server 2025 x64",
+          "offset_minutes": -420,
+          "seconds": 2234961001
+        }
+      ]
+    },
+    {
+      "input": "1969-12-31T23:59:59-08:00",
+      "system": {
+        "day": 31,
+        "hour": 23,
+        "millisecond": 0,
+        "minute": 59,
+        "month": 12,
+        "second": 59,
+        "weekday": 3,
+        "year": 1969
+      },
+      "variant_success": true,
+      "filetime_success": true,
+      "error": 0,
+      "conversions": [
+        {
+          "platform": "Windows XP x86",
+          "offset_minutes": -240,
+          "seconds": 14399
+        },
+        {
+          "platform": "Windows Server 2003 x86",
+          "offset_minutes": -240,
+          "seconds": 14399
+        },
+        {
+          "platform": "Windows Server 2025 x64",
+          "offset_minutes": -420,
+          "seconds": 25199
+        }
+      ]
+    },
+    {
+      "input": "1970-01-01T00:00:00-08:00",
+      "system": {
+        "day": 1,
+        "hour": 0,
+        "millisecond": 0,
+        "minute": 0,
+        "month": 1,
+        "second": 0,
+        "weekday": 4,
+        "year": 1970
+      },
+      "variant_success": true,
+      "filetime_success": true,
+      "error": 0,
+      "conversions": [
+        {
+          "platform": "Windows XP x86",
+          "offset_minutes": -240,
+          "seconds": 14400
+        },
+        {
+          "platform": "Windows Server 2003 x86",
+          "offset_minutes": -240,
+          "seconds": 14400
+        },
+        {
+          "platform": "Windows Server 2025 x64",
+          "offset_minutes": -420,
+          "seconds": 25200
+        }
+      ]
+    },
+    {
+      "input": "1970-01-01T00:00:00.1-08:00",
+      "system": {
+        "day": 1,
+        "hour": 0,
+        "millisecond": 0,
+        "minute": 0,
+        "month": 1,
+        "second": 0,
+        "weekday": 4,
+        "year": 1970
+      },
+      "variant_success": true,
+      "filetime_success": true,
+      "error": 0,
+      "conversions": [
+        {
+          "platform": "Windows XP x86",
+          "offset_minutes": -240,
+          "seconds": 14400
+        },
+        {
+          "platform": "Windows Server 2003 x86",
+          "offset_minutes": -240,
+          "seconds": 14400
+        },
+        {
+          "platform": "Windows Server 2025 x64",
+          "offset_minutes": -420,
+          "seconds": 25200
+        }
+      ]
+    },
+    {
+      "input": "1970-01-01T00:00:01-08:00",
+      "system": {
+        "day": 1,
+        "hour": 0,
+        "millisecond": 0,
+        "minute": 0,
+        "month": 1,
+        "second": 1,
+        "weekday": 4,
+        "year": 1970
+      },
+      "variant_success": true,
+      "filetime_success": true,
+      "error": 0,
+      "conversions": [
+        {
+          "platform": "Windows XP x86",
+          "offset_minutes": -240,
+          "seconds": 14401
+        },
+        {
+          "platform": "Windows Server 2003 x86",
+          "offset_minutes": -240,
+          "seconds": 14401
+        },
+        {
+          "platform": "Windows Server 2025 x64",
+          "offset_minutes": -420,
+          "seconds": 25201
+        }
+      ]
+    },
+    {
+      "input": "1970-01-01T00:01:00-08:00",
+      "system": {
+        "day": 1,
+        "hour": 0,
+        "millisecond": 0,
+        "minute": 1,
+        "month": 1,
+        "second": 0,
+        "weekday": 4,
+        "year": 1970
+      },
+      "variant_success": true,
+      "filetime_success": true,
+      "error": 0,
+      "conversions": [
+        {
+          "platform": "Windows XP x86",
+          "offset_minutes": -240,
+          "seconds": 14460
+        },
+        {
+          "platform": "Windows Server 2003 x86",
+          "offset_minutes": -240,
+          "seconds": 14460
+        },
+        {
+          "platform": "Windows Server 2025 x64",
+          "offset_minutes": -420,
+          "seconds": 25260
+        }
+      ]
+    },
+    {
+      "input": "1970-01-01T01:00:00-08:00",
+      "system": {
+        "day": 1,
+        "hour": 1,
+        "millisecond": 0,
+        "minute": 0,
+        "month": 1,
+        "second": 0,
+        "weekday": 4,
+        "year": 1970
+      },
+      "variant_success": true,
+      "filetime_success": true,
+      "error": 0,
+      "conversions": [
+        {
+          "platform": "Windows XP x86",
+          "offset_minutes": -240,
+          "seconds": 18000
+        },
+        {
+          "platform": "Windows Server 2003 x86",
+          "offset_minutes": -240,
+          "seconds": 18000
+        },
+        {
+          "platform": "Windows Server 2025 x64",
+          "offset_minutes": -420,
+          "seconds": 28800
+        }
+      ]
+    },
+    {
+      "input": "1970-01-01T12:00:00-08:00",
+      "system": {
+        "day": 1,
+        "hour": 12,
+        "millisecond": 0,
+        "minute": 0,
+        "month": 1,
+        "second": 0,
+        "weekday": 4,
+        "year": 1970
+      },
+      "variant_success": true,
+      "filetime_success": true,
+      "error": 0,
+      "conversions": [
+        {
+          "platform": "Windows XP x86",
+          "offset_minutes": -240,
+          "seconds": 57600
+        },
+        {
+          "platform": "Windows Server 2003 x86",
+          "offset_minutes": -240,
+          "seconds": 57600
+        },
+        {
+          "platform": "Windows Server 2025 x64",
+          "offset_minutes": -420,
+          "seconds": 68400
+        }
+      ]
+    },
+    {
+      "input": "1970-01-02T00:00:00-08:00",
+      "system": {
+        "day": 2,
+        "hour": 0,
+        "millisecond": 0,
+        "minute": 0,
+        "month": 1,
+        "second": 0,
+        "weekday": 5,
+        "year": 1970
+      },
+      "variant_success": true,
+      "filetime_success": true,
+      "error": 0,
+      "conversions": [
+        {
+          "platform": "Windows XP x86",
+          "offset_minutes": -240,
+          "seconds": 100800
+        },
+        {
+          "platform": "Windows Server 2003 x86",
+          "offset_minutes": -240,
+          "seconds": 100800
+        },
+        {
+          "platform": "Windows Server 2025 x64",
+          "offset_minutes": -420,
+          "seconds": 111600
+        }
+      ]
+    },
+    {
+      "input": "1970-01-01T07:59:59Z",
+      "system": {
+        "day": 31,
+        "hour": 23,
+        "millisecond": 0,
+        "minute": 59,
+        "month": 12,
+        "second": 59,
+        "weekday": 3,
+        "year": 1969
+      },
+      "variant_success": true,
+      "filetime_success": true,
+      "error": 0,
+      "conversions": [
+        {
+          "platform": "Windows XP x86",
+          "offset_minutes": -240,
+          "seconds": 14399
+        },
+        {
+          "platform": "Windows Server 2003 x86",
+          "offset_minutes": -240,
+          "seconds": 14399
+        },
+        {
+          "platform": "Windows Server 2025 x64",
+          "offset_minutes": -420,
+          "seconds": 25199
+        }
+      ]
+    },
+    {
+      "input": "1970-01-01T08:00:00Z",
+      "system": {
+        "day": 1,
+        "hour": 0,
+        "millisecond": 0,
+        "minute": 0,
+        "month": 1,
+        "second": 0,
+        "weekday": 4,
+        "year": 1970
+      },
+      "variant_success": true,
+      "filetime_success": true,
+      "error": 0,
+      "conversions": [
+        {
+          "platform": "Windows XP x86",
+          "offset_minutes": -240,
+          "seconds": 14400
+        },
+        {
+          "platform": "Windows Server 2003 x86",
+          "offset_minutes": -240,
+          "seconds": 14400
+        },
+        {
+          "platform": "Windows Server 2025 x64",
+          "offset_minutes": -420,
+          "seconds": 25200
+        }
+      ]
+    },
+    {
+      "input": "1970-01-01T08:00:01Z",
+      "system": {
+        "day": 1,
+        "hour": 0,
+        "millisecond": 0,
+        "minute": 0,
+        "month": 1,
+        "second": 1,
+        "weekday": 4,
+        "year": 1970
+      },
+      "variant_success": true,
+      "filetime_success": true,
+      "error": 0,
+      "conversions": [
+        {
+          "platform": "Windows XP x86",
+          "offset_minutes": -240,
+          "seconds": 14401
+        },
+        {
+          "platform": "Windows Server 2003 x86",
+          "offset_minutes": -240,
+          "seconds": 14401
+        },
+        {
+          "platform": "Windows Server 2025 x64",
+          "offset_minutes": -420,
+          "seconds": 25201
+        }
+      ]
+    },
+    {
+      "input": "2038-01-19T03:14:07Z",
+      "system": {
+        "day": 18,
+        "hour": 19,
+        "millisecond": 0,
+        "minute": 14,
+        "month": 1,
+        "second": 7,
+        "weekday": 1,
+        "year": 2038
+      },
+      "variant_success": true,
+      "filetime_success": true,
+      "error": 0,
+      "conversions": [
+        {
+          "platform": "Windows XP x86",
+          "offset_minutes": -240,
+          "seconds": 2147469247
+        },
+        {
+          "platform": "Windows Server 2003 x86",
+          "offset_minutes": -240,
+          "seconds": 2147469247
+        },
+        {
+          "platform": "Windows Server 2025 x64",
+          "offset_minutes": -420,
+          "seconds": 2147480047
+        }
+      ]
+    },
+    {
+      "input": "2040-01-01T00:00:00Z",
+      "system": {
+        "day": 31,
+        "hour": 16,
+        "millisecond": 0,
+        "minute": 0,
+        "month": 12,
+        "second": 0,
+        "weekday": 6,
+        "year": 2039
+      },
+      "variant_success": true,
+      "filetime_success": true,
+      "error": 0,
+      "conversions": [
+        {
+          "platform": "Windows XP x86",
+          "offset_minutes": -240,
+          "seconds": 2208974400
+        },
+        {
+          "platform": "Windows Server 2003 x86",
+          "offset_minutes": -240,
+          "seconds": 2208974400
+        },
+        {
+          "platform": "Windows Server 2025 x64",
+          "offset_minutes": -420,
+          "seconds": 2208985200
+        }
+      ]
+    },
+    {
+      "input": "2050-01-01T00:00:00Z",
+      "system": {
+        "day": 31,
+        "hour": 16,
+        "millisecond": 0,
+        "minute": 0,
+        "month": 12,
+        "second": 0,
+        "weekday": 5,
+        "year": 2049
+      },
+      "variant_success": true,
+      "filetime_success": true,
+      "error": 0,
+      "conversions": [
+        {
+          "platform": "Windows XP x86",
+          "offset_minutes": -240,
+          "seconds": 2524593600
+        },
+        {
+          "platform": "Windows Server 2003 x86",
+          "offset_minutes": -240,
+          "seconds": 2524593600
+        },
+        {
+          "platform": "Windows Server 2025 x64",
+          "offset_minutes": -420,
+          "seconds": 2524604400
+        }
+      ]
+    },
+    {
+      "input": "2090-01-01T00:00:00Z",
+      "system": {
+        "day": 31,
+        "hour": 16,
+        "millisecond": 0,
+        "minute": 0,
+        "month": 12,
+        "second": 0,
+        "weekday": 6,
+        "year": 2089
+      },
+      "variant_success": true,
+      "filetime_success": true,
+      "error": 0,
+      "conversions": [
+        {
+          "platform": "Windows XP x86",
+          "offset_minutes": -240,
+          "seconds": 3786897600
+        },
+        {
+          "platform": "Windows Server 2003 x86",
+          "offset_minutes": -240,
+          "seconds": 3786897600
+        },
+        {
+          "platform": "Windows Server 2025 x64",
+          "offset_minutes": -420,
+          "seconds": 3786908400
+        }
+      ]
+    },
+    {
+      "input": "2099-01-01T00:00:00Z",
+      "system": {
+        "day": 31,
+        "hour": 16,
+        "millisecond": 0,
+        "minute": 0,
+        "month": 12,
+        "second": 0,
+        "weekday": 3,
+        "year": 2098
+      },
+      "variant_success": true,
+      "filetime_success": true,
+      "error": 0,
+      "conversions": [
+        {
+          "platform": "Windows XP x86",
+          "offset_minutes": -240,
+          "seconds": 4070894400
+        },
+        {
+          "platform": "Windows Server 2003 x86",
+          "offset_minutes": -240,
+          "seconds": 4070894400
+        },
+        {
+          "platform": "Windows Server 2025 x64",
+          "offset_minutes": -420,
+          "seconds": 4070905200
+        }
+      ]
+    },
+    {
+      "input": "2100-01-01T00:00:00Z",
+      "system": {
+        "day": 31,
+        "hour": 16,
+        "millisecond": 0,
+        "minute": 0,
+        "month": 12,
+        "second": 0,
+        "weekday": 4,
+        "year": 2099
+      },
+      "variant_success": true,
+      "filetime_success": true,
+      "error": 0,
+      "conversions": [
+        {
+          "platform": "Windows XP x86",
+          "offset_minutes": -240,
+          "seconds": 4102430400
+        },
+        {
+          "platform": "Windows Server 2003 x86",
+          "offset_minutes": -240,
+          "seconds": 4102430400
+        },
+        {
+          "platform": "Windows Server 2025 x64",
+          "offset_minutes": -420,
+          "seconds": 4102441200
+        }
+      ]
+    },
+    {
+      "input": "2105-01-01T00:00:00Z",
+      "system": {
+        "day": 31,
+        "hour": 16,
+        "millisecond": 0,
+        "minute": 0,
+        "month": 12,
+        "second": 0,
+        "weekday": 3,
+        "year": 2104
+      },
+      "variant_success": true,
+      "filetime_success": true,
+      "error": 0,
+      "conversions": [
+        {
+          "platform": "Windows XP x86",
+          "offset_minutes": -240,
+          "seconds": 4260196800
+        },
+        {
+          "platform": "Windows Server 2003 x86",
+          "offset_minutes": -240,
+          "seconds": 4260196800
+        },
+        {
+          "platform": "Windows Server 2025 x64",
+          "offset_minutes": -420,
+          "seconds": 4260207600
+        }
+      ]
+    },
+    {
+      "input": "2106-02-05T00:00:00Z",
+      "system": {
+        "day": 4,
+        "hour": 16,
+        "millisecond": 0,
+        "minute": 0,
+        "month": 2,
+        "second": 0,
+        "weekday": 4,
+        "year": 2106
+      },
+      "variant_success": true,
+      "filetime_success": true,
+      "error": 0,
+      "conversions": [
+        {
+          "platform": "Windows XP x86",
+          "offset_minutes": -240,
+          "seconds": 4294756800
+        },
+        {
+          "platform": "Windows Server 2003 x86",
+          "offset_minutes": -240,
+          "seconds": 4294756800
+        },
+        {
+          "platform": "Windows Server 2025 x64",
+          "offset_minutes": -420,
+          "seconds": 4294767600
+        }
+      ]
+    },
+    {
+      "input": "2106-02-06T00:00:00Z",
+      "system": {
+        "day": 5,
+        "hour": 16,
+        "millisecond": 0,
+        "minute": 0,
+        "month": 2,
+        "second": 0,
+        "weekday": 5,
+        "year": 2106
+      },
+      "variant_success": true,
+      "filetime_success": true,
+      "error": 0,
+      "conversions": [
+        {
+          "platform": "Windows XP x86",
+          "offset_minutes": -240,
+          "seconds": 4294843200
+        },
+        {
+          "platform": "Windows Server 2003 x86",
+          "offset_minutes": -240,
+          "seconds": 4294843200
+        },
+        {
+          "platform": "Windows Server 2025 x64",
+          "offset_minutes": -420,
+          "seconds": 4294854000
+        }
+      ]
+    },
+    {
+      "input": "2106-02-06T22:28:14Z",
+      "system": {
+        "day": 6,
+        "hour": 14,
+        "millisecond": 0,
+        "minute": 28,
+        "month": 2,
+        "second": 14,
+        "weekday": 6,
+        "year": 2106
+      },
+      "variant_success": true,
+      "filetime_success": true,
+      "error": 0,
+      "conversions": [
+        {
+          "platform": "Windows XP x86",
+          "offset_minutes": -240,
+          "seconds": 4294924094
+        },
+        {
+          "platform": "Windows Server 2003 x86",
+          "offset_minutes": -240,
+          "seconds": 4294924094
+        },
+        {
+          "platform": "Windows Server 2025 x64",
+          "offset_minutes": -420,
+          "seconds": 4294934894
+        }
+      ]
+    },
+    {
+      "input": "2106-02-06T22:28:15Z",
+      "system": {
+        "day": 6,
+        "hour": 14,
+        "millisecond": 0,
+        "minute": 28,
+        "month": 2,
+        "second": 15,
+        "weekday": 6,
+        "year": 2106
+      },
+      "variant_success": true,
+      "filetime_success": true,
+      "error": 0,
+      "conversions": [
+        {
+          "platform": "Windows XP x86",
+          "offset_minutes": -240,
+          "seconds": 4294924095
+        },
+        {
+          "platform": "Windows Server 2003 x86",
+          "offset_minutes": -240,
+          "seconds": 4294924095
+        },
+        {
+          "platform": "Windows Server 2025 x64",
+          "offset_minutes": -420,
+          "seconds": 4294934895
+        }
+      ]
+    },
+    {
+      "input": "2106-02-07T00:00:00Z",
+      "system": {
+        "day": 6,
+        "hour": 16,
+        "millisecond": 0,
+        "minute": 0,
+        "month": 2,
+        "second": 0,
+        "weekday": 6,
+        "year": 2106
+      },
+      "variant_success": true,
+      "filetime_success": true,
+      "error": 0,
+      "conversions": [
+        {
+          "platform": "Windows XP x86",
+          "offset_minutes": -240,
+          "seconds": 4294929600
+        },
+        {
+          "platform": "Windows Server 2003 x86",
+          "offset_minutes": -240,
+          "seconds": 4294929600
+        },
+        {
+          "platform": "Windows Server 2025 x64",
+          "offset_minutes": -420,
+          "seconds": 4294940400
+        }
+      ]
+    },
+    {
+      "input": "2106-02-07T06:28:14Z",
+      "system": {
+        "day": 6,
+        "hour": 22,
+        "millisecond": 0,
+        "minute": 28,
+        "month": 2,
+        "second": 14,
+        "weekday": 6,
+        "year": 2106
+      },
+      "variant_success": true,
+      "filetime_success": true,
+      "error": 0,
+      "conversions": [
+        {
+          "platform": "Windows XP x86",
+          "offset_minutes": -240,
+          "seconds": 4294952894
+        },
+        {
+          "platform": "Windows Server 2003 x86",
+          "offset_minutes": -240,
+          "seconds": 4294952894
+        },
+        {
+          "platform": "Windows Server 2025 x64",
+          "offset_minutes": -420,
+          "seconds": 4294963694
+        }
+      ]
+    },
+    {
+      "input": "2106-02-07T06:28:14-08:00",
+      "system": {
+        "day": 7,
+        "hour": 6,
+        "millisecond": 0,
+        "minute": 28,
+        "month": 2,
+        "second": 14,
+        "weekday": 0,
+        "year": 2106
+      },
+      "variant_success": true,
+      "filetime_success": true,
+      "error": 0,
+      "conversions": [
+        {
+          "platform": "Windows XP x86",
+          "offset_minutes": -240,
+          "seconds": 4294981694
+        },
+        {
+          "platform": "Windows Server 2003 x86",
+          "offset_minutes": -240,
+          "seconds": 4294981694
+        },
+        {
+          "platform": "Windows Server 2025 x64",
+          "offset_minutes": -420,
+          "seconds": 4294992494
+        }
+      ]
+    },
+    {
+      "input": "0001-01-01T00:00:00-08:00",
+      "system": {
+        "day": 30,
+        "hour": 0,
+        "millisecond": 0,
+        "minute": 0,
+        "month": 12,
+        "second": 0,
+        "weekday": 6,
+        "year": 1899
+      },
+      "variant_success": true,
+      "filetime_success": true,
+      "error": 0,
+      "conversions": [
+        {
+          "platform": "Windows XP x86",
+          "offset_minutes": -240,
+          "seconds": -2209147200
+        },
+        {
+          "platform": "Windows Server 2003 x86",
+          "offset_minutes": -240,
+          "seconds": -2209147200
+        },
+        {
+          "platform": "Windows Server 2025 x64",
+          "offset_minutes": -420,
+          "seconds": -2209136400
+        }
+      ]
+    },
+    {
+      "input": "0001-01-01T01:00:00-08:00",
+      "system": {
+        "day": 30,
+        "hour": 1,
+        "millisecond": 0,
+        "minute": 0,
+        "month": 12,
+        "second": 0,
+        "weekday": 6,
+        "year": 1899
+      },
+      "variant_success": true,
+      "filetime_success": true,
+      "error": 0,
+      "conversions": [
+        {
+          "platform": "Windows XP x86",
+          "offset_minutes": -240,
+          "seconds": -2209143600
+        },
+        {
+          "platform": "Windows Server 2003 x86",
+          "offset_minutes": -240,
+          "seconds": -2209143600
+        },
+        {
+          "platform": "Windows Server 2025 x64",
+          "offset_minutes": -420,
+          "seconds": -2209132800
+        }
+      ]
+    },
+    {
+      "input": "0100-01-01T00:00:00-08:00",
+      "system": {
+        "day": 1,
+        "hour": 0,
+        "millisecond": 0,
+        "minute": 0,
+        "month": 1,
+        "second": 0,
+        "weekday": 5,
+        "year": 100
+      },
+      "variant_success": true,
+      "filetime_success": false,
+      "error": 87,
+      "conversions": []
+    },
+    {
+      "input": "0100-01-02T00:00:00-08:00",
+      "system": {
+        "day": 2,
+        "hour": 0,
+        "millisecond": 0,
+        "minute": 0,
+        "month": 1,
+        "second": 0,
+        "weekday": 6,
+        "year": 100
+      },
+      "variant_success": true,
+      "filetime_success": false,
+      "error": 87,
+      "conversions": []
+    },
+    {
+      "input": "1600-12-31T23:59:59-08:00",
+      "system": {
+        "day": 31,
+        "hour": 23,
+        "millisecond": 0,
+        "minute": 59,
+        "month": 12,
+        "second": 59,
+        "weekday": 0,
+        "year": 1600
+      },
+      "variant_success": true,
+      "filetime_success": false,
+      "error": 87,
+      "conversions": []
+    },
+    {
+      "input": "1601-01-01T00:00:00-08:00",
+      "system": {
+        "day": 1,
+        "hour": 0,
+        "millisecond": 0,
+        "minute": 0,
+        "month": 1,
+        "second": 0,
+        "weekday": 1,
+        "year": 1601
+      },
+      "variant_success": true,
+      "filetime_success": true,
+      "error": 87,
+      "conversions": [
+        {
+          "platform": "Windows XP x86",
+          "offset_minutes": -240,
+          "seconds": -11644459200
+        },
+        {
+          "platform": "Windows Server 2003 x86",
+          "offset_minutes": -240,
+          "seconds": -11644459200
+        },
+        {
+          "platform": "Windows Server 2025 x64",
+          "offset_minutes": -420,
+          "seconds": -11644448400
+        }
+      ]
+    },
+    {
+      "input": "1970-01-01T23:59:59-08:00",
+      "system": {
+        "day": 1,
+        "hour": 23,
+        "millisecond": 0,
+        "minute": 59,
+        "month": 1,
+        "second": 59,
+        "weekday": 4,
+        "year": 1970
+      },
+      "variant_success": true,
+      "filetime_success": true,
+      "error": 87,
+      "conversions": [
+        {
+          "platform": "Windows XP x86",
+          "offset_minutes": -240,
+          "seconds": 100799
+        },
+        {
+          "platform": "Windows Server 2003 x86",
+          "offset_minutes": -240,
+          "seconds": 100799
+        },
+        {
+          "platform": "Windows Server 2025 x64",
+          "offset_minutes": -420,
+          "seconds": 111599
+        }
+      ]
+    },
+    {
+      "input": "1970-01-01T23:59:59.9-08:00",
+      "system": {
+        "day": 2,
+        "hour": 0,
+        "millisecond": 0,
+        "minute": 0,
+        "month": 1,
+        "second": 0,
+        "weekday": 5,
+        "year": 1970
+      },
+      "variant_success": true,
+      "filetime_success": true,
+      "error": 87,
+      "conversions": [
+        {
+          "platform": "Windows XP x86",
+          "offset_minutes": -240,
+          "seconds": 100800
+        },
+        {
+          "platform": "Windows Server 2003 x86",
+          "offset_minutes": -240,
+          "seconds": 100800
+        },
+        {
+          "platform": "Windows Server 2025 x64",
+          "offset_minutes": -420,
+          "seconds": 111600
+        }
+      ]
+    },
+    {
+      "input": "2106-02-05T23:59:59-08:00",
+      "system": {
+        "day": 5,
+        "hour": 23,
+        "millisecond": 0,
+        "minute": 59,
+        "month": 2,
+        "second": 59,
+        "weekday": 5,
+        "year": 2106
+      },
+      "variant_success": true,
+      "filetime_success": true,
+      "error": 87,
+      "conversions": [
+        {
+          "platform": "Windows XP x86",
+          "offset_minutes": -240,
+          "seconds": 4294871999
+        },
+        {
+          "platform": "Windows Server 2003 x86",
+          "offset_minutes": -240,
+          "seconds": 4294871999
+        },
+        {
+          "platform": "Windows Server 2025 x64",
+          "offset_minutes": -420,
+          "seconds": 4294882799
+        }
+      ]
+    },
+    {
+      "input": "2106-02-06T00:00:00-08:00",
+      "system": {
+        "day": 6,
+        "hour": 0,
+        "millisecond": 0,
+        "minute": 0,
+        "month": 2,
+        "second": 0,
+        "weekday": 6,
+        "year": 2106
+      },
+      "variant_success": true,
+      "filetime_success": true,
+      "error": 87,
+      "conversions": [
+        {
+          "platform": "Windows XP x86",
+          "offset_minutes": -240,
+          "seconds": 4294872000
+        },
+        {
+          "platform": "Windows Server 2003 x86",
+          "offset_minutes": -240,
+          "seconds": 4294872000
+        },
+        {
+          "platform": "Windows Server 2025 x64",
+          "offset_minutes": -420,
+          "seconds": 4294882800
+        }
+      ]
+    },
+    {
+      "input": "2106-02-06T00:00:01-08:00",
+      "system": {
+        "day": 6,
+        "hour": 0,
+        "millisecond": 0,
+        "minute": 0,
+        "month": 2,
+        "second": 1,
+        "weekday": 6,
+        "year": 2106
+      },
+      "variant_success": true,
+      "filetime_success": true,
+      "error": 87,
+      "conversions": [
+        {
+          "platform": "Windows XP x86",
+          "offset_minutes": -240,
+          "seconds": 4294872001
+        },
+        {
+          "platform": "Windows Server 2003 x86",
+          "offset_minutes": -240,
+          "seconds": 4294872001
+        },
+        {
+          "platform": "Windows Server 2025 x64",
+          "offset_minutes": -420,
+          "seconds": 4294882801
+        }
+      ]
+    },
+    {
+      "input": "2106-02-06T01:00:00-08:00",
+      "system": {
+        "day": 6,
+        "hour": 1,
+        "millisecond": 0,
+        "minute": 0,
+        "month": 2,
+        "second": 0,
+        "weekday": 6,
+        "year": 2106
+      },
+      "variant_success": true,
+      "filetime_success": true,
+      "error": 87,
+      "conversions": [
+        {
+          "platform": "Windows XP x86",
+          "offset_minutes": -240,
+          "seconds": 4294875600
+        },
+        {
+          "platform": "Windows Server 2003 x86",
+          "offset_minutes": -240,
+          "seconds": 4294875600
+        },
+        {
+          "platform": "Windows Server 2025 x64",
+          "offset_minutes": -420,
+          "seconds": 4294886400
+        }
+      ]
+    },
+    {
+      "input": "2106-02-06T06:00:00-08:00",
+      "system": {
+        "day": 6,
+        "hour": 6,
+        "millisecond": 0,
+        "minute": 0,
+        "month": 2,
+        "second": 0,
+        "weekday": 6,
+        "year": 2106
+      },
+      "variant_success": true,
+      "filetime_success": true,
+      "error": 87,
+      "conversions": [
+        {
+          "platform": "Windows XP x86",
+          "offset_minutes": -240,
+          "seconds": 4294893600
+        },
+        {
+          "platform": "Windows Server 2003 x86",
+          "offset_minutes": -240,
+          "seconds": 4294893600
+        },
+        {
+          "platform": "Windows Server 2025 x64",
+          "offset_minutes": -420,
+          "seconds": 4294904400
+        }
+      ]
+    },
+    {
+      "input": "2106-02-06T07:00:00-08:00",
+      "system": {
+        "day": 6,
+        "hour": 7,
+        "millisecond": 0,
+        "minute": 0,
+        "month": 2,
+        "second": 0,
+        "weekday": 6,
+        "year": 2106
+      },
+      "variant_success": true,
+      "filetime_success": true,
+      "error": 87,
+      "conversions": [
+        {
+          "platform": "Windows XP x86",
+          "offset_minutes": -240,
+          "seconds": 4294897200
+        },
+        {
+          "platform": "Windows Server 2003 x86",
+          "offset_minutes": -240,
+          "seconds": 4294897200
+        },
+        {
+          "platform": "Windows Server 2025 x64",
+          "offset_minutes": -420,
+          "seconds": 4294908000
+        }
+      ]
+    },
+    {
+      "input": "2106-02-06T08:00:00-08:00",
+      "system": {
+        "day": 6,
+        "hour": 8,
+        "millisecond": 0,
+        "minute": 0,
+        "month": 2,
+        "second": 0,
+        "weekday": 6,
+        "year": 2106
+      },
+      "variant_success": true,
+      "filetime_success": true,
+      "error": 87,
+      "conversions": [
+        {
+          "platform": "Windows XP x86",
+          "offset_minutes": -240,
+          "seconds": 4294900800
+        },
+        {
+          "platform": "Windows Server 2003 x86",
+          "offset_minutes": -240,
+          "seconds": 4294900800
+        },
+        {
+          "platform": "Windows Server 2025 x64",
+          "offset_minutes": -420,
+          "seconds": 4294911600
+        }
+      ]
+    },
+    {
+      "input": "2106-02-06T12:00:00-08:00",
+      "system": {
+        "day": 6,
+        "hour": 12,
+        "millisecond": 0,
+        "minute": 0,
+        "month": 2,
+        "second": 0,
+        "weekday": 6,
+        "year": 2106
+      },
+      "variant_success": true,
+      "filetime_success": true,
+      "error": 87,
+      "conversions": [
+        {
+          "platform": "Windows XP x86",
+          "offset_minutes": -240,
+          "seconds": 4294915200
+        },
+        {
+          "platform": "Windows Server 2003 x86",
+          "offset_minutes": -240,
+          "seconds": 4294915200
+        },
+        {
+          "platform": "Windows Server 2025 x64",
+          "offset_minutes": -420,
+          "seconds": 4294926000
+        }
+      ]
+    },
+    {
+      "input": "2025-11-02T01:30:00.1234567-07:00",
+      "system": {
+        "day": 2,
+        "hour": 1,
+        "millisecond": 0,
+        "minute": 30,
+        "month": 11,
+        "second": 0,
+        "weekday": 0,
+        "year": 2025
+      },
+      "variant_success": true,
+      "filetime_success": true,
+      "error": 87,
+      "conversions": [
+        {
+          "platform": "Windows XP x86",
+          "offset_minutes": -240,
+          "seconds": 1762061400
+        },
+        {
+          "platform": "Windows Server 2003 x86",
+          "offset_minutes": -240,
+          "seconds": 1762061400
+        },
+        {
+          "platform": "Windows Server 2025 x64",
+          "offset_minutes": -420,
+          "seconds": 1762072200
+        }
+      ]
+    },
+    {
+      "input": "2025-11-02T01:30:00.1234567-08:00",
+      "system": {
+        "day": 2,
+        "hour": 1,
+        "millisecond": 0,
+        "minute": 30,
+        "month": 11,
+        "second": 0,
+        "weekday": 0,
+        "year": 2025
+      },
+      "variant_success": true,
+      "filetime_success": true,
+      "error": 87,
+      "conversions": [
+        {
+          "platform": "Windows XP x86",
+          "offset_minutes": -240,
+          "seconds": 1762061400
+        },
+        {
+          "platform": "Windows Server 2003 x86",
+          "offset_minutes": -240,
+          "seconds": 1762061400
+        },
+        {
+          "platform": "Windows Server 2025 x64",
+          "offset_minutes": -420,
+          "seconds": 1762072200
+        }
+      ]
+    }
+  ],
+  "readback": [
+    {
+      "seconds": 0,
+      "stored": "1969-12-31T17:00:00"
+    },
+    {
+      "seconds": 1,
+      "stored": "1969-12-31T17:00:01"
+    },
+    {
+      "seconds": 86400,
+      "stored": "1970-01-01T17:00:00"
+    },
+    {
+      "seconds": 86401,
+      "stored": "1970-01-01T17:00:01"
+    },
+    {
+      "seconds": 4294880894,
+      "stored": "2106-02-05T23:28:14"
+    },
+    {
+      "seconds": 4294880895,
+      "stored": "2106-02-05T23:28:15"
+    },
+    {
+      "seconds": 4294967294,
+      "stored": "2106-02-06T23:28:14"
+    },
+    {
+      "seconds": 4294967295,
+      "stored": "never"
+    }
+  ]
+}

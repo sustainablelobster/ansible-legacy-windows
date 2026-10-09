@@ -1,0 +1,104 @@
+---
+- name: Prepare the bounded missing-owner scenario
+  sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+    argv:
+      - '{{ ansible_python_interpreter }}'
+      - '-'
+      - '{{ computer_description_workspace.path }}'
+      - '{{ computer_description_case.fixture_operation }}'
+    stdin: '{{ computer_description_script }}'
+  register: computer_description_preparation
+  changed_when: true
+  check_mode: false
+  when: computer_description_case.fixture_operation is defined
+
+- name: Retain the prepared values before the public call
+  ansible.builtin.set_fact:
+    computer_description_previous: >-
+      {{ computer_description_preparation.stdout | from_json }}
+  when: computer_description_case.fixture_operation is defined
+
+- name: '{{ computer_description_case.name }}'
+  block:
+    - name: Apply or predict the requested fields  # noqa: args[module]
+      sustainablelobster.legacy_windows.win_computer_description:
+        owner: >-
+          {{ computer_description_case.parameters.owner | default(omit) }}
+        organization: >-
+          {{ computer_description_case.parameters.organization |
+             default(omit) }}
+        description: >-
+          {{ computer_description_case.parameters.description | default(omit) }}
+      register: computer_description_result
+      check_mode: '{{ computer_description_case.check | default(false) }}'
+      diff: true
+  rescue:
+    - name: Require the declared validation failure
+      ansible.builtin.assert:
+        that:
+          - computer_description_case.error is defined
+          - computer_description_result is failed
+          - computer_description_result.msg == computer_description_case.error
+          - not computer_description_result.changed
+
+- name: Observe registration bytes and the WMI description
+  sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+    argv:
+      - '{{ ansible_python_interpreter }}'
+      - '-'
+      - '{{ computer_description_workspace.path }}'
+      - observe
+    stdin: '{{ computer_description_script }}'
+  register: computer_description_observation
+  changed_when: false
+  check_mode: false
+
+- name: Verify public results and exact non-writing behavior
+  vars:
+    observation: '{{ computer_description_observation.stdout | from_json }}'
+    expected: >-
+      {{ computer_description_previous['values'] |
+         combine(computer_description_case.expected | default({})) }}
+  ansible.builtin.assert:
+    that:
+      - computer_description_result.changed == computer_description_case.changed
+      - >-
+        (computer_description_case.error is defined) ==
+        (computer_description_result is failed)
+      - computer_description_result.warnings | default([]) == []
+      - computer_description_result.diff is not defined
+      - computer_description_result.reboot_required is not defined
+      - computer_description_result.owner is not defined
+      - computer_description_result.organization is not defined
+      - computer_description_result.description is not defined
+      - >-
+        computer_description_case.error is defined or
+        computer_description_result.msg is not defined
+      - >-
+        computer_description_case.error is not defined or
+        computer_description_result.exception == '(traceback unavailable)'
+      - observation['values'] == expected
+      - >-
+        not (computer_description_case.check | default(false)) or
+        observation == computer_description_previous
+      - >-
+        computer_description_case.changed or
+        computer_description_case.partial_change | default(false) or
+        observation == computer_description_previous
+      - >-
+        not (computer_description_case.partial_change | default(false)) or
+        observation.registration == computer_description_previous.registration
+      - >-
+        not (computer_description_case.partial_change | default(false)) or
+        observation.object_path == computer_description_previous.object_path
+
+- name: Retain the complete public result and native observation
+  vars:
+    record:
+      case: '{{ computer_description_case.name }}'
+      result: '{{ computer_description_result }}'
+      snapshot: '{{ computer_description_observation.stdout | from_json }}'
+  ansible.builtin.set_fact:
+    computer_description_previous: '{{ record.snapshot }}'
+    computer_description_results: >-
+      {{ computer_description_results | default([]) + [record] }}

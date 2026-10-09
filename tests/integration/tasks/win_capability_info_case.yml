@@ -1,0 +1,124 @@
+---
+- name: Observe independent whole capability catalogue before the request
+  sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+    argv: ['{{ ansible_python_interpreter }}', '-',
+           '{{ capability_info_workspace.path }}', observe]
+    stdin: '{{ capability_info_program }}'
+  register: capability_info_before
+  changed_when: false
+  no_log: true
+
+- name: Retain complete success or failure from the declared public request
+  block:
+    - name: Execute capability metadata request  # noqa: args[module]
+      sustainablelobster.legacy_windows.win_capability_info: >-
+        {{ capability_info_case.params }}
+      check_mode: '{{ capability_info_case.check | default(false) }}'
+      diff: true
+      register: capability_info_result
+      no_log: true
+  rescue:
+    - name: Retain expected metadata failure for independent observation
+      ansible.builtin.assert:
+        that: capability_info_result is failed
+      no_log: true
+
+- name: Observe independent whole capability catalogue after the request
+  sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+    argv: ['{{ ansible_python_interpreter }}', '-',
+           '{{ capability_info_workspace.path }}', observe]
+    stdin: '{{ capability_info_program }}'
+  register: capability_info_after
+  changed_when: false
+  no_log: true
+
+- name: Retain complete public and native evidence before assertions
+  ansible.builtin.set_fact:
+    capability_info_results: >-
+      {{ capability_info_results + [{
+         'name': capability_info_case.name,
+         'params': capability_info_case.params,
+         'check': capability_info_case.check | default(false),
+         'result': capability_info_result,
+         'before': capability_info_before.stdout | from_json,
+         'after': capability_info_after.stdout | from_json,
+         'validated': false}] }}
+  no_log: true
+
+- name: Save partial capture before any behavior assertion
+  ansible.builtin.copy:
+    content: '{{ capability_info_results | to_nice_json }}'
+    dest: '{{ capability_info_capture.path }}'
+    mode: '0600'
+  delegate_to: localhost
+  changed_when: false
+  no_log: true
+  vars:
+    ansible_connection: local
+    ansible_shell_type: sh
+    ansible_python_interpreter: '{{ ansible_playbook_python }}'
+
+- name: Require unchanged catalogue reboot requests and service configuration
+  vars:
+    capability_info_initial: '{{ capability_info_before.stdout | from_json }}'
+    capability_info_final: '{{ capability_info_after.stdout | from_json }}'
+  ansible.builtin.assert:
+    that:
+      - not capability_info_result.changed
+      - >-
+        (capability_info_result is failed)
+        == (capability_info_case.failed | default(false))
+      - >-
+        capability_info_initial.capabilities ==
+        capability_info_final.capabilities
+      - capability_info_initial.pending == capability_info_final.pending
+      - capability_info_initial.services == capability_info_final.services
+  no_log: true
+
+- name: Require returned identities and exact independently observed states
+  when: not (capability_info_case.failed | default(false))
+  vars:
+    capability_info_catalogue: >-
+      {{ (capability_info_after.stdout | from_json).capabilities }}
+    capability_info_expected: >-
+      {{ capability_info_catalogue.keys() | list | sort
+         if (capability_info_case.all | default(false))
+         else capability_info_case.names | sort }}
+  ansible.builtin.assert:
+    that:
+      - >-
+        capability_info_result.capabilities |
+        map(attribute='name') | list | sort
+        == capability_info_expected
+      - >-
+        capability_info_result.capabilities | map(attribute='name') | list
+        | unique | length == capability_info_result.capabilities | length
+      - capability_info_result.diff is not defined
+  no_log: true
+
+- name: Require complete metadata fields and each independent state
+  when: not (capability_info_case.failed | default(false))
+  ansible.builtin.assert:
+    that:
+      - >-
+        capability_info_entry.keys() | list | sort
+        == ['description', 'display_name', 'download_size', 'install_size',
+            'name', 'state']
+      - >-
+        capability_info_entry.state ==
+        (capability_info_after.stdout | from_json).capabilities[
+          capability_info_entry.name]
+      - capability_info_entry.download_size is number
+      - capability_info_entry.install_size is number
+  loop: '{{ capability_info_result.capabilities | default([]) }}'
+  loop_control:
+    loop_var: capability_info_entry
+    label: '{{ capability_info_entry.name }}'
+  no_log: true
+
+- name: Mark the captured request validated only after all assertions
+  ansible.builtin.set_fact:
+    capability_info_results: >-
+      {{ capability_info_results[:-1] +
+         [capability_info_results[-1] | combine({'validated': true})] }}
+  no_log: true

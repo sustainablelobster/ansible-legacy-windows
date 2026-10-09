@@ -1,0 +1,124 @@
+---
+- name: Verify rejected file URI uploads cannot change Windows files
+  hosts: legacy_windows
+  gather_facts: false
+  vars:
+    uri_file_results: []
+    uri_file_staging_probe: >-
+      import glob,json,os,sys,tempfile;
+      assert sys.version_info[:3] == (3,4,4);
+      roots={tempfile.gettempdir(),os.path.join(os.environ['WINDIR'],'Temp')};
+      print(json.dumps(sorted(p for r in roots for p in
+      glob.glob(os.path.join(r,'ansible-tmp-*')))))
+  tasks:
+    - name: Record original minimum runtime staging
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "{{ uri_file_staging_probe }}""
+      register: uri_file_staging_before
+      changed_when: false
+
+    - name: Allocate the owned file URI workspace
+      sustainablelobster.legacy_windows.win_tempfile:
+        state: directory
+        prefix: legacy-windows-uri-file-
+      register: uri_file_workspace
+
+    - name: Exercise rejection and ordinary download with complete recovery
+      block:
+        - name: Create only the owned protected file
+          sustainablelobster.legacy_windows.win_copy:
+            content: 'protected original bytes'
+            dest: '{{ uri_file_workspace.path }}\existing.bin'
+
+        - name: Resolve native absolute file URLs without inventing URI escaping
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - '-'
+              - '{{ uri_file_workspace.path }}'
+            stdin: |
+              import json, pathlib, sys
+              print(json.dumps({name: pathlib.Path(sys.argv[1], name).as_uri()
+                                for name in ('existing.bin', 'missing.bin')}))
+          register: uri_file_urls
+          changed_when: false
+
+        - name: Observe protected bytes before every request
+          sustainablelobster.legacy_windows.win_stat:
+            path: '{{ uri_file_workspace.path }}\existing.bin'
+            checksum_algorithm: sha256
+          register: uri_file_before
+
+        - name: Reject bodies in normal and preview requests
+          ansible.builtin.include_tasks: tasks/win_uri_file_upload_case.yml
+          loop:
+            - {name: existing.bin, check: false, body: replacement, method: PUT}
+            - {name: existing.bin, check: true, body: '', method: POST}
+            - name: missing.bin
+              check: false
+              body: replacement
+              method: DELETE
+            - {name: missing.bin, check: true, body: '', method: PUT}
+          loop_control:
+            loop_var: uri_file_case
+
+        - name: Keep ordinary file downloads usable
+          sustainablelobster.legacy_windows.win_get_url:
+            url: '{{ (uri_file_urls.stdout | from_json)["existing.bin"] }}'
+            dest: '{{ uri_file_workspace.path }}\download.bin'
+          register: uri_file_download
+
+        - name: Observe downloaded bytes independently
+          sustainablelobster.legacy_windows.win_stat:
+            path: '{{ uri_file_workspace.path }}\download.bin'
+            checksum_algorithm: sha256
+          register: uri_file_downloaded
+
+        - name: Require exact download bytes
+          ansible.builtin.assert:
+            that:
+              - uri_file_download.changed
+              - >-
+                uri_file_downloaded.stat.checksum ==
+                uri_file_before.stat.checksum
+      always:
+        - name: Remove only the owned file URI workspace
+          sustainablelobster.legacy_windows.win_file:
+            path: '{{ uri_file_workspace.path }}'
+            state: absent
+
+        - name: Require workspace absence and original staging independently
+          ansible.builtin.raw: >-
+            cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+            "import os,sys;assert not os.path.exists(sys.argv[1]);
+            {{ uri_file_staging_probe }}" "{{ uri_file_workspace.path }}""
+          register: uri_file_recovery
+          changed_when: false
+
+        - name: Require original staging after cleanup
+          ansible.builtin.assert:
+            that: >-
+              (uri_file_recovery.stdout | from_json) ==
+              (uri_file_staging_before.stdout | from_json)
+
+        - name: Preserve actual public results and recovery when requested
+          ansible.builtin.copy:
+            dest: '{{ uri_file_evidence }}'
+            mode: '0600'
+            content: >-
+              {{ {'results': uri_file_results,
+                  'download': uri_file_download | default(none),
+                  'downloaded': uri_file_downloaded | default(none),
+                  'baseline': uri_file_before | default(none),
+                  'recovery': uri_file_recovery} | to_nice_json }}
+          when: uri_file_evidence is defined
+          delegate_to: localhost
+          vars:
+            ansible_connection: local
+            ansible_shell_type: sh
+            ansible_python_interpreter: '{{ ansible_playbook_python }}'
+          changed_when: false
+
+        - name: Close this play's guest connection
+          ansible.builtin.meta: reset_connection

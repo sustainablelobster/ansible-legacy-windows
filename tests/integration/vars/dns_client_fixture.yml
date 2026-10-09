@@ -1,0 +1,290 @@
+---
+dns_client_fixture: |
+  # Copyright 2026 Joe Lustri
+  # SPDX-License-Identifier: GPL-3.0-or-later
+  """Journal one real adapter and independently observe DNS restoration."""
+
+  import base64
+  import ctypes
+  import ipaddress
+  import json
+  import os
+  import subprocess
+  import sys
+  import time
+  import uuid
+  import winreg
+
+  assert sys.version_info[:3] == (3, 4, 4)
+  WORKSPACE, OPERATION, ADDRESS = sys.argv[1:4]
+  ipaddress.ip_address(ADDRESS)
+  JOURNAL = os.path.join(WORKSPACE, "dns-client-recovery.json")
+  TCPIP = r"SYSTEM\CurrentControlSet\Services\Tcpip\Parameters"
+  DWORD, POINTER = ctypes.c_uint32, ctypes.c_void_p
+  ADVAPI = ctypes.WinDLL("advapi32", use_last_error=True)
+
+
+  def bind(name, arguments):
+      function = getattr(ADVAPI, name)
+      function.restype, function.argtypes = ctypes.c_int32, arguments
+      return function
+
+
+  query_value = bind("RegQueryValueExW", [
+      POINTER, ctypes.c_wchar_p, POINTER, POINTER, POINTER, POINTER])
+  set_value = bind("RegSetValueExW", [
+      POINTER, ctypes.c_wchar_p, DWORD, DWORD, POINTER, DWORD])
+  get_security = bind("RegGetKeySecurity", [POINTER, DWORD, POINTER, POINTER])
+
+
+  def require(status):
+      if status:
+          raise ctypes.WinError(status)
+
+
+  def raw_value(handle, name):
+      kind, size = DWORD(), DWORD()
+      status = query_value(handle, name, None, ctypes.byref(kind), None,
+                           ctypes.byref(size))
+      if status == 2:
+          return {"exists": False}
+      require(status)
+      data = ctypes.create_string_buffer(size.value)
+      require(query_value(handle, name, None, ctypes.byref(kind), data,
+                          ctypes.byref(size)))
+      return {"exists": True, "type": kind.value,
+              "data": base64.b64encode(data.raw[:size.value]).decode("ascii")}
+
+
+  def registry(path, names):
+      try:
+          key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, path, 0,
+                               winreg.KEY_QUERY_VALUE | 0x20000)
+      except FileNotFoundError:
+          return None
+      with key:
+          values = {name: raw_value(int(key), name) for name in names}
+          size = DWORD()
+          status = get_security(int(key), 7, None, ctypes.byref(size))
+          if status != 122:
+              require(status)
+          descriptor = ctypes.create_string_buffer(size.value)
+          require(get_security(int(key), 7, descriptor, ctypes.byref(size)))
+          return {"values": values, "security":
+                  base64.b64encode(descriptor.raw[:size.value]).decode("ascii")}
+
+
+  def text(value):
+      if not value["exists"]:
+          return ""
+      assert value["type"] == 1, "Expected a DNS REG_SZ setting"
+      return base64.b64decode(value["data"]).decode("utf-16-le").rstrip("\0")
+
+
+  def locate():
+      with WmiConnection() as connection:
+          adapters = connection.query(
+              "SELECT DeviceID, NetConnectionID FROM Win32_NetworkAdapter",
+              ["DeviceID", "NetConnectionID"])
+          configurations = connection.query(
+              "SELECT * FROM Win32_NetworkAdapterConfiguration "
+              "WHERE IPEnabled=TRUE",
+              ["Index", "SettingID", "IPAddress", "__PATH"])
+      matching = [row for row in configurations if ADDRESS in row["IPAddress"]]
+      assert len(matching) == 1, "IP SSH address must identify one adapter"
+      row = matching[0]
+      names = [item["NetConnectionID"] for item in adapters
+               if item["DeviceID"] == str(row["Index"])
+               and item["NetConnectionID"]]
+      assert len(names) == 1, "Adapter must have one caption"
+      return {"guid": row["SettingID"], "path": row["__PATH"], "name": names[0]}
+
+
+  def observe(identity):
+      guid = identity["guid"]
+      global_settings = registry(TCPIP, ("SearchList", "NameServer"))
+      search = text(global_settings["values"]["SearchList"])
+      expected_suffixes = search.split(",") if search else []
+      deadline = time.monotonic() + 15
+      while True:
+          with WmiConnection() as connection:
+              rows = connection.query(
+                  'SELECT * FROM Win32_NetworkAdapterConfiguration '
+                  'WHERE SettingID="' + guid + '"',
+                  ["IPEnabled", "DHCPEnabled", "IPAddress", "IPSubnet",
+                   "DNSServerSearchOrder", "DNSDomainSuffixSearchOrder",
+                   "FullDNSRegistrationEnabled",
+                   "DomainDNSRegistrationEnabled"])
+          assert len(rows) == 1, "Journaled adapter identity is unavailable"
+          # Modern WMI caches the global suffix list after the registry is set.
+          # Retain its observation, but require it to settle before comparing.
+          if (rows[0]["DNSDomainSuffixSearchOrder"] or []) == expected_suffixes:
+              break
+          assert time.monotonic() < deadline, (
+              "DNS suffix provider did not settle within 15 seconds")
+          time.sleep(0.25)
+      v4 = registry(TCPIP + "\\Interfaces\\" + guid,
+                    ("NameServer", "DhcpNameServer", "EnableDHCP"))
+      v6 = registry(TCPIP.replace("Tcpip", "Tcpip6") + "\\Interfaces\\" + guid,
+                    ("NameServer", "Dhcpv6DNSServers", "EnableDHCP"))
+      policy = registry(r"SOFTWARE\Policies\Microsoft\Windows NT\DNSClient",
+                        ("SearchList",))
+      assert (policy is None or
+              not policy["values"]["SearchList"]["exists"]), (
+          "Fixture must not override DNS group policy")
+      static_v4 = text(v4["values"]["NameServer"])
+      static_v6 = text(v6["values"]["NameServer"]) if v6 else ""
+      native_dns_api = getattr(ctypes.WinDLL("iphlpapi"),
+                               "SetInterfaceDnsSettings", None) is not None
+      return {"identity": identity, "wmi": rows[0], "v4": v4, "v6": v6,
+              "global": global_settings, "policy": policy,
+              "suffixes": search.split(",") if search else [],
+              "static_v4": static_v4.split(",") if static_v4 else [],
+              "static_v6": static_v6.split(",") if static_v6 else [],
+              "native_dns_api": native_dns_api}
+
+
+  def save(state, mode):
+      with open(JOURNAL, mode) as stream:
+          json.dump(state, stream, sort_keys=True)
+          stream.flush()
+          os.fsync(stream.fileno())
+
+
+  def load():
+      with open(JOURNAL) as stream:
+          state = json.load(stream)
+      assert state["workspace"] == os.path.abspath(WORKSPACE)
+      assert state["address"] == ADDRESS
+      assert state["initial"]["identity"] == state["identity"]
+      return state
+
+
+  def backup():
+      assert not os.path.exists(JOURNAL), "DNS recovery journal already exists"
+      identity = locate()
+      state = {"workspace": os.path.abspath(WORKSPACE), "address": ADDRESS,
+               "identity": identity, "initial": observe(identity),
+               "restored": False}
+      save(state, "x")
+      assert load() == state, "DNS recovery journal verification failed"
+      return state
+
+
+  class DnsSettings(ctypes.Structure):
+      _fields_ = [("version", DWORD), ("flags", ctypes.c_uint64),
+                  ("domain", ctypes.c_wchar_p), ("servers", ctypes.c_wchar_p),
+                  ("search", ctypes.c_wchar_p), ("registration", DWORD),
+                  ("register_name", DWORD), ("llmnr", DWORD),
+                  ("query_name", DWORD),
+                  ("profile", ctypes.c_wchar_p)]
+
+
+  def servers(identity, v4, v6):
+      library = ctypes.WinDLL("iphlpapi")
+      setter = getattr(library, "SetInterfaceDnsSettings", None)
+      if setter is not None:
+          setter.restype = DWORD
+          setter.argtypes = [_Guid, ctypes.POINTER(DnsSettings)]
+          guid = _Guid.from_buffer_copy(uuid.UUID(identity["guid"]).bytes_le)
+          for flags, value in ((2, v4), (3, v6)):
+              settings = DnsSettings(version=1, flags=flags, servers=value)
+              require(setter(guid, ctypes.byref(settings)))
+      else:
+          path = (TCPIP.replace("Tcpip", "Tcpip6") +
+                  "\\Interfaces\\" + identity["guid"])
+          if registry(path, ("NameServer",)) is not None:
+              arguments = ["set", "dnsservers", "name=" + identity["name"],
+                           "source=static", "address=" + v6.split(",")[0],
+                           "validate=no"] if v6 else [
+                  "set", "dnsservers", "name=" + identity["name"],
+                  "source=dhcp"]
+              commands = [arguments]
+              commands.extend([
+                  "add", "dnsservers", "name=" + identity["name"],
+                  "address=" + address, "index=" + str(index), "validate=no"]
+                  for index, address in enumerate(v6.split(",")[1:], 2))
+              executable = os.path.join(os.environ["SystemRoot"], "System32",
+                                        "netsh.exe")
+              for command in commands:
+                  with subprocess.Popen(
+                          [executable, "interface", "ipv6"] + command,
+                          stdout=subprocess.PIPE,
+                          stderr=subprocess.STDOUT) as process:
+                      output = process.communicate()[0].decode(
+                          "mbcs", "replace")
+                  assert process.returncode == 0, output
+          with WmiConnection() as connection:
+              result = connection.call_method(
+                  identity["path"], "SetDNSServerSearchOrder", ["ReturnValue"],
+                  {"DNSServerSearchOrder": v4.split(",")} if v4 else {})
+          assert result["ReturnValue"] == 0, result
+
+
+  def suffixes(values):
+      with WmiConnection() as connection:
+          result = connection.call_method(
+              "Win32_NetworkAdapterConfiguration", "SetDNSSuffixSearchOrder",
+              ["ReturnValue"], {"DNSDomainSuffixSearchOrder": values})
+      assert result["ReturnValue"] == 0, result
+
+
+  def restore_value(path, name, saved):
+      with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, path, 0,
+                          winreg.KEY_SET_VALUE) as key:
+          if not saved["exists"]:
+              try:
+                  winreg.DeleteValue(key, name)
+              except FileNotFoundError:
+                  pass
+          else:
+              data = base64.b64decode(saved["data"])
+              buffer = ctypes.create_string_buffer(data)
+              require(set_value(int(key), name, 0, saved["type"],
+                                buffer, len(data)))
+
+
+  def setup(state):
+      servers(state["identity"], "192.0.2.51", "")
+      suffixes([])
+
+
+  def cleanup(state):
+      identity, initial = state["identity"], state["initial"]
+      current = observe(identity)
+      if current["v4"] != initial["v4"] or current["v6"] != initial["v6"]:
+          original_v6 = (text(initial["v6"]["values"]["NameServer"])
+                         if initial["v6"] else "")
+          servers(identity, text(initial["v4"]["values"]["NameServer"]),
+                  original_v6)
+      if current["suffixes"] != initial["suffixes"]:
+          suffixes(initial["suffixes"])
+      paths = [(TCPIP + "\\Interfaces\\" + identity["guid"],
+                initial["v4"], "NameServer"),
+               (TCPIP, initial["global"], "SearchList")]
+      if initial["v6"] is not None:
+          v6_path = (TCPIP.replace("Tcpip", "Tcpip6") +
+                     "\\Interfaces\\" + identity["guid"])
+          paths.append((v6_path,
+                        initial["v6"], "NameServer"))
+      for path, snapshot, name in paths:
+          current_value = registry(path, (name,))["values"][name]
+          if current_value != snapshot["values"][name]:
+              restore_value(path, name, snapshot["values"][name])
+      assert observe(identity) == initial, "Restored DNS snapshot differs"
+      state["restored"] = True
+      save(state, "w")
+
+
+  assert OPERATION in ("setup", "observe", "cleanup"), OPERATION
+  if OPERATION == "cleanup" and not os.path.exists(JOURNAL):
+      print(json.dumps({"restored": True, "journal_created": False}))
+      sys.exit(0)
+  state = backup() if OPERATION == "setup" else load()
+  if OPERATION == "setup":
+      setup(state)
+  if OPERATION == "cleanup":
+      cleanup(state)
+      print(json.dumps({"restored": True, "journal_created": True}))
+  else:
+      print(json.dumps(observe(state["identity"])))

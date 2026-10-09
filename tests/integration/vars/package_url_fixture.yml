@@ -1,0 +1,34 @@
+---
+package_url_helper_names:
+  - legacy_windows_module
+  - legacy_windows_text
+  - legacy_windows_process
+  - legacy_windows_account
+  - legacy_windows_group
+  - legacy_windows_owner
+  - legacy_windows_link
+  - legacy_windows_acl_inheritance
+  - legacy_windows_acl
+  - legacy_windows_package_msi
+  - legacy_windows_wmi
+  - legacy_windows_service
+package_url_program: |
+  import base64
+  import sys
+  import types
+  {% for name in package_url_helper_names %}
+  helper=types.ModuleType('{{ name }}')
+  sys.modules[helper.__name__]=helper
+  source='{{ lookup("file",
+      playbook_dir + "/../../plugins/module_utils/" + name + ".py")
+      | b64encode }}'
+  exec(compile(base64.b64decode(source),helper.__name__+'.py','exec'),helper.__dict__)
+  {% endfor %}
+  base=types.ModuleType('package_msp_fixture')
+  sys.modules[base.__name__]=base
+  source='{{ lookup("file",
+      playbook_dir + "/fixtures/package_msp_fixture.py") | b64encode }}'
+  exec(compile(base64.b64decode(source),'package_msp_fixture.py','exec'),base.__dict__)
+  source='{{ lookup("file",
+      playbook_dir + "/fixtures/package_url_fixture.py") | b64encode }}'
+  exec(compile(base64.b64decode(source),'package_url_fixture.py','exec'))

@@ -1,0 +1,320 @@
+---
+- name: Verify native async launch status timeout and strict recovery
+  hosts: legacy_windows
+  gather_facts: false
+  vars_files:
+    - vars/native_async.yml
+  tasks:
+    - name: Require actual Python and record original global staging
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import glob,json,os,sys,tempfile;
+        assert sys.version_info[:3] == (3,4,4);
+        print(json.dumps(sorted(glob.glob(os.path.join(
+        tempfile.gettempdir(),'ansible-tmp-*')))))""
+      register: native_async_staging_before
+      changed_when: false
+
+    - name: Allocate private local async evidence
+      ansible.builtin.tempfile:
+        path: >-
+          {{ evidence_dir |
+          default(playbook_dir + '/../../tmp/codex/evidence') }}
+        state: file
+        prefix: "native-async-{{ inventory_hostname }}-"
+        suffix: .json
+      register: native_async_capture
+      delegate_to: localhost
+      vars: &local
+        ansible_connection: local
+        ansible_shell_type: sh
+        ansible_python_interpreter: "{{ ansible_playbook_python }}"
+
+    - name: Allocate an exclusively owned async workspace
+      sustainablelobster.legacy_windows.win_tempfile:
+        prefix: legacy-windows-native-async-
+        state: directory
+      register: native_async_workspace
+
+    - name: Exercise bounded jobs with protected-state recovery
+      block:
+        - name: Journal protected bytes configuration and owned cache
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - "{{ ansible_python_interpreter }}"
+              - '-'
+              - "{{ native_async_workspace.path }}"
+              - setup
+            stdin: "{{ native_async_program }}"
+          register: native_async_setup
+          changed_when: false
+          no_log: true
+
+        - name: Launch a complete native ping result
+          sustainablelobster.legacy_windows.win_ping:
+            data: 'async café λ'
+          async: 30
+          poll: 0
+          vars: &async_vars
+            ansible_remote_tmp: "{{ native_async_workspace.path }}\\staging"
+            ansible_async_dir: "{{ native_async_workspace.path }}\\cache"
+          register: native_async_ping
+
+        - name: Require standard launch metadata
+          ansible.builtin.assert:
+            that:
+              - native_async_ping.started
+              - not native_async_ping.finished
+              - not native_async_ping.changed
+              - native_async_ping.ansible_job_id is match('^j[0-9]+\.[0-9]+$')
+
+        - name: Disconnect the launching SSH session
+          ansible.builtin.meta: reset_connection
+
+        - name: Poll native status using the standard explicit until interface
+          sustainablelobster.legacy_windows.async_status:
+            jid: "{{ native_async_ping.ansible_job_id }}"
+          vars: *async_vars
+          register: native_async_ping_status
+          until: native_async_ping_status.finished
+          retries: 30
+          delay: 1
+
+        - name: Require literal Unicode result and finished state
+          ansible.builtin.assert:
+            that:
+              - native_async_ping_status.ping == 'async café λ'
+              - native_async_ping_status.started
+              - native_async_ping_status.finished
+              - not native_async_ping_status.changed
+
+        - name: Launch an owned descendant tree that exceeds its deadline
+          when: native_async_exercise_timeout | bool
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - "{{ ansible_python_interpreter }}"
+              - '-'
+              - "{{ native_async_workspace.path }}"
+              - payload
+            stdin: "{{ native_async_program }}"
+          async: 5
+          poll: 0
+          vars: *async_vars
+          register: native_async_timeout
+
+        - name: Pin the live watchdog identity before its deadline
+          when: native_async_exercise_timeout | bool
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - "{{ ansible_python_interpreter }}"
+              - '-'
+              - "{{ native_async_workspace.path }}"
+              - record
+              - "{{ native_async_timeout | to_json | b64encode }}"
+            stdin: "{{ native_async_program }}"
+          register: native_async_timeout_identity
+          changed_when: false
+
+        - name: >-
+            Retain the full expected timeout without changing its failed field
+          when: native_async_exercise_timeout | bool
+          block:
+            - name: Poll the complete timeout record
+              sustainablelobster.legacy_windows.async_status:
+                jid: "{{ native_async_timeout.ansible_job_id }}"
+              vars: *async_vars
+              register: native_async_timeout_status
+              until: native_async_timeout_status.finished
+              retries: 30
+              delay: 1
+          rescue:
+            - name: Keep the literal timeout module failure
+              ansible.builtin.debug:
+                msg: Expected watchdog timeout retained.
+
+        - name: Require the source watchdog timeout message
+          when: native_async_exercise_timeout | bool
+          ansible.builtin.assert:
+            that:
+              - native_async_timeout_status.failed
+              - >-
+                native_async_timeout_status.msg ==
+                ('failure during async watchdog: ' ~
+                'timed out waiting for module completion')
+              - native_async_timeout_status.stdout == none
+              - native_async_timeout_status.stderr == ''
+
+        - name: Observe exact process death and protected state before cleanup
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - "{{ ansible_python_interpreter }}"
+              - '-'
+              - "{{ native_async_workspace.path }}"
+              - observe
+            stdin: "{{ native_async_program }}"
+          register: native_async_observation
+          changed_when: false
+          no_log: true
+
+        - name: Require descendants already dead without fixture recovery
+          ansible.builtin.assert:
+            that:
+              - >-
+                (native_async_observation.stdout | from_json).processes |
+                selectattr('actual') | selectattr('actual.alive') |
+                list | length == 0
+              - >-
+                (native_async_observation.stdout | from_json).staging == []
+
+        - name: Compare the untouched released async wrapper on modern Windows
+          when: native_async_compare | bool
+          block:
+            - name: Launch the same literal Unicode ping with released source
+              ansible.windows.win_ping:
+                data: 'async café λ'
+              async: 30
+              poll: 0
+              vars: *async_vars
+              register: native_async_original_ping
+
+            - name: Poll through the unchanged core status action
+              ansible.builtin.async_status:
+                jid: "{{ native_async_original_ping.ansible_job_id }}"
+              vars: *async_vars
+              register: native_async_original_ping_status
+              until: native_async_original_ping_status.finished
+              retries: 30
+              delay: 1
+
+            - name: Require literal released module payload and metadata types
+              ansible.builtin.assert:
+                that:
+                  - >-
+                    native_async_original_ping_status.ping ==
+                    native_async_ping_status.ping
+                  - native_async_original_ping_status.started
+                  - native_async_original_ping_status.finished
+                  - not native_async_original_ping_status.changed
+                  - >-
+                    native_async_original_ping_status.ansible_job_id ==
+                    native_async_original_ping.ansible_job_id
+                  - >-
+                    native_async_original_ping_status.
+                    ansible_async_watchdog_pid ==
+                    native_async_original_ping.ansible_async_watchdog_pid
+
+            - name: Compare every typed public field with bounded job metadata
+              sustainablelobster.legacy_windows.win_command:
+                argv:
+                  - "{{ ansible_python_interpreter }}"
+                  - '-'
+                  - "{{ native_async_workspace.path }}"
+                  - compare
+                  - >-
+                    {{ {'native_launch': native_async_ping,
+                        'native_status': native_async_ping_status,
+                        'original_launch': native_async_original_ping,
+                        'original_status': native_async_original_ping_status} |
+                        to_json | b64encode }}
+                stdin: "{{ native_async_program }}"
+              register: native_async_ping_comparison
+              changed_when: false
+
+        - name: Erase a completed cache with the public native status interface
+          sustainablelobster.legacy_windows.async_status:
+            jid: "{{ native_async_ping.ansible_job_id }}"
+            mode: cleanup
+          vars: *async_vars
+          register: native_async_erased
+
+        - name: Require the literal erased path and nonchanging cleanup result
+          ansible.builtin.assert:
+            that:
+              - native_async_erased.erased == native_async_ping.results_file
+              - not native_async_erased.changed
+
+      always:
+        - name: Recover only journal-owned workers and check protection
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - "{{ ansible_python_interpreter }}"
+              - '-'
+              - "{{ native_async_workspace.path }}"
+              - cleanup
+            stdin: "{{ native_async_program }}"
+          register: native_async_recovery
+          failed_when: false
+          changed_when: false
+          no_log: true
+
+        - name: Persist every raw result before recovery validation
+          ansible.builtin.copy:
+            content: >-
+              {{ {'workspace': native_async_workspace,
+                  'setup': native_async_setup | default(none),
+                  'ping_launch': native_async_ping | default(none),
+                  'ping_status': native_async_ping_status | default(none),
+                  'timeout_launch': native_async_timeout | default(none),
+                  'timeout_identity':
+                    native_async_timeout_identity | default(none),
+                  'timeout_status': native_async_timeout_status | default(none),
+                  'observation': native_async_observation | default(none),
+                  'original_ping_launch':
+                    native_async_original_ping | default(none),
+                  'original_ping_status':
+                    native_async_original_ping_status | default(none),
+                  'ping_comparison':
+                    native_async_ping_comparison | default(none),
+                  'erased': native_async_erased | default(none),
+                  'recovery': native_async_recovery,
+                  'staging_before': native_async_staging_before} |
+                  to_nice_json }}
+            dest: "{{ native_async_capture.path }}"
+            mode: '0600'
+          delegate_to: localhost
+          vars: *local
+          changed_when: false
+          no_log: true
+
+        - name: Require complete owned-process recovery
+          ansible.builtin.assert:
+            that:
+              - native_async_recovery.rc == 0
+              - (native_async_recovery.stdout | from_json).restored
+
+        - name: Remove only the verified owned workspace
+          sustainablelobster.legacy_windows.win_file:
+            path: "{{ native_async_workspace.path }}"
+            state: absent
+
+        - name: Require workspace absence and original global staging
+          ansible.builtin.raw: >-
+            cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+            "import glob,json,os,tempfile;
+            assert not os.path.exists(r'{{ native_async_workspace.path }}');
+            print(json.dumps(sorted(glob.glob(os.path.join(
+            tempfile.gettempdir(),'ansible-tmp-*')))))""
+          register: native_async_staging_after
+          changed_when: false
+          failed_when: >-
+            native_async_staging_after.rc != 0 or
+            (native_async_staging_after.stdout | from_json) !=
+            (native_async_staging_before.stdout | from_json)
+
+        - name: Retain the final workspace and exact global staging observation
+          ansible.builtin.copy:
+            content: >-
+              {{ ((lookup('ansible.builtin.file', native_async_capture.path) |
+                  from_json) | combine({'staging_after':
+                    native_async_staging_after})) |
+                  to_nice_json }}
+            dest: "{{ native_async_capture.path }}"
+            mode: '0600'
+          delegate_to: localhost
+          vars: *local
+          changed_when: false
+          no_log: true
+
+        - name: >-
+            Close this owner's persistent SSH connection after verified cleanup
+          ansible.builtin.meta: reset_connection

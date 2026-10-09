@@ -1,0 +1,27 @@
+---
+# SPDX-License-Identifier: GPL-3.0-or-later
+- name: Bind Unicode shorthand cases before the established journal fixture
+  hosts: legacy_windows
+  gather_facts: false
+  vars_files:
+    - vars/regex_shorthand.yml
+  tasks:
+    - name: Select exact shorthand inputs without guest I/O
+      tags: [regex_shorthand_selection]
+      ansible.builtin.set_fact:
+        regex_selection_fixture: '{{ regex_shorthand_fixture }}'
+        regex_selection_find_cases: '{{ regex_shorthand_find_cases }}'
+        regex_selection_wait_cases: '{{ regex_shorthand_wait_cases }}'
+    - name: Require the bounded input identities before allocating files
+      tags: [regex_shorthand_selection]
+      ansible.builtin.assert:
+        that:
+          - regex_selection_find_cases | map(attribute='id') | list ==
+            ['word', 'nonword', 'digit', 'nondigit', 'whitespace',
+             'nonwhitespace', 'boundary', 'nonboundary']
+          - regex_selection_wait_cases | map(attribute='id') | list ==
+            ['digit', 'control-not-space', 'control-nonspace',
+             'mark-boundary', 'joiner-boundary']
+
+- name: Compare complete shorthand Find and Wait results with owned recovery
+  ansible.builtin.import_playbook: regex_selection.yml

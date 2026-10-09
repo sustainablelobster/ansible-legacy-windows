@@ -1,0 +1,185 @@
+---
+- name: Establish the exact owned native prerequisite
+  sustainablelobster.legacy_windows.win_command:
+    argv: ['{{ ansible_python_interpreter }}', '-',
+           '{{ package_url_workspace.path }}',
+           prepare, '{{ package_url_case.initial }}']
+    stdin: '{{ package_url_program }}'
+  register: package_url_before
+  changed_when: false
+  no_log: true
+
+- name: Observe complete native public URL package result
+  block:
+    - name: Request native URL package behavior  # noqa: args[module]
+      sustainablelobster.legacy_windows.win_package: >-
+        {{ package_url_case.params }}
+      register: package_url_native
+      check_mode: '{{ package_url_case.check | default(false) }}'
+  rescue:
+    - name: Retain the native failure unchanged
+      ansible.builtin.debug:
+        msg: Native URL package failure retained.
+
+- name: Observe native complete URL package and protected state
+  sustainablelobster.legacy_windows.win_command:
+    argv: ['{{ ansible_python_interpreter }}', '-',
+           '{{ package_url_workspace.path }}', observe]
+    stdin: '{{ package_url_program }}'
+  register: package_url_after_native
+  changed_when: false
+  no_log: true
+
+- name: Establish the identical owned source prerequisite
+  when: package_compare | bool
+  sustainablelobster.legacy_windows.win_command:
+    argv: ['{{ ansible_python_interpreter }}', '-',
+           '{{ package_url_workspace.path }}',
+           prepare, '{{ package_url_case.initial }}']
+    stdin: '{{ package_url_program }}'
+  register: package_url_before_original
+  changed_when: false
+  no_log: true
+
+- name: Observe complete untouched released URL package result
+  when: package_compare | bool
+  block:
+    - name: Request original URL package behavior
+      ansible.windows.win_package: '{{ package_url_case.params }}'
+      register: package_url_original
+      check_mode: '{{ package_url_case.check | default(false) }}'
+      vars:
+        ansible_shell_type: cmd
+        ansible_remote_tmp: '{{ package_url_workspace.path }}'
+  rescue:
+    - name: Retain the source failure unchanged
+      ansible.builtin.debug:
+        msg: Original URL package failure retained.
+
+- name: Observe source complete URL package and protected state
+  when: package_compare | bool
+  sustainablelobster.legacy_windows.win_command:
+    argv: ['{{ ansible_python_interpreter }}', '-',
+           '{{ package_url_workspace.path }}', observe]
+    stdin: '{{ package_url_program }}'
+  register: package_url_after_original
+  changed_when: false
+  no_log: true
+
+- name: Retain raw observations before any assertion
+  ansible.builtin.set_fact:
+    package_url_results: >-
+      {{ package_url_results + [{'name': package_url_case.name,
+      'request': package_url_case.params,
+      'expected': package_url_case,
+      'native': package_url_native,
+      'original': package_url_original | default(none),
+      'before': package_url_before,
+      'before_original': package_url_before_original | default(none),
+      'after_native': package_url_after_native,
+      'after_original': package_url_after_original | default(none),
+      'validated': false}] }}
+
+- name: Persist raw URL package observation
+  ansible.builtin.copy:
+    content: >-
+      {{ {'results': package_url_results, 'journal': package_url_journal,
+      'setup': package_url_setup} | to_nice_json }}
+    dest: '{{ package_url_capture.path }}'
+    mode: '0600'
+  delegate_to: localhost
+  vars: &controller
+    ansible_connection: local
+    ansible_shell_type: sh
+    ansible_python_interpreter: '{{ ansible_playbook_python }}'
+  changed_when: false
+  no_log: true
+
+- name: Require expected native public flags, request paths and installed bytes
+  vars:
+    after: '{{ package_url_after_native.stdout | from_json }}'
+    downloaded: '{{ package_url_case.requests | length > 0 }}'
+  ansible.builtin.assert:
+    that:
+      - >-
+        (package_url_native is failed) ==
+        (package_url_case.failed | default(false))
+      - >-
+        package_url_native.changed ==
+        (package_url_case.changed | default(false))
+      - not package_url_native.reboot_required | default(false)
+      - after.state == (-1 if package_url_case.expected == 'absent' else 5)
+      - >-
+        after.outputs | length ==
+        (0 if package_url_case.expected == 'absent' else 1)
+      - >-
+        package_url_case.expected == 'absent' or
+        after.outputs['Sample.txt'].bytes.raw_bytes ==
+        ('This is version 1.0' | b64encode)
+      - >-
+        after.requests | map(attribute='method') | list ==
+        (['GET'] * (package_url_case.requests | length))
+      - >-
+        after.requests | map(attribute='path') | list ==
+        package_url_case.requests
+      - >-
+        not downloaded or package_url_case.download_failure | default(false) or
+        (package_url_native.elapsed is number and
+        package_url_native.elapsed >= 0 and
+        package_url_native.elapsed <= after.ended - after.started)
+      - >-
+        downloaded and not package_url_case.download_failure | default(false) or
+        ['elapsed', 'status_code'] |
+        intersect(package_url_native.keys() | list) == []
+
+- name: Compare whole typed source results and exact recorded effects
+  when: package_compare | bool
+  vars:
+    native_public: >-
+      {{ package_url_native | dict2items |
+      rejectattr('key', 'in', ['invocation', 'exception']) | items2dict }}
+    original_public: >-
+      {{ package_url_original | dict2items |
+      rejectattr('key', 'in', ['invocation', 'exception']) | items2dict }}
+    downloaded: '{{ package_url_case.requests | length > 0 }}'
+    timed: >-
+      {{ downloaded and
+      not package_url_case.download_failure | default(false) }}
+    native_before: '{{ package_url_before.stdout | from_json }}'
+    original_before: '{{ package_url_before_original.stdout | from_json }}'
+    native_after: '{{ package_url_after_native.stdout | from_json }}'
+    original_after: '{{ package_url_after_original.stdout | from_json }}'
+  ansible.builtin.assert:
+    that:
+      - >-
+        not timed or (package_url_original.elapsed is number and
+        package_url_original.elapsed >= 0 and package_url_original.elapsed <=
+        original_after.ended - original_after.started)
+      - >-
+        not timed or (package_url_native.elapsed | type_debug) ==
+        (package_url_original.elapsed | type_debug)
+      - >-
+        ((native_public | combine({'elapsed': 0} if timed else {})) |
+        to_json(sort_keys=true)) ==
+        ((original_public | combine({'elapsed': 0} if timed else {})) |
+        to_json(sort_keys=true))
+      - >-
+        (native_before | dict2items |
+        rejectattr('key', 'equalto', 'started') | items2dict) ==
+        (original_before | dict2items |
+        rejectattr('key', 'equalto', 'started') | items2dict)
+      - >-
+        (native_after |
+        combine({'uninstall_keys': native_after.portable_uninstall_keys}) |
+        dict2items | rejectattr('key', 'in',
+        ['started', 'ended', 'directory_creations']) | items2dict) ==
+        (original_after |
+        combine({'uninstall_keys': original_after.portable_uninstall_keys}) |
+        dict2items | rejectattr('key', 'in',
+        ['started', 'ended', 'directory_creations']) | items2dict)
+
+- name: Mark only fully passing URL observations
+  ansible.builtin.set_fact:
+    package_url_results: >-
+      {{ package_url_results[:-1] +
+      [package_url_results[-1] | combine({'validated': true})] }}

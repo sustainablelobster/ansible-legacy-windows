@@ -1,0 +1,245 @@
+---
+mixed_acl_compare: false
+mixed_acl_selected_cases: >-
+  {{ mixed_acl_case_indices | default(range(mixed_acl_cases | length) | list) |
+  map('extract', mixed_acl_cases) | list }}
+mixed_acl_cases:
+  - {name: File object allow insertion, module: access, role: file, ace_type: 5}
+  - name: Registry object allow insertion
+    module: access
+    role: registry
+    ace_type: 5
+  - name: File callback allow insertion
+    module: access
+    role: file
+    ace_type: 9
+  - name: Registry callback allow insertion
+    module: access
+    role: registry
+    ace_type: 9
+  - {name: File object deny insertion, module: access, role: file, ace_type: 6}
+  - name: Registry callback deny insertion
+    module: access
+    role: registry
+    ace_type: 10
+    type: deny
+  - name: File callback object allow insertion
+    module: access
+    role: file
+    ace_type: 11
+  - name: Registry callback object deny insertion
+    module: access
+    role: registry
+    ace_type: 12
+    type: deny
+  - name: File object audit reporting
+    module: audit
+    role: file
+    ace_type: 7
+    state: absent
+  - name: Registry object audit reporting
+    module: audit
+    role: registry
+    ace_type: 7
+    state: absent
+  - name: File callback audit reporting
+    module: audit
+    role: file
+    ace_type: 13
+    state: absent
+  - name: Registry callback audit reporting
+    module: audit
+    role: registry
+    ace_type: 13
+    state: absent
+  - name: File callback object audit reporting
+    module: audit
+    role: file
+    ace_type: 15
+    state: absent
+  - name: Registry callback object audit reporting
+    module: audit
+    role: registry
+    ace_type: 15
+    state: absent
+  - name: File object audit preview
+    module: audit
+    role: file
+    ace_type: 7
+    check: true
+  - name: File callback audit preview
+    module: audit
+    role: file
+    ace_type: 13
+    check: true
+  - name: File object audit insertion
+    module: audit
+    role: file
+    ace_type: 7
+  - name: File callback audit insertion
+    module: audit
+    role: file
+    ace_type: 13
+  - name: Registry callback object audit insertion
+    module: audit
+    role: registry
+    ace_type: 15
+  - name: File callback access preview
+    module: access
+    role: file
+    ace_type: 9
+    check: true
+  - name: File inherited callback access insertion
+    module: access
+    role: file
+    ace_type: 9
+    inherited: true
+  - name: File callback audit exact match
+    module: audit
+    role: file
+    ace_type: 13
+    use_unusual_principal: true
+  - name: File callback audit removal
+    module: audit
+    role: file
+    ace_type: 13
+    state: absent
+    use_unusual_principal: true
+  - name: File object and ordinary audit purge
+    module: audit
+    role: file
+    ace_type: 7
+    state: absent
+    use_unusual_principal: true
+    seed_common: true
+  - name: File callback object and ordinary audit purge
+    module: audit
+    role: file
+    ace_type: 15
+    state: absent
+    use_unusual_principal: true
+    seed_common: true
+  - name: Registry callback audit exact match
+    module: audit
+    role: registry
+    ace_type: 13
+    use_unusual_principal: true
+  - name: Registry callback audit removal
+    module: audit
+    role: registry
+    ace_type: 13
+    state: absent
+    use_unusual_principal: true
+  - name: Registry object and ordinary audit purge
+    module: audit
+    role: registry
+    ace_type: 7
+    state: absent
+    use_unusual_principal: true
+    seed_common: true
+  - name: Registry callback object and ordinary audit purge
+    module: audit
+    role: registry
+    ace_type: 15
+    state: absent
+    use_unusual_principal: true
+    seed_common: true
+  - name: File conditional allow exact match
+    module: access
+    role: file
+    ace_type: 9
+    mask: 1048577
+    condition: 'Member_of {SID(S-1-5-32-544)}'
+    use_unusual_principal: true
+  - name: File conditional allow removal
+    module: access
+    role: file
+    ace_type: 9
+    mask: 1048577
+    condition: 'Member_of {SID(S-1-5-32-544)}'
+    use_unusual_principal: true
+    state: absent
+  - name: File conditional allow exact match preview
+    module: access
+    role: file
+    ace_type: 9
+    mask: 1048577
+    condition: 'Member_of {SID(S-1-5-32-544)}'
+    use_unusual_principal: true
+    check: true
+  - name: File conditional allow removal preview
+    module: access
+    role: file
+    ace_type: 9
+    mask: 1048577
+    condition: 'Member_of {SID(S-1-5-32-544)}'
+    use_unusual_principal: true
+    state: absent
+    check: true
+  - name: Registry conditional deny exact match
+    module: access
+    role: registry
+    ace_type: 10
+    type: deny
+    condition: 'Member_of {SID(S-1-5-32-544)}'
+    use_unusual_principal: true
+  - name: Registry conditional deny removal
+    module: access
+    role: registry
+    ace_type: 10
+    type: deny
+    condition: 'Member_of {SID(S-1-5-32-544)}'
+    use_unusual_principal: true
+    state: absent
+  - name: File conditional deny removal
+    module: access
+    role: file
+    ace_type: 10
+    type: deny
+    condition: 'Member_of {SID(S-1-5-32-544)}'
+    use_unusual_principal: true
+    state: absent
+  - name: Registry conditional allow removal
+    module: access
+    role: registry
+    ace_type: 9
+    condition: 'Member_of {SID(S-1-5-32-544)}'
+    use_unusual_principal: true
+    state: absent
+  - name: File broader conditional rights do not match removal
+    module: access
+    role: file
+    ace_type: 9
+    mask: 1048579
+    condition: 'Member_of {SID(S-1-5-32-544)}'
+    use_unusual_principal: true
+    state: absent
+  - name: File mixed ordinary and conditional removal
+    module: access
+    role: file
+    ace_type: 9
+    mask: 1048577
+    condition: 'Member_of {SID(S-1-5-32-544)}'
+    use_unusual_principal: true
+    seed_common: true
+    state: absent
+  - name: File inherited conditional rights do not match removal
+    module: access
+    role: file
+    ace_type: 9
+    mask: 1048577
+    condition: 'Member_of {SID(S-1-5-32-544)}'
+    use_unusual_principal: true
+    inherited: true
+    state: absent
+  - name: File conditional rights subtraction keeps the condition
+    module: access
+    role: file
+    ace_type: 9
+    mask: 1048579
+    condition: 'Member_of {SID(S-1-5-32-544)}'
+    use_unusual_principal: true
+    seed_common: true
+    seed_common_mask: 1048577
+    remaining_mask: 2
+    state: absent

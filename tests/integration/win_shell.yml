@@ -1,0 +1,513 @@
+# Copyright 2026 Joe Lustri
+# SPDX-License-Identifier: GPL-3.0-or-later
+---
+- name: Verify shell execution through Windows Python 3.4.4
+  hosts: legacy_windows
+  gather_facts: false
+  vars:
+    shell_directory: '{{ shell_workspace.stdout | from_json }}'
+    shell_marker: '{{ shell_directory }}\created.txt'
+    expects_powershell: >-
+      {{ legacy_windows_expect_powershell | default(false) | bool }}
+    flags_command: >-
+      [Environment]::GetCommandLineArgs() | ConvertTo-Json -Compress
+  tasks:
+    - name: Require Python 3.4.4 and record task directories
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import glob, json, os, sys, tempfile;
+        assert sys.version_info[:3] == (3, 4, 4);
+        print(json.dumps(sorted(glob.glob(os.path.join(tempfile.gettempdir(),
+        'ansible-tmp-*')))))""
+      changed_when: false
+      check_mode: false
+      timeout: 60
+      register: task_directories_before
+
+    - name: Allocate an isolated shell-test workspace
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import json, tempfile;
+        print(json.dumps(tempfile.mkdtemp(prefix='legacy-windows-win-shell-')))""
+      changed_when: true
+      check_mode: false
+      timeout: 60
+      register: shell_workspace
+
+    - name: Exercise shell behavior inside the owned workspace
+      block:
+        - name: Execute free-form text through CMD  # noqa: args[module]
+          # WANT_JSON arguments are checked by the runtime assertions below.
+          sustainablelobster.legacy_windows.win_shell: echo free-form
+          args:
+            executable: cmd
+          timeout: 60
+          register: free_form
+
+        - name: Preserve both streams and trim the selected command
+          # WANT_JSON arguments are checked by the runtime assertions below.
+          sustainablelobster.legacy_windows.win_shell:  # noqa: args[module]
+            cmd: '  echo command-output & echo command-error 1>&2  '
+            executable: '%SystemRoot%\System32\cmd.exe'
+            no_profile: true
+          timeout: 60
+          register: cmd_streams
+
+        - name: Verify CMD selection, output, and process metadata
+          ansible.builtin.assert:
+            that:
+              - free_form is changed
+              - free_form.rc == 0
+              - free_form.cmd == 'echo free-form'
+              - free_form.stdout == "free-form\r\n"
+              - free_form.stderr == ''
+              - cmd_streams is changed
+              - cmd_streams.rc == 0
+              - cmd_streams.cmd == expected_command
+              - cmd_streams.stdout == "command-output \r\n"
+              - cmd_streams.stderr == "command-error \r\n"
+              - cmd_streams.stdout_lines == ['command-output ']
+              - cmd_streams.stderr_lines == ['command-error ']
+              - cmd_streams.start is match(timestamp_pattern)
+              - cmd_streams.end is match(timestamp_pattern)
+              - >-
+                cmd_streams.delta is
+                match('^[0-9]+:[0-9]{2}:[0-9]{2}[.][0-9]{6}$')
+          vars:
+            expected_command: echo command-output & echo command-error 1>&2
+            timestamp_pattern: >-
+              ^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}[.][0-9]{6}$
+
+        - name: Create an owned file in the requested working directory
+          # WANT_JSON arguments are checked by the runtime assertions below.
+          sustainablelobster.legacy_windows.win_shell:  # noqa: args[module]
+            cmd: echo owned>created.txt
+            executable: cmd
+            chdir: '{{ shell_directory }}'
+            creates: '{{ shell_marker }}'
+          timeout: 60
+          register: create_shell
+
+        - name: Read the file through its absolute workspace path
+          # Reading by absolute path verifies that shell chdir took effect.
+          sustainablelobster.legacy_windows.slurp:  # noqa: args[module]
+            src: '{{ shell_marker }}'
+          register: created_content
+
+        - name: Apply creates before removes and missing-shell resolution
+          # WANT_JSON arguments are checked by the runtime assertions below.
+          sustainablelobster.legacy_windows.win_shell:  # noqa: args[module]
+            cmd: '  unreachable  '
+            executable: '{{ shell_directory }}\missing-shell.exe'
+            creates: '{{ shell_marker }}'
+            removes: '{{ shell_directory }}\missing.txt'
+          timeout: 60
+          register: create_again
+
+        - name: Remove the owned file only while it exists
+          # WANT_JSON arguments are checked by the runtime assertions below.
+          sustainablelobster.legacy_windows.win_shell:  # noqa: args[module]
+            cmd: del created.txt
+            executable: cmd
+            chdir: '{{ shell_directory }}'
+            removes: '{{ shell_marker }}'
+          timeout: 60
+          register: remove_shell
+
+        - name: Skip a repeated removal before starting any shell
+          # Default PowerShell need not exist when the guard skips execution.
+          sustainablelobster.legacy_windows.win_shell:  # noqa: args[module]
+            cmd: unreachable
+            removes: '{{ shell_marker }}'
+          timeout: 60
+          register: remove_again
+
+        - name: Verify working directory, guard ordering, and idempotence
+          ansible.builtin.assert:
+            that:
+              - create_shell is changed
+              - create_shell.rc == 0
+              - (created_content.content | b64decode) == "owned\r\n"
+              - created_content is not changed
+              - create_again is skipped
+              - create_again is not changed
+              - create_again.cmd == 'unreachable'
+              - create_again.rc == 0
+              - >-
+                create_again.msg ==
+                'skipped, since ' + shell_marker + ' exists'
+              - remove_shell is changed
+              - remove_shell.rc == 0
+              - remove_again is skipped
+              - remove_again is not changed
+              - remove_again.rc == 0
+              - >-
+                remove_again.msg ==
+                'skipped, since ' + shell_marker + ' does not exist'
+
+        - name: Skip executable work in check mode
+          # WANT_JSON arguments are checked by the runtime assertions below.
+          sustainablelobster.legacy_windows.win_shell:  # noqa: args[module]
+            cmd: echo must-not-run>check-mode-must-not-exist
+            executable: cmd
+            chdir: '{{ shell_directory }}'
+          check_mode: true
+          register: check_command
+
+        - name: Skip invalid argument values in check mode
+          # Value conversion must occur after check-mode handling.
+          sustainablelobster.legacy_windows.win_shell:  # noqa: args[module]
+            cmd: null
+            executable: '?'
+            no_profile: invalid
+          check_mode: true
+          register: check_invalid
+
+        - name: Skip a missing command in check mode
+          # Required arguments are not evaluated for this check-mode skip.
+          sustainablelobster.legacy_windows.win_shell: {}  # noqa: args[module]
+          check_mode: true
+          register: check_missing
+
+        - name: Verify check mode runs before command validation
+          ansible.builtin.assert:
+            that:
+              - item is skipped
+              - item is not changed
+              - item.cmd is not defined
+              - item.rc is not defined
+              - >-
+                item.msg == 'remote module (' +
+                'sustainablelobster.legacy_windows.win_shell) ' +
+                'does not support check mode'
+          loop: '{{ [check_command, check_invalid, check_missing] }}'
+          loop_control:
+            label: '{{ item.msg }}'
+
+        - name: Reject unknown parameters even in check mode
+          block:
+            - name: Supply an unknown shell option  # noqa: args[module]
+              # Unsupported names must be rejected before check-mode handling.
+              sustainablelobster.legacy_windows.win_shell:
+                unknown: value
+              check_mode: true
+              register: unknown_option
+
+            - name: Reject unexpected acceptance of the unknown option
+              ansible.builtin.fail:
+                msg: An unknown shell option unexpectedly succeeded
+          rescue:
+            - name: Verify unknown-option rejection without execution
+              ansible.builtin.assert:
+                that:
+                  - unknown_option is failed
+                  - unknown_option is not changed
+                  - "'Unsupported parameters' in unknown_option.msg"
+                  - "'unknown' in unknown_option.msg"
+
+        - name: Reject an invalid boolean before starting CMD
+          block:
+            - name: Supply an invalid no-profile value  # noqa: args[module]
+              # This deliberately invalid value must reach the target payload.
+              sustainablelobster.legacy_windows.win_shell:
+                cmd: echo must-not-run>invalid-profile-must-not-exist
+                executable: cmd
+                chdir: '{{ shell_directory }}'
+                no_profile: invalid
+              timeout: 60
+              register: invalid_profile
+
+            - name: Reject unexpected acceptance of an invalid boolean
+              ansible.builtin.fail:
+                msg: An invalid boolean unexpectedly started a shell
+          rescue:
+            - name: Verify invalid boolean rejection without changes
+              ansible.builtin.assert:
+                that:
+                  - invalid_profile is failed
+                  - invalid_profile is not changed
+                  - "'no_profile' in invalid_profile.msg"
+                  - invalid_profile.rc is not defined
+
+        - name: Distinguish a missing shell from a failed child
+          block:
+            - name: Request an absent shell executable  # noqa: args[module]
+              # The missing executable is inside the owned workspace.
+              sustainablelobster.legacy_windows.win_shell:
+                cmd: unreachable
+                executable: '{{ shell_directory }}\missing-shell.exe'
+              timeout: 60
+              register: missing_shell
+
+            - name: Reject unexpected execution of the missing shell
+              ansible.builtin.fail:
+                msg: A missing shell executable unexpectedly succeeded
+          rescue:
+            - name: Verify launch failure fields
+              ansible.builtin.assert:
+                that:
+                  - missing_shell is failed
+                  - missing_shell is not changed
+                  - missing_shell.rc == 2
+                  - missing_shell.cmd == 'unreachable'
+                  - >-
+                    missing_shell.msg.startswith("Failed to run: '': ")
+                  - missing_shell.stdout is not defined
+
+        - name: Preserve a failed shell's side effect and output
+          block:
+            - name: Write an owned file and exit unsuccessfully
+              # WANT_JSON arguments are checked by the failure assertions.
+              sustainablelobster.legacy_windows.win_shell:  # noqa: args[module]
+                cmd: >-
+                  echo partial>partial.txt & echo before-error & exit /b 7
+                executable: cmd
+                chdir: '{{ shell_directory }}'
+              timeout: 60
+              register: failed_shell
+
+            - name: Reject unexpected success after a nonzero exit
+              ansible.builtin.fail:
+                msg: A shell exit code of seven unexpectedly succeeded
+          rescue:
+            - name: Verify the failed child retains output and changed status
+              ansible.builtin.assert:
+                that:
+                  - failed_shell is failed
+                  - failed_shell is changed
+                  - failed_shell.rc == 7
+                  - failed_shell.stdout == "before-error \r\n"
+                  - failed_shell.stderr == ''
+                  - failed_shell.msg == 'non-zero return code'
+
+        - name: Recover the side effect of the failed child
+          # The removes guard proves the preceding failure created this file.
+          sustainablelobster.legacy_windows.win_shell:  # noqa: args[module]
+            cmd: del partial.txt & echo recovered
+            executable: cmd
+            chdir: '{{ shell_directory }}'
+            removes: '{{ shell_directory }}\partial.txt'
+          timeout: 60
+          register: cmd_recovery
+
+        - name: Verify command execution recovers after failures
+          ansible.builtin.assert:
+            that:
+              - cmd_recovery is changed
+              - cmd_recovery.rc == 0
+              - cmd_recovery.stdout == "recovered\r\n"
+              - cmd_recovery.stderr == ''
+
+        - name: Exercise the installed default PowerShell
+          when: expects_powershell
+          block:
+            - name: Select PowerShell by default  # noqa: args[module]
+              # The connection uses CMD, independently of the module default.
+              sustainablelobster.legacy_windows.win_shell:
+                cmd: '  Write-Output "default"  '
+              timeout: 60
+              register: powershell_default
+
+            - name: Round-trip Unicode standard input  # noqa: args[module]
+              # Input and output must preserve Unicode without an added newline.
+              sustainablelobster.legacy_windows.win_shell:
+                cmd: >-
+                  $value = [Console]::In.ReadToEnd();
+                  [Console]::Out.Write($value)
+                stdin: Café 雪
+                no_profile: true
+              timeout: 60
+              register: powershell_stdin
+
+            - name: Inspect PowerShell profile and interactive flags
+              # Runtime argv demonstrates the actual child-shell switches.
+              sustainablelobster.legacy_windows.win_shell:  # noqa: args[module]
+                cmd: '{{ flags_command }}'
+                no_profile: '{{ item.profile | default(omit) }}'
+                stdin: '{{ item.input | default(omit) }}'
+              loop:
+                - name: default
+                  flags: [-noninteractive, -encodedcommand]
+                - name: disabled-profile
+                  profile: true
+                  flags: [-noprofile, -noninteractive, -encodedcommand]
+                - name: null-profile
+                  profile: null
+                  flags: [-noninteractive, -encodedcommand]
+                - name: input-supplied
+                  input: present
+                  flags: [-encodedcommand]
+              loop_control:
+                label: '{{ item.name }}'
+              timeout: 60
+              register: powershell_flags
+
+            - name: Verify default PowerShell and Unicode results
+              ansible.builtin.assert:
+                that:
+                  - powershell_default is changed
+                  - powershell_default.rc == 0
+                  - powershell_default.cmd == 'Write-Output "default"'
+                  - powershell_default.stdout == "default\r\n"
+                  - powershell_default.stderr == ''
+                  - powershell_stdin is changed
+                  - powershell_stdin.rc == 0
+                  - powershell_stdin.stdout == 'Café 雪'
+                  - powershell_stdin.stderr == ''
+
+            - name: Verify flags observed inside each PowerShell child
+              ansible.builtin.assert:
+                that:
+                  - item is changed
+                  - item.rc == 0
+                  - item.stderr == ''
+                  - (item.stdout | from_json)[1:-1] == item.item.flags
+              loop: '{{ powershell_flags.results }}'
+              loop_control:
+                label: '{{ item.item.name }}'
+
+            - name: Omit non-error CLIXML streams  # noqa: args[module]
+              # These stream observations match Windows PowerShell 5.1.
+              sustainablelobster.legacy_windows.win_shell:
+                cmd: >-
+                  Write-Warning "warning";
+                  Write-Verbose "verbose" -Verbose;
+                  Write-Information "information" -InformationAction Continue;
+                  Write-Progress -Activity "progress" -Status "test"
+                  -PercentComplete 50; Write-Output "done"
+                no_profile: true
+              timeout: 60
+              register: powershell_streams
+
+            - name: Verify serialized warnings do not leak into stderr
+              ansible.builtin.assert:
+                that:
+                  - powershell_streams is changed
+                  - powershell_streams.rc == 0
+                  - powershell_streams.stdout == "information\r\ndone\r\n"
+                  - powershell_streams.stderr == ''
+
+            - name: Extract actual PowerShell error strings from CLIXML
+              block:
+                - name: Emit two errors and a nonzero exit  # noqa: args[module]
+                  # WANT_JSON arguments are checked by failure assertions.
+                  # args[module] cannot inspect this native file protocol.
+                  sustainablelobster.legacy_windows.win_shell:
+                    cmd: >-
+                      Write-Output "before"; Write-Error "first error";
+                      Write-Error "second error"; exit 9
+                    no_profile: true
+                  timeout: 60
+                  register: powershell_error
+
+                - name: Reject unexpected success after PowerShell failure
+                  ansible.builtin.fail:
+                    msg: A PowerShell exit code of nine unexpectedly succeeded
+              rescue:
+                - name: Verify PowerShell errors are decoded and retained
+                  ansible.builtin.assert:
+                    that:
+                      - powershell_error is failed
+                      - powershell_error is changed
+                      - powershell_error.rc == 9
+                      - powershell_error.stdout == "before\r\n"
+                      - powershell_error.msg == 'non-zero return code'
+                      - "'first error' in powershell_error.stderr"
+                      - "'second error' in powershell_error.stderr"
+                      - "'CLIXML' not in powershell_error.stderr"
+                      - "'_x000D_' not in powershell_error.stderr"
+                      - >-
+                        powershell_error.stderr.count('FullyQualifiedErrorId')
+                        == 2
+
+            - name: Recover after a PowerShell failure  # noqa: args[module]
+              # A fresh shell must still execute after the previous error.
+              sustainablelobster.legacy_windows.win_shell:
+                cmd: Write-Output "recovered"
+                no_profile: true
+              timeout: 60
+              register: powershell_recovery
+
+            - name: Verify PowerShell failure recovery
+              ansible.builtin.assert:
+                that:
+                  - powershell_recovery is changed
+                  - powershell_recovery.rc == 0
+                  - powershell_recovery.stdout == "recovered\r\n"
+                  - powershell_recovery.stderr == ''
+
+        - name: Require explicit failure when default PowerShell is absent
+          when: not expects_powershell
+          block:
+            - name: Request the unavailable default shell  # noqa: args[module]
+              # A CMD fallback would create this file and wrongly succeed.
+              sustainablelobster.legacy_windows.win_shell:
+                cmd: echo fallback>fallback-must-not-exist
+                chdir: '{{ shell_directory }}'
+                no_profile: true
+              timeout: 60
+              register: absent_powershell
+
+            - name: Reject unexpected default-shell success
+              ansible.builtin.fail:
+                msg: An absent PowerShell unexpectedly ran or fell back to CMD
+          rescue:
+            - name: Verify no fallback occurred
+              ansible.builtin.assert:
+                that:
+                  - absent_powershell is failed
+                  - absent_powershell is not changed
+                  # These guests lack the entire standard PowerShell path.
+                  - absent_powershell.rc == 3
+                  - >-
+                    absent_powershell.msg.startswith("Failed to run: '': ")
+                  - absent_powershell.stdout is not defined
+
+        - name: Verify conditional PowerShell tests match the inventory
+          ansible.builtin.assert:
+            that:
+              - (powershell_default is skipped) == (not expects_powershell)
+              - (absent_powershell is skipped) == expects_powershell
+
+        - name: Verify no forbidden or unrecovered files remain
+          # Validating and cleaning use the established direct-command module.
+          sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - 'import os, sys; assert not os.listdir(sys.argv[1])'
+              - '{{ shell_directory }}'
+          changed_when: false
+          timeout: 60
+      always:
+        - name: Remove only the allocated shell-test workspace
+          # Raw cleanup remains available even if helper staging regresses.
+          ansible.builtin.raw: >-
+            cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+            "import base64, json, os, shutil;
+            path = json.loads(base64.b64decode(
+            '{{ shell_workspace.stdout | b64encode }}').decode('utf-8'));
+            assert os.path.basename(path).startswith(
+            'legacy-windows-win-shell-');
+            shutil.rmtree(path)""
+          changed_when: true
+          check_mode: false
+          timeout: 60
+
+    - name: Record remaining task directories
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import glob, json, os, tempfile;
+        print(json.dumps(sorted(glob.glob(os.path.join(tempfile.gettempdir(),
+        'ansible-tmp-*')))))""
+      changed_when: false
+      check_mode: false
+      timeout: 60
+      register: task_directories_after
+
+    - name: Verify shell payload and helper task files were removed
+      ansible.builtin.assert:
+        that:
+          - >-
+            (task_directories_before.stdout | from_json) ==
+            (task_directories_after.stdout | from_json)

@@ -1,0 +1,154 @@
+---
+user_right_cases:
+  - name: Reject missing required arguments
+    params: {}
+    error: 'missing required arguments: users, name'
+    changed: false
+  - name: Reject an unknown action before policy access
+    params: {name: SeCreatePagefilePrivilege, users: [], action: invalid}
+    error: >-
+      value of action must be one of: add, remove, set.
+      Got no match for: invalid
+    changed: false
+  - name: Reject an unknown right without changing assignments
+    params: {name: LegacyInvalidRight, users: []}
+    error: 'the specified right LegacyInvalidRight is not a valid right'
+    initialized: true
+    changed: false
+  - name: Resolve requested accounts before changing policy
+    params:
+      name: SeCreatePagefilePrivilege
+      users: ['legacy-user-right.invalid']
+    error: >-
+      Failed to translate the account 'legacy-user-right.invalid' to a SID
+    initialized: true
+    changed: false
+  - name: Predict removal from empty assignments
+    params: {name: SeCreatePagefilePrivilege, users: [BA], action: remove}
+    check: true
+    expected: []
+    added: []
+    removed: []
+    changed: false
+  - name: Remove from empty assignments
+    params: {name: SeCreatePagefilePrivilege, users: [BA], action: remove}
+    expected: []
+    added: []
+    removed: []
+    changed: false
+  - name: Predict set with duplicate SID aliases
+    params: {name: SeCreatePagefilePrivilege, users: [BA, S-1-5-32-544]}
+    check: true
+    expected: [S-1-5-32-544]
+    added: [S-1-5-32-544]
+    removed: []
+    changed: true
+  - name: Set one account once despite duplicate aliases
+    params: {name: SeCreatePagefilePrivilege, users: [BA, S-1-5-32-544]}
+    expected: [S-1-5-32-544]
+    added: [S-1-5-32-544]
+    removed: []
+    changed: true
+  - name: Repeat set with a canonical SID
+    params: {name: SeCreatePagefilePrivilege, users: [S-1-5-32-544]}
+    expected: [S-1-5-32-544]
+    added: []
+    removed: []
+    changed: false
+  - name: Predict adding multiple accounts in request order
+    params: {name: SeCreatePagefilePrivilege, users: [SY, BG, BA], action: add}
+    check: true
+    expected: [S-1-5-32-544, S-1-5-18, S-1-5-32-546]
+    added: [S-1-5-18, S-1-5-32-546]
+    removed: []
+    changed: true
+  - name: Add multiple accounts with a case-insensitive action
+    params: {name: SeCreatePagefilePrivilege, users: [SY, BG, BA], action: ADD}
+    expected: [S-1-5-32-544, S-1-5-18, S-1-5-32-546]
+    added: [S-1-5-18, S-1-5-32-546]
+    removed: []
+    changed: true
+  - name: Repeat add through a machine-qualified local group name
+    params:
+      name: SeCreatePagefilePrivilege
+      users:
+        - >-
+          .\{{ user_right_initial.identities['S-1-5-32-546'] | win_basename }}
+      action: add
+    expected: [S-1-5-32-544, S-1-5-18, S-1-5-32-546]
+    added: []
+    removed: []
+    changed: false
+  - name: Predict removing one account
+    params: {name: SeCreatePagefilePrivilege, users: [SY], action: remove}
+    check: true
+    expected: [S-1-5-32-544, S-1-5-32-546]
+    added: []
+    removed: [S-1-5-18]
+    changed: true
+  - name: Remove one account
+    params: {name: SeCreatePagefilePrivilege, users: [SY], action: remove}
+    expected: [S-1-5-32-544, S-1-5-32-546]
+    added: []
+    removed: [S-1-5-18]
+    changed: true
+  - name: Repeat removal
+    params: {name: SeCreatePagefilePrivilege, users: [SY], action: remove}
+    expected: [S-1-5-32-544, S-1-5-32-546]
+    added: []
+    removed: []
+    changed: false
+  - name: Predict replacement adds before removing old accounts
+    params: {name: SeCreatePagefilePrivilege, users: [SY]}
+    check: true
+    expected: [S-1-5-18]
+    added: [S-1-5-18]
+    changed: true
+  - name: Replace all assigned accounts
+    params: {name: SeCreatePagefilePrivilege, users: [SY]}
+    expected: [S-1-5-18]
+    added: [S-1-5-18]
+    changed: true
+  - name: Repeat replacement
+    params: {name: SeCreatePagefilePrivilege, users: [SY]}
+    expected: [S-1-5-18]
+    added: []
+    removed: []
+    changed: false
+  - name: Predict clearing assignments
+    params: {name: SeCreatePagefilePrivilege, users: []}
+    check: true
+    expected: []
+    added: []
+    removed: [S-1-5-18]
+    changed: true
+  - name: Clear assignments
+    params: {name: SeCreatePagefilePrivilege, users: []}
+    expected: []
+    added: []
+    removed: [S-1-5-18]
+    changed: true
+  - name: Repeat clearing assignments
+    params: {name: SeCreatePagefilePrivilege, users: []}
+    expected: []
+    added: []
+    removed: []
+    changed: false
+  - name: Add from a comma-separated scalar list
+    params: {name: SeCreatePagefilePrivilege, users: 'BA, SY', action: add}
+    expected: [S-1-5-32-544, S-1-5-18]
+    added: [S-1-5-32-544, S-1-5-18]
+    removed: []
+    changed: true
+  - name: Remove multiple accounts in request order
+    params: {name: SeCreatePagefilePrivilege, users: [SY, BA], action: remove}
+    expected: []
+    added: []
+    removed: [S-1-5-18, S-1-5-32-544]
+    changed: true
+  - name: Confirm recovery to an empty controlled baseline
+    params: {name: SeCreatePagefilePrivilege, users: []}
+    expected: []
+    added: []
+    removed: []
+    changed: false

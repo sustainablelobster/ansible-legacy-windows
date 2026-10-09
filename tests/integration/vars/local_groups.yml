@@ -1,0 +1,178 @@
+---
+# SPDX-License-Identifier: GPL-3.0-or-later
+fixture_code: |
+  import ctypes, json, os, re, sys, uuid
+  assert sys.version_info[:3] == (3, 4, 4)
+  net = ctypes.WinDLL('netapi32')
+  security = ctypes.WinDLL('advapi32', use_last_error=True)
+  kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+  pointer = ctypes.c_void_p
+  dword = ctypes.c_uint32
+  wide = ctypes.c_wchar_p
+  class GroupInfo(ctypes.Structure):
+      _fields_ = [('name', wide), ('description', wide)]
+  class MemberInfo(ctypes.Structure):
+      _fields_ = [('sid', pointer)]
+  net.NetLocalGroupGetInfo.argtypes = [wide, wide, dword,
+      ctypes.POINTER(pointer)]
+  net.NetLocalGroupGetInfo.restype = dword
+  net.NetLocalGroupGetMembers.argtypes = [wide, wide, dword,
+      ctypes.POINTER(pointer), dword, ctypes.POINTER(dword),
+      ctypes.POINTER(dword), ctypes.POINTER(ctypes.c_size_t)]
+  net.NetLocalGroupGetMembers.restype = dword
+  net.NetLocalGroupDel.argtypes = [wide, wide]
+  net.NetLocalGroupDel.restype = dword
+  net.NetApiBufferFree.argtypes = [pointer]
+  net.NetApiBufferFree.restype = dword
+  security.GetUserNameW.argtypes = [wide, ctypes.POINTER(dword)]
+  security.GetUserNameW.restype = ctypes.c_int
+  security.LookupAccountNameW.argtypes = [wide, wide, pointer,
+      ctypes.POINTER(dword), wide, ctypes.POINTER(dword),
+      ctypes.POINTER(dword)]
+  security.LookupAccountNameW.restype = ctypes.c_int
+  security.LookupAccountSidW.argtypes = [wide, pointer, wide,
+      ctypes.POINTER(dword), wide, ctypes.POINTER(dword),
+      ctypes.POINTER(dword)]
+  security.LookupAccountSidW.restype = ctypes.c_int
+  security.ConvertSidToStringSidW.argtypes = [pointer,
+      ctypes.POINTER(wide)]
+  security.ConvertSidToStringSidW.restype = ctypes.c_int
+  security.ConvertStringSidToSidW.argtypes = [wide,
+      ctypes.POINTER(pointer)]
+  security.ConvertStringSidToSidW.restype = ctypes.c_int
+  kernel.LocalFree.argtypes = [pointer]
+  kernel.LocalFree.restype = pointer
+  suffixes = ('primary', 'partial', 'preview')
+
+  def sid_text(sid):
+      text = wide()
+      try:
+          if not security.ConvertSidToStringSidW(sid, ctypes.byref(text)):
+              raise ctypes.WinError(ctypes.get_last_error())
+          return text.value
+      finally:
+          if text:
+              kernel.LocalFree(ctypes.cast(text, pointer))
+
+  def account_sid(name):
+      length, domain_length, kind = dword(), dword(), dword()
+      security.LookupAccountNameW(None, name, None,
+          ctypes.byref(length), None, ctypes.byref(domain_length),
+          ctypes.byref(kind))
+      assert ctypes.get_last_error() == 122
+      sid = ctypes.create_string_buffer(length.value)
+      domain = ctypes.create_unicode_buffer(max(1, domain_length.value))
+      if not security.LookupAccountNameW(None, name, sid,
+              ctypes.byref(length), domain, ctypes.byref(domain_length),
+              ctypes.byref(kind)):
+          raise ctypes.WinError(ctypes.get_last_error())
+      return sid_text(sid)
+
+  def account_name(text):
+      sid = pointer()
+      try:
+          if not security.ConvertStringSidToSidW(text, ctypes.byref(sid)):
+              raise ctypes.WinError(ctypes.get_last_error())
+          name_length, domain_length, kind = dword(), dword(), dword()
+          security.LookupAccountSidW(None, sid, None,
+              ctypes.byref(name_length), None,
+              ctypes.byref(domain_length), ctypes.byref(kind))
+          assert ctypes.get_last_error() == 122
+          name = ctypes.create_unicode_buffer(name_length.value)
+          domain = ctypes.create_unicode_buffer(max(1, domain_length.value))
+          if not security.LookupAccountSidW(None, sid, name,
+                  ctypes.byref(name_length), domain,
+                  ctypes.byref(domain_length), ctypes.byref(kind)):
+              raise ctypes.WinError(ctypes.get_last_error())
+          return domain.value + '\\' + name.value
+      finally:
+          if sid:
+              kernel.LocalFree(sid)
+
+  def members(name):
+      result, failure = [], None
+      resume = ctypes.c_size_t()
+      while True:
+          buffer, count, total = pointer(), dword(), dword()
+          try:
+              status = net.NetLocalGroupGetMembers(None, name, 0,
+                  ctypes.byref(buffer), 0xffffffff, ctypes.byref(count),
+                  ctypes.byref(total), ctypes.byref(resume))
+              if status not in (0, 234):
+                  raise ctypes.WinError(status)
+              if failure is None:
+                  try:
+                      entries = ctypes.cast(buffer,
+                          ctypes.POINTER(MemberInfo))
+                      result.extend(sid_text(entries[index].sid)
+                          for index in range(count.value))
+                  except Exception as error:
+                      # Drain the RPC enumeration before re-raising.
+                      failure = error
+          finally:
+              if buffer:
+                  net.NetApiBufferFree(buffer)
+          if status == 0:
+              if failure is not None:
+                  raise failure
+              return sorted(result)
+
+  def inspect(prefix):
+      assert re.match(r'^LW_GROUP_[a-f0-9]{32}_$', prefix)
+      result = {}
+      for suffix in suffixes:
+          name = prefix + suffix
+          buffer = pointer()
+          try:
+              status = net.NetLocalGroupGetInfo(None, name, 1,
+                  ctypes.byref(buffer))
+              if status in (1376, 2220):
+                  result[suffix] = None
+                  continue
+              if status:
+                  raise ctypes.WinError(status)
+              info = ctypes.cast(buffer,
+                  ctypes.POINTER(GroupInfo)).contents
+              description = info.description or ''
+          finally:
+              if buffer:
+                  net.NetApiBufferFree(buffer)
+          result[suffix] = {'sid': account_sid(name),
+              'description': description, 'members': members(name)}
+      return result
+
+  mode = sys.argv[1]
+  if mode == 'allocate':
+      username, length = ctypes.create_unicode_buffer(257), dword(257)
+      if not security.GetUserNameW(username, ctypes.byref(length)):
+          raise ctypes.WinError(ctypes.get_last_error())
+      computer = os.environ['COMPUTERNAME']
+      current_sid = account_sid(computer + '\\' + username.value)
+      current_name = account_name(current_sid)
+      # These tests require an existing local connection account and Guest.
+      assert current_name.split('\\')[0].upper() == computer.upper()
+      assert current_sid.startswith('S-1-5-21-')
+      guest_sid = current_sid.rsplit('-', 1)[0] + '-501'
+      guest_name = account_name(guest_sid)
+      assert guest_name.split('\\')[0].upper() == computer.upper()
+      assert account_sid(guest_name) == guest_sid
+      assert current_sid != guest_sid
+      prefix = 'LW_GROUP_' + uuid.uuid4().hex + '_'
+      assert all(value is None for value in inspect(prefix).values())
+      print(json.dumps({'prefix': prefix, 'current_sid': current_sid,
+          'current_name': current_name, 'username': username.value,
+          'guest_sid': guest_sid, 'guest_name': guest_name,
+          'builtin_name': account_name('S-1-5-32-544').split('\\', 1)[1]}))
+  else:
+      prefix = sys.argv[2]
+      assert re.match(r'^LW_GROUP_[a-f0-9]{32}_$', prefix)
+      if mode == 'inspect':
+          print(json.dumps(inspect(prefix)))
+      else:
+          assert mode == 'cleanup'
+          for suffix in suffixes:
+              status = net.NetLocalGroupDel(None, prefix + suffix)
+              if status not in (0, 1376, 2220):
+                  raise ctypes.WinError(status)
+          assert all(value is None for value in inspect(prefix).values())
+          print(json.dumps({'removed': True}))

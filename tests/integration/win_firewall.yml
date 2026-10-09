@@ -1,0 +1,159 @@
+---
+- name: Verify configured firewall profiles and exact original-policy recovery
+  hosts: legacy_windows
+  gather_facts: false
+  vars_files:
+    - vars/firewall.yml
+    - vars/firewall_fixture.yml
+    - vars/firewall_policy2.yml
+  vars:
+    firewall_capture:
+      results: '{{ firewall_results }}'
+      workspace: '{{ firewall_workspace.path | default(none) }}'
+      setup: '{{ firewall_setup.stdout | default("") }}'
+      cleanup: '{{ firewall_cleanup.stdout | default("") }}'
+      cleanup_command: '{{ firewall_cleanup | default({}) }}'
+      staging_before: '{{ firewall_staging_before.stdout | default("") }}'
+      staging_after: '{{ firewall_staging_after.stdout | default("") }}'
+  tasks:
+    - name: Allocate unique private controller evidence
+      ansible.builtin.tempfile:
+        state: file
+        prefix: firewall-{{ inventory_hostname }}-
+        suffix: .json
+        path: >-
+          {{ firewall_evidence_dir | default(playbook_dir +
+          '/../../tmp/codex/evidence') }}
+      register: firewall_capture_file
+      delegate_to: localhost
+      vars: &local
+        ansible_connection: local
+        ansible_shell_type: sh
+        ansible_python_interpreter: '{{ ansible_playbook_python }}'
+      changed_when: false
+      check_mode: false
+
+    - name: Record private evidence location
+      ansible.builtin.debug:
+        msg: 'Firewall evidence: {{ firewall_capture_file.path }}'
+
+    - name: Initialize firewall evidence
+      ansible.builtin.set_fact:
+        firewall_results: []
+
+    - name: Require Python 3.4.4 and record existing staging directories
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import glob,json,os,sys,tempfile;
+        assert sys.version_info[:3] == (3,4,4);
+        print(json.dumps(sorted(glob.glob(os.path.join(tempfile.gettempdir(),
+        'ansible-tmp-*')))))""
+      register: firewall_staging_before
+      changed_when: false
+
+    - name: Exercise only the journaled firewall policy
+      block:
+        - name: Allocate a journal-owned recovery workspace
+          sustainablelobster.legacy_windows.win_tempfile: # noqa: args[module]
+            state: directory
+            prefix: legacy-windows-firewall-
+          register: firewall_workspace
+          check_mode: false
+
+        - name: Flush complete configured effective registry and security state
+          sustainablelobster.legacy_windows.win_command: # noqa: args[module]
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - '-'
+              - '{{ firewall_workspace.path }}'
+              - setup
+            stdin: '{{ firewall_program }}'
+          register: firewall_setup
+          changed_when: true
+          check_mode: false
+
+        - name: Require a verified journal before profile changes
+          ansible.builtin.assert:
+            that: [(firewall_setup.stdout | from_json).journaled]
+
+        - name: Exercise public cases and independent observations
+          ansible.builtin.include_tasks: tasks/win_firewall_case.yml
+          loop: >-
+            {{ firewall_cases
+            if (firewall_setup.stdout | from_json).snapshot.configured is
+            not none
+            else firewall_policy2_cases
+            if (firewall_setup.stdout | from_json).supported
+            else firewall_unsupported_cases }}
+          loop_control:
+            loop_var: firewall_case
+            label: '{{ firewall_case.name }}'
+      always:
+        - name: Recover original policy and verify workspace absence
+          block:
+            - name: Restore all journaled policy state # noqa: args[module]
+              sustainablelobster.legacy_windows.win_command:
+                argv:
+                  - '{{ ansible_python_interpreter }}'
+                  - '-'
+                  - '{{ firewall_workspace.path }}'
+                  - cleanup
+                stdin: '{{ firewall_program }}'
+              when: firewall_workspace.path is defined
+              register: firewall_cleanup
+              changed_when: true
+              check_mode: false
+
+            - name: Save restoration evidence before asserting
+              ansible.builtin.copy:
+                content: '{{ firewall_capture | to_nice_json }}'
+                dest: '{{ firewall_capture_file.path }}'
+                mode: '0600'
+              delegate_to: localhost
+              vars: *local
+              changed_when: false
+
+            - name: Require exact equality before deleting recovery data
+              ansible.builtin.assert:
+                that:
+                  - (firewall_cleanup.stdout | from_json).restored
+                  - >-
+                    firewall_setup.rc | default(1) != 0 or
+                    (firewall_cleanup.stdout | from_json).after ==
+                    (firewall_setup.stdout | from_json).snapshot
+              when: firewall_workspace.path is defined
+
+            - name: Remove only the verified owned recovery workspace
+              sustainablelobster.legacy_windows.win_file: # noqa: args[module]
+                path: '{{ firewall_workspace.path }}'
+                state: absent
+              when: firewall_workspace.path is defined
+              check_mode: false
+
+            - name: Independently verify workspace and staging cleanup
+              ansible.builtin.raw: >-
+                cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+                "import glob,json,os,sys,tempfile;
+                assert not os.path.exists(sys.argv[1]);
+                print(json.dumps(sorted(glob.glob(os.path.join(tempfile.gettempdir(),
+                'ansible-tmp-*')))))" "{{ firewall_workspace.path }}""
+              when: firewall_workspace.path is defined
+              register: firewall_staging_after
+              changed_when: false
+              check_mode: false
+
+            - name: Require unchanged staging
+              ansible.builtin.assert:
+                that:
+                  - firewall_staging_before.stdout | from_json ==
+                    firewall_staging_after.stdout | from_json
+              when: firewall_workspace.path is defined
+          always:
+            - name: Save final public and recovery evidence
+              ansible.builtin.copy:
+                content: '{{ firewall_capture | to_nice_json }}'
+                dest: '{{ firewall_capture_file.path }}'
+                mode: '0600'
+              delegate_to: localhost
+              vars: *local
+              changed_when: false

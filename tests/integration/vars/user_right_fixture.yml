@@ -1,0 +1,201 @@
+---
+user_right_fixture: |
+  import ctypes
+  import json
+  import os
+  import sys
+
+  assert sys.version_info[:3] == (3, 4, 4)
+  WORKSPACE, OPERATION = sys.argv[1:3]
+  JOURNAL = os.path.join(WORKSPACE, 'user-right-recovery.json')
+  RIGHT = 'SeCreatePagefilePrivilege'
+
+  class Attributes(ctypes.Structure):
+      _fields_ = [('length', ctypes.c_uint32), ('root', ctypes.c_void_p),
+                  ('name', ctypes.c_void_p), ('attributes', ctypes.c_uint32),
+                  ('security', ctypes.c_void_p), ('quality', ctypes.c_void_p)]
+
+  class CountedString(ctypes.Structure):
+      _fields_ = [('length', ctypes.c_uint16), ('maximum', ctypes.c_uint16),
+                  ('buffer', ctypes.c_wchar_p)]
+
+  advapi = ctypes.WinDLL('advapi32', use_last_error=True)
+  kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+  pointer = ctypes.c_void_p
+  string_pointer = ctypes.POINTER(CountedString)
+  signatures = {
+      'LsaOpenPolicy': [string_pointer, ctypes.POINTER(Attributes),
+                        ctypes.c_uint32, ctypes.POINTER(pointer)],
+      'LsaEnumerateAccountsWithUserRight': [pointer, string_pointer,
+                                          ctypes.POINTER(pointer),
+                                          ctypes.POINTER(ctypes.c_uint32)],
+      'LsaAddAccountRights': [
+          pointer, pointer, string_pointer, ctypes.c_uint32],
+      'LsaRemoveAccountRights': [
+          pointer, pointer, ctypes.c_ubyte, string_pointer, ctypes.c_uint32],
+      'LsaFreeMemory': [pointer],
+      'LsaClose': [pointer],
+      'LsaNtStatusToWinError': [ctypes.c_int32],
+  }
+  for name, arguments in signatures.items():
+      function = getattr(advapi, name)
+      function.argtypes = arguments
+      function.restype = ctypes.c_uint32
+  advapi.ConvertStringSidToSidW.argtypes = [ctypes.c_wchar_p,
+                                          ctypes.POINTER(pointer)]
+  advapi.ConvertStringSidToSidW.restype = ctypes.c_int32
+  advapi.ConvertSidToStringSidW.argtypes = [pointer, ctypes.POINTER(pointer)]
+  advapi.ConvertSidToStringSidW.restype = ctypes.c_int32
+  advapi.LookupAccountSidW.argtypes = [
+      ctypes.c_wchar_p, pointer, ctypes.c_wchar_p,
+      ctypes.POINTER(ctypes.c_uint32), ctypes.c_wchar_p,
+      ctypes.POINTER(ctypes.c_uint32), ctypes.POINTER(ctypes.c_uint32)]
+  advapi.LookupAccountSidW.restype = ctypes.c_int32
+  kernel.LocalFree.argtypes = [pointer]
+  kernel.LocalFree.restype = pointer
+
+  def checked(value):
+      if not value:
+          raise ctypes.WinError(ctypes.get_last_error())
+
+  def status_checked(status):
+      if status:
+          code = advapi.LsaNtStatusToWinError(ctypes.c_int32(status).value)
+          raise ctypes.WinError(ctypes.c_int32(code).value)
+
+  def right_string():
+      size = len(RIGHT.encode('utf-16-le'))
+      return CountedString(size, size + 2, RIGHT)
+
+  def text_sid(sid):
+      text = pointer()
+      try:
+          checked(advapi.ConvertSidToStringSidW(sid, ctypes.byref(text)))
+          return ctypes.wstring_at(text)
+      finally:
+          if text.value:
+              kernel.LocalFree(text)
+
+  def account_name(text):
+      sid = pointer()
+      try:
+          checked(advapi.ConvertStringSidToSidW(text, ctypes.byref(sid)))
+          name_size, domain_size, kind = (ctypes.c_uint32() for _ in range(3))
+          found = advapi.LookupAccountSidW(
+              None, sid, None, ctypes.byref(name_size), None,
+              ctypes.byref(domain_size), ctypes.byref(kind))
+          error = ctypes.get_last_error()
+          if not found and error == 1332:
+              return text
+          if not found and error != 122:
+              raise ctypes.WinError(error)
+          name = ctypes.create_unicode_buffer(max(name_size.value, 1))
+          domain = ctypes.create_unicode_buffer(max(domain_size.value, 1))
+          checked(advapi.LookupAccountSidW(
+              None, sid, name, ctypes.byref(name_size), domain,
+              ctypes.byref(domain_size), ctypes.byref(kind)))
+          if domain.value:
+              return domain.value + '\\' + name.value
+          return name.value
+      finally:
+          if sid.value:
+              kernel.LocalFree(sid)
+
+  def assigned(policy):
+      right, buffer, count = right_string(), pointer(), ctypes.c_uint32()
+      try:
+          status = advapi.LsaEnumerateAccountsWithUserRight(
+              policy, ctypes.byref(right), ctypes.byref(buffer),
+              ctypes.byref(count)) & 0xffffffff
+          if status == 0x8000001a:
+              return []
+          status_checked(status)
+          entries = ctypes.cast(buffer, ctypes.POINTER(pointer))
+          return [text_sid(entries[index]) for index in range(count.value)]
+      finally:
+          if buffer.value:
+              advapi.LsaFreeMemory(buffer)
+
+  def change(policy, sid_text, remove):
+      assert os.path.isfile(JOURNAL), 'Recovery journal must precede any write'
+      right, sid = right_string(), pointer()
+      try:
+          checked(advapi.ConvertStringSidToSidW(sid_text, ctypes.byref(sid)))
+          if remove:
+              status = advapi.LsaRemoveAccountRights(
+                  policy, sid, 0, ctypes.byref(right), 1)
+          else:
+              status = advapi.LsaAddAccountRights(
+                  policy, sid, ctypes.byref(right), 1)
+          status_checked(status)
+      finally:
+          if sid.value:
+              kernel.LocalFree(sid)
+
+  def observe(policy):
+      sids = assigned(policy)
+      identities = {sid: account_name(sid) for sid in
+                    set(sids + ['S-1-5-32-544', 'S-1-5-32-546', 'S-1-5-18'])}
+      return {'right': RIGHT, 'sids': sids,
+              'names': [identities[sid] for sid in sids],
+              'identities': identities}
+
+  def read_journal():
+      with open(JOURNAL, 'r', encoding='utf-8') as stream:
+          journal = json.load(stream)
+      assert journal['right'] == RIGHT
+      assert journal['workspace'] == os.path.abspath(WORKSPACE)
+      assert isinstance(journal['original'], list)
+      return journal
+
+  def backup(policy):
+      original = assigned(policy)
+      journal = {'right': RIGHT, 'workspace': os.path.abspath(WORKSPACE),
+                 'original': original}
+      with open(JOURNAL, 'x', encoding='utf-8') as stream:
+          json.dump(journal, stream, ensure_ascii=True)
+          stream.flush()
+          os.fsync(stream.fileno())
+      assert read_journal() == journal
+      return original
+
+  def replace(policy, wanted):
+      current = assigned(policy)
+      for sid in wanted:
+          if sid not in current:
+              change(policy, sid, False)
+      for sid in current:
+          if sid not in wanted:
+              change(policy, sid, True)
+      assert set(assigned(policy)) == set(wanted), 'Assignments differ'
+
+  def setup(policy):
+      backup(policy)
+      replace(policy, [])
+      return observe(policy)
+
+  def cleanup(policy):
+      if not os.path.exists(JOURNAL):
+          return {'restored': True, 'backup': False}
+      original = read_journal()['original']
+      replace(policy, original)
+      assert set(assigned(policy)) == set(original), 'Restoration differs'
+      return {'restored': True, 'sids': assigned(policy)}
+
+  policy, attributes = pointer(), Attributes()
+  attributes.length = ctypes.sizeof(attributes)
+  try:
+      status_checked(advapi.LsaOpenPolicy(
+          None, ctypes.byref(attributes), 0xf0fff, ctypes.byref(policy)))
+      if OPERATION == 'setup':
+          result = setup(policy)
+      elif OPERATION == 'observe':
+          result = observe(policy)
+      elif OPERATION == 'cleanup':
+          result = cleanup(policy)
+      else:
+          raise AssertionError('Unknown fixture operation')
+      print(json.dumps(result, ensure_ascii=True))
+  finally:
+      if policy.value:
+          advapi.LsaClose(policy)

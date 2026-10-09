@@ -1,0 +1,182 @@
+---
+- name: Verify native hotfix inspection and unchanged servicing state
+  hosts: legacy_windows
+  gather_facts: false
+  vars_files:
+    - vars/hotfix.yml
+    - vars/hotfix_fixture.yml
+  tasks:
+    - name: Require actual Python 3.4.4 and record original staging
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import glob,json,os,sys,tempfile;assert sys.version_info[:3]==(3,4,4);
+        print(json.dumps(sorted(glob.glob(os.path.join(tempfile.gettempdir(),'ansible-tmp-*')))))""
+      register: hotfix_staging_before
+      changed_when: false
+
+    - name: Allocate private evidence file
+      ansible.builtin.tempfile:
+        state: file
+        path: '{{ playbook_dir }}/../../tmp'
+        prefix: 'hotfix-{{ inventory_hostname }}-'
+        suffix: .json
+      register: hotfix_capture
+      delegate_to: localhost
+      vars: &controller
+        ansible_connection: local
+        ansible_shell_type: sh
+        ansible_python_interpreter: '{{ ansible_playbook_python }}'
+      changed_when: false
+
+    - name: Initialize raw case evidence
+      ansible.builtin.set_fact:
+        hotfix_results: []
+
+    - name: Exercise bounded package inspection and recovery
+      block:
+        - name: Allocate owned workspace  # noqa: args[module]
+          sustainablelobster.legacy_windows.win_tempfile:
+            state: directory
+            prefix: legacy-windows-hotfix-test-
+          register: hotfix_workspace
+
+        - name: Journal prerequisites and create noninstalling source fixtures
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}', '-',
+                   '{{ hotfix_workspace.path }}', setup]
+            stdin: '{{ hotfix_program }}'
+          register: hotfix_setup
+          changed_when: false
+          no_log: true
+
+        - name: Transfer official inapplicable package  # noqa: args[module]
+          when: (hotfix_setup.stdout | from_json).supported
+          sustainablelobster.legacy_windows.win_copy:
+            src: '{{ hotfix_inapplicable_controller_source }}'
+            dest: '{{ hotfix_workspace.path }}\inapplicable.msu'
+
+        - name: Exercise bounded cases on supported native provider
+          when: (hotfix_setup.stdout | from_json).supported
+          ansible.builtin.include_tasks: tasks/win_hotfix_case.yml
+          loop: '{{ hotfix_selected_cases }}'
+          loop_control:
+            loop_var: hotfix_case
+            label: '{{ hotfix_case.name }}'
+
+        - name: Verify normal and preview legacy missing-provider failures
+          when: not (hotfix_setup.stdout | from_json).supported
+          ansible.builtin.include_tasks: tasks/win_hotfix_case.yml
+          loop:
+            - name: Unavailable native provider
+              params:
+                state: absent
+                hotfix_identifier: LegacyWindowsMissingPackage
+              failed: true
+              msg: >-
+                The DISM PS module needs to be installed, this can be done
+                through the windows-adk chocolately package
+            - name: Unavailable native provider preview
+              params:
+                state: absent
+                hotfix_identifier: LegacyWindowsMissingPackage
+              failed: true
+              check: true
+              msg: >-
+                The DISM PS module needs to be installed, this can be done
+                through the windows-adk chocolately package
+          loop_control:
+            loop_var: hotfix_case
+            label: '{{ hotfix_case.name }}'
+      always:
+        - name: Persist raw results before recovery
+          ansible.builtin.copy:
+            content: >-
+              {{ {'results':hotfix_results,'setup':hotfix_setup | default(none),
+                  'unavailable':hotfix_unavailable | default(none),
+                  'latest_native':hotfix_native | default(none),
+                  'latest_original':hotfix_original | default(none),
+                  'latest_before':hotfix_before | default(none),
+                  'latest_after_native':hotfix_after_native | default(none),
+                  'latest_after_original':hotfix_after_original | default(none),
+                  'staging_before':hotfix_staging_before} | to_nice_json }}
+            dest: '{{ hotfix_capture.path }}'
+            mode: '0600'
+          delegate_to: localhost
+          vars: *controller
+          changed_when: false
+          no_log: true
+
+        - name: Verify protected recovery and restore owned service effects
+          when: hotfix_workspace.path is defined
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}', '-',
+                   '{{ hotfix_workspace.path }}', cleanup]
+            stdin: '{{ hotfix_program }}'
+          register: hotfix_recovery
+          changed_when: false
+          no_log: true
+
+        - name: Require verified recovery
+          ansible.builtin.assert:
+            that: [(hotfix_recovery.stdout | from_json).restored]
+
+        - name: Finalize verified recovery journal
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}', '-',
+                   '{{ hotfix_workspace.path }}', finalize]
+            stdin: '{{ hotfix_program }}'
+          changed_when: false
+          no_log: true
+
+        - name: Remove only the verified owned workspace  # noqa: args[module]
+          sustainablelobster.legacy_windows.win_file:
+            path: '{{ hotfix_workspace.path }}'
+            state: absent
+
+        - name: Independently verify workspace absence and staging
+          ansible.builtin.raw: >-
+            cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+            "import glob,json,os,sys,tempfile;
+            assert not os.path.exists(sys.argv[1]);
+            print(json.dumps(sorted(glob.glob(os.path.join(
+            tempfile.gettempdir(),'ansible-tmp-*')))))"
+            "{{ hotfix_workspace.path }}""
+          register: hotfix_staging_after
+          changed_when: false
+
+        - name: Require exact original staging
+          ansible.builtin.assert:
+            that:
+              - >-
+                (hotfix_staging_before.stdout | from_json) ==
+                (hotfix_staging_after.stdout | from_json)
+
+        - name: Retain public results and complete recovery observations
+          ansible.builtin.copy:
+            content: >-
+              {{ {'results':hotfix_results,'setup':hotfix_setup | default(none),
+                  'unavailable':hotfix_unavailable | default(none),
+                  'latest_native':hotfix_native | default(none),
+                  'latest_original':hotfix_original | default(none),
+                  'latest_before':hotfix_before | default(none),
+                  'latest_after_native':hotfix_after_native | default(none),
+                  'latest_after_original':hotfix_after_original | default(none),
+                  'recovery':hotfix_recovery,'staging_before':hotfix_staging_before,
+                  'staging_after':hotfix_staging_after,
+                  'workspace_absent':true} | to_nice_json }}
+            dest: '{{ hotfix_capture.path }}'
+            mode: '0600'
+          delegate_to: localhost
+          vars: *controller
+          changed_when: false
+          no_log: true
+
+        - name: Require every bounded case validated
+          ansible.builtin.assert:
+            that:
+              - >-
+                hotfix_results | length == (hotfix_selected_cases | length
+                if (hotfix_setup.stdout | from_json).supported else 2)
+              - >-
+                hotfix_results | selectattr('validated','equalto',true) |
+                list | length == hotfix_results | length

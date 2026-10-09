@@ -1,0 +1,95 @@
+---
+- name: '{{ user_right_case.name }}'
+  block:
+    - name: Apply or predict the requested assignments  # noqa: args[module]
+      sustainablelobster.legacy_windows.win_user_right:
+        name: '{{ user_right_case.params.name | default(omit) }}'
+        users: '{{ user_right_case.params.users | default(omit) }}'
+        action: '{{ user_right_case.params.action | default(omit) }}'
+      register: user_right_result
+      check_mode: '{{ user_right_case.check | default(false) }}'
+      diff: true
+  rescue:
+    - name: Require the declared assignment failure
+      ansible.builtin.assert:
+        that:
+          - user_right_case.error is defined
+          - user_right_result is failed
+          - user_right_result.msg == user_right_case.error
+          - not user_right_result.changed
+
+- name: Read assigned SIDs independently through LSA
+  sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+    argv:
+      - '{{ ansible_python_interpreter }}'
+      - '-'
+      - '{{ user_right_workspace.path }}'
+      - observe
+    stdin: '{{ user_right_fixture }}'
+  register: user_right_observation
+  changed_when: false
+  check_mode: false
+
+- name: Verify public results and unchanged or successfully written policy
+  vars:
+    observation: '{{ user_right_observation.stdout | from_json }}'
+    writes: >-
+      {{ user_right_case.changed and not
+         (user_right_case.check | default(false)) }}
+  ansible.builtin.assert:
+    that:
+      - user_right_result.changed == user_right_case.changed
+      - (user_right_case.error is defined) == (user_right_result is failed)
+      - user_right_result.warnings | default([]) == []
+      - user_right_result.rc is not defined
+      - user_right_result.stdout is not defined
+      - user_right_result.stderr is not defined
+      - user_right_case.error is defined or user_right_result.msg is not defined
+      - writes or observation == user_right_previous
+      - >-
+        not writes or (observation.sids | sort) ==
+        (user_right_case.expected | sort)
+      - >-
+        user_right_case.error is not defined or
+        (user_right_case.initialized | default(false)) or
+        user_right_result.diff is not defined
+      - >-
+        not (user_right_case.initialized | default(false)) or
+        user_right_result.diff == {'before': '', 'after': ''}
+
+- name: Verify ordered added removed and predicted account lists
+  when: user_right_case.error is not defined
+  vars:
+    removed_sids: >-
+      {{ user_right_case.removed | default(
+         user_right_previous.sids |
+         reject('in', user_right_case.expected) | list) }}
+    added_names: >-
+      {{ user_right_case.added |
+         map('extract', user_right_initial.identities) | list }}
+    removed_names: >-
+      {{ removed_sids | map('extract', user_right_initial.identities) | list }}
+    expected_names: >-
+      {{ (user_right_previous.names + added_names) |
+         reject('in', removed_names) | list }}
+  ansible.builtin.assert:
+    that:
+      - user_right_result.added == added_names
+      - user_right_result.removed == removed_names
+      - >-
+        user_right_result.diff.before ==
+        {user_right_previous.right: user_right_previous.names}
+      - >-
+        user_right_result.diff.after ==
+        {user_right_previous.right: expected_names}
+
+- name: Retain the whole public result and independent before and after states
+  vars:
+    record:
+      case: '{{ user_right_case.name }}'
+      result: '{{ user_right_result }}'
+      before: '{{ user_right_previous }}'
+      snapshot: '{{ user_right_observation.stdout | from_json }}'
+  ansible.builtin.set_fact:
+    user_right_results: '{{ (user_right_results | default([])) + [record] }}'
+    user_right_previous: '{{ user_right_observation.stdout | from_json }}'

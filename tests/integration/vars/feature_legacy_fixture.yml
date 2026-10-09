@@ -1,0 +1,117 @@
+---
+feature_legacy_fixture: |
+  # Copyright 2026 Joe Lustri
+  # SPDX-License-Identifier: GPL-3.0-or-later
+  """Journal the older server catalogue before owned feature changes."""
+  import hashlib
+  import json
+  import os
+  import subprocess
+  import sys
+  import xml.etree.ElementTree as ET
+  import winreg
+
+  WORKSPACE, OPERATION = sys.argv[1:3]
+  JOURNAL = os.path.join(WORKSPACE, 'server-feature-recovery.json')
+  ROOT = os.environ['SystemRoot']
+  TOOL = os.path.join(ROOT, 'System32', 'ServerManagerCmd.exe')
+  TARGETS = ('Telnet-Client', 'TFTP-Client')
+
+  def services():
+      with WmiConnection() as connection:
+          rows = connection.query('SELECT * FROM Win32_Service',
+              ['Name', 'DisplayName', 'StartMode', 'State', 'PathName',
+               'StartName'])
+      for row in rows:
+          if (row['Name'] != 'TrustedInstaller' and
+                  'bvsshserver' not in (row['PathName'] or '').lower()):
+              del row['State']
+      return {row['Name']: row for row in rows}
+
+  def catalogue():
+      path = os.path.join(WORKSPACE, 'observer.xml')
+      with subprocess.Popen(
+              [TOOL, '-query', path, '-logpath',
+               os.path.join(WORKSPACE, 'observer.log')],
+              stdout=subprocess.PIPE, stderr=subprocess.STDOUT) as process:
+          output = process.communicate()[0].decode('mbcs', 'replace')
+      assert process.returncode == 0, output
+      rows = {}
+      for node in ET.parse(path).getroot().iter():
+          if node.get('Id'):
+              assert node.get('Id') not in rows
+              rows[node.get('Id')] = dict(node.attrib)
+      assert rows, 'No real feature catalogue'
+      return rows
+
+  def pending():
+      paths = (
+          r'SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing'
+          r'\RebootPending',
+          r'SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update'
+          r'\RebootRequired')
+      result = {}
+      for path in paths:
+          try:
+              with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, path):
+                  result[path] = True
+          except FileNotFoundError:
+              result[path] = False
+      return result
+
+  def binaries():
+      result = {}
+      for name in ('telnet.exe', 'tftp.exe'):
+          path = os.path.join(ROOT, 'System32', name)
+          try:
+              with open(path, 'rb') as stream:
+                  result[name] = hashlib.sha256(stream.read()).hexdigest()
+          except FileNotFoundError:
+              result[name] = None
+      return result
+
+  def observe():
+      return {'catalogue': catalogue(), 'services': services(),
+              'binaries': binaries(), 'pending': pending()}
+
+  def journal():
+      with open(JOURNAL) as stream:
+          record = json.load(stream)
+      assert record['workspace'] == os.path.abspath(WORKSPACE)
+      assert record['targets'] == list(TARGETS)
+      return record
+
+  def setup():
+      before = observe()
+      assert not any(before['pending'].values()), 'Original reboot is pending'
+      assert all(before['catalogue'].get(name, {}).get('Installed') == 'false'
+                 for name in TARGETS), 'Owned client features must be disabled'
+      record = {'workspace': os.path.abspath(WORKSPACE),
+                'targets': list(TARGETS), 'before': before,
+                'runtime': {'python': list(sys.version_info[:3]),
+                            'windows': list(sys.getwindowsversion()),
+                            'interpreter': sys.executable,
+                            'computer': os.environ['COMPUTERNAME']}}
+      with open(JOURNAL, 'x') as stream:
+          json.dump(record, stream, sort_keys=True)
+          stream.flush()
+          os.fsync(stream.fileno())
+      assert journal() == record
+      return record
+
+  def recorded_observation():
+      journal()
+      return observe()
+
+  def verify():
+      if not os.path.exists(JOURNAL):
+          return {'restored': True, 'journal_absent': True}
+      before = journal()['before']
+      after = observe()
+      return {'restored': after == before, 'before': before, 'after': after}
+
+  if __name__ == '__main__':
+      assert sys.version_info[:3] == (3, 4, 4)
+      operation = {'setup': setup, 'observe': recorded_observation,
+                   'verify': verify}[OPERATION]
+      print(json.dumps(operation(), sort_keys=True))

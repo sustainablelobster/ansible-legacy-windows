@@ -1,0 +1,261 @@
+---
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Independent native reads; no payload or module helper is imported here.
+whoami_observation_code: |
+  import ctypes, datetime, json, sys
+  assert sys.version_info[:3] == (3, 4, 4)
+  dword = ctypes.c_uint32
+  pointer = ctypes.c_void_p
+  wide = ctypes.c_wchar_p
+  kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+  security = ctypes.WinDLL('advapi32', use_last_error=True)
+  lsa = ctypes.WinDLL('secur32', use_last_error=True)
+
+  class Luid(ctypes.Structure):
+      _fields_ = [('low', dword), ('high', dword)]
+
+  class SidAttributes(ctypes.Structure):
+      _fields_ = [('sid', pointer), ('attributes', dword)]
+
+  class TokenGroups(ctypes.Structure):
+      _fields_ = [('count', dword), ('groups', SidAttributes * 1)]
+
+  class Privilege(ctypes.Structure):
+      _fields_ = [('luid', Luid), ('attributes', dword)]
+
+  class Statistics(ctypes.Structure):
+      _fields_ = [('token_id', Luid), ('authentication_id', Luid),
+          ('expiration', ctypes.c_uint64), ('token_type', dword),
+          ('impersonation', dword), ('charged', dword), ('available', dword),
+          ('groups', dword), ('privileges', dword), ('modified', Luid)]
+
+  class LsaString(ctypes.Structure):
+      _fields_ = [('length', ctypes.c_ushort),
+          ('capacity', ctypes.c_ushort), ('buffer', pointer)]
+
+  class Session(ctypes.Structure):
+      _fields_ = [('size', dword), ('id', Luid), ('username', LsaString),
+          ('domain', LsaString), ('authentication', LsaString),
+          ('logon_type', dword), ('session', dword), ('sid', pointer),
+          ('time', ctypes.c_uint64), ('server', LsaString),
+          ('dns_domain', LsaString), ('upn', LsaString), ('flags', dword)]
+
+  class PolicyAttributes(ctypes.Structure):
+      _fields_ = [('length', dword), ('root', pointer), ('name', pointer),
+          ('attributes', dword), ('descriptor', pointer), ('quality', pointer)]
+
+  def bind(library, name, arguments, result):
+      function = getattr(library, name)
+      function.argtypes, function.restype = arguments, result
+      return function
+
+  current_process = bind(kernel, 'GetCurrentProcess', [], pointer)
+  close_handle = bind(kernel, 'CloseHandle', [pointer], ctypes.c_int)
+  free_local = bind(kernel, 'LocalFree', [pointer], pointer)
+  open_token = bind(security, 'OpenProcessToken',
+      [pointer, dword, ctypes.POINTER(pointer)], ctypes.c_int)
+  read_token = bind(security, 'GetTokenInformation',
+      [pointer, dword, pointer, dword, ctypes.POINTER(dword)], ctypes.c_int)
+  sid_text = bind(security, 'ConvertSidToStringSidW',
+      [pointer, ctypes.POINTER(pointer)], ctypes.c_int)
+  parse_sid = bind(security, 'ConvertStringSidToSidW',
+      [wide, ctypes.POINTER(pointer)], ctypes.c_int)
+  lookup_sid = bind(security, 'LookupAccountSidW',
+      [wide, pointer, wide, ctypes.POINTER(dword), wide,
+      ctypes.POINTER(dword), ctypes.POINTER(dword)], ctypes.c_int)
+  lookup_privilege = bind(security, 'LookupPrivilegeNameW',
+      [wide, ctypes.POINTER(Luid), wide, ctypes.POINTER(dword)], ctypes.c_int)
+  check_membership = bind(security, 'CheckTokenMembership',
+      [pointer, pointer, ctypes.POINTER(ctypes.c_int)], ctypes.c_int)
+  read_session = bind(lsa, 'LsaGetLogonSessionData',
+      [ctypes.POINTER(Luid), ctypes.POINTER(pointer)], dword)
+  free_session = bind(lsa, 'LsaFreeReturnBuffer', [pointer], dword)
+  open_policy = bind(security, 'LsaOpenPolicy',
+      [pointer, ctypes.POINTER(PolicyAttributes), dword,
+      ctypes.POINTER(pointer)], dword)
+  close_policy = bind(security, 'LsaClose', [pointer], dword)
+  read_rights = bind(security, 'LsaEnumerateAccountRights',
+      [pointer, pointer, ctypes.POINTER(pointer), ctypes.POINTER(dword)], dword)
+  free_rights = bind(security, 'LsaFreeMemory', [pointer], dword)
+
+  def checked(success):
+      if not success:
+          raise ctypes.WinError(ctypes.get_last_error())
+
+  def query(kind):
+      needed = dword()
+      assert not read_token(token, kind, None, 0, ctypes.byref(needed))
+      error = ctypes.get_last_error()
+      if kind == 25 and error == 87:
+          return None
+      assert error == 122, (kind, error)
+      buffer = ctypes.create_string_buffer(needed.value)
+      checked(read_token(token, kind, buffer, len(buffer),
+          ctypes.byref(needed)))
+      return buffer
+
+  def account(sid):
+      text = pointer()
+      checked(sid_text(sid, ctypes.byref(text)))
+      try:
+          identifier = ctypes.wstring_at(text)
+      finally:
+          assert not free_local(text)
+      name_size, domain_size, kind = dword(), dword(), dword()
+      assert not lookup_sid(None, sid, None, ctypes.byref(name_size),
+          None, ctypes.byref(domain_size), ctypes.byref(kind))
+      error = ctypes.get_last_error()
+      if error in (1332, 1789):
+          return {'sid': identifier, 'account_name': None,
+              'domain_name': None, 'type': 'Unknown'}
+      assert error == 122
+      name = ctypes.create_unicode_buffer(max(name_size.value, 1))
+      domain = ctypes.create_unicode_buffer(max(domain_size.value, 1))
+      checked(lookup_sid(None, sid, name, ctypes.byref(name_size),
+          domain, ctypes.byref(domain_size), ctypes.byref(kind)))
+      kinds = ['User', 'Group', 'Domain', 'Alias', 'WellKnownGroup',
+          'DeletedAccount', 'Invalid', 'Unknown', 'Computer', 'Label', 'Logon']
+      assert 1 <= kind.value <= len(kinds)
+      return {'sid': identifier, 'account_name': name.value,
+          'domain_name': domain.value, 'type': kinds[kind.value - 1]}
+
+  def string(value):
+      if not value.buffer:
+          return None
+      assert value.length % 2 == 0
+      return ctypes.wstring_at(value.buffer, value.length // 2)
+
+  def login_time(ticks):
+      # These interactive fixtures must have a representable session time.
+      assert ticks > 0
+      seconds, fraction = divmod(ticks, 10000000)
+      seconds -= 11644473600
+      local = datetime.datetime.fromtimestamp(seconds)
+      utc = datetime.datetime.utcfromtimestamp(seconds)
+      offset = int((local - utc).total_seconds())
+      assert offset % 60 == 0
+      hours, minutes = divmod(abs(offset) // 60, 60)
+      return '{}.{:07d}{}{:02d}:{:02d}'.format(
+          local.strftime('%Y-%m-%dT%H:%M:%S'), fraction,
+          '+' if offset >= 0 else '-', hours, minutes)
+
+  group_flags = [(1, 'Mandatory'), (2, 'Enabled by default'), (4, 'Enabled'),
+      (8, 'Owner'), (16, 'Use for deny only'), (32, 'Integrity'),
+      (64, 'Integrity enabled'), (0x20000000, 'Resource')]
+  user_flags = [
+      (0x4000, 'Optimized'), (0x8000, 'Winlogon'), (0x10000, 'Pkinit'),
+      # Preserve the spelling produced by the pinned upstream enum.
+      (0x20000, 'Not optmized'),  # codespell:ignore optmized
+  ]
+  result, enabled_sids = {}, []
+  token = pointer()
+  checked(open_token(current_process(), 8, ctypes.byref(token)))
+  try:
+      statistics_buffer = query(10)
+      statistics = Statistics.from_buffer(statistics_buffer)
+      result['token_type'] = {1: 'TokenPrimary', 2: 'TokenImpersonation'}[
+          statistics.token_type]
+      result['impersonation_level'] = ['SecurityAnonymous',
+          'SecurityIdentification', 'SecurityImpersonation',
+          'SecurityDelegation'][statistics.impersonation]
+      result['logon_id'] = (statistics.authentication_id.high << 32 |
+          statistics.authentication_id.low)
+      groups_buffer = query(2)
+      group_count = dword.from_buffer(groups_buffer).value
+      groups = (SidAttributes * group_count).from_buffer(
+          groups_buffer, TokenGroups.groups.offset)
+      result['groups'] = []
+      for group in groups:
+          if group.attributes & 4:
+              enabled_sids.append(group.sid)
+          if group.attributes & 0xc0000000 == 0xc0000000:
+              continue
+          entry = account(group.sid)
+          entry['attributes'] = [name for mask, name in group_flags
+              if group.attributes & mask == mask]
+          result['groups'].append(entry)
+      privileges_buffer = query(3)
+      privilege_count = dword.from_buffer(privileges_buffer).value
+      privileges = (Privilege * privilege_count).from_buffer(
+          privileges_buffer, 4)
+      result['privileges'] = {}
+      for privilege in privileges:
+          needed = dword()
+          assert not lookup_privilege(None, ctypes.byref(privilege.luid),
+              None, ctypes.byref(needed))
+          assert ctypes.get_last_error() == 122
+          name = ctypes.create_unicode_buffer(needed.value + 1)
+          needed.value = len(name)
+          checked(lookup_privilege(None, ctypes.byref(privilege.luid),
+              name, ctypes.byref(needed)))
+          result['privileges'][name.value] = ('enabled-by-default'
+              if privilege.attributes & 1 else 'enabled'
+              if privilege.attributes & 2 else 'disabled')
+      label_buffer = query(25)
+      result['label'] = (None if label_buffer is None else
+          account(SidAttributes.from_buffer(label_buffer).sid))
+      session_pointer = pointer()
+      status = read_session(ctypes.byref(statistics.authentication_id),
+          ctypes.byref(session_pointer))
+      assert status == 0, ('LsaGetLogonSessionData', status)
+      try:
+          session = Session.from_address(session_pointer.value)
+          session_size = session.size
+          assert session_size >= Session.flags.offset
+          assert session.id.low == statistics.authentication_id.low
+          assert session.id.high == statistics.authentication_id.high
+          result['account'] = account(session.sid)
+          result['login_domain'] = string(session.domain)
+          result['authentication_package'] = string(session.authentication)
+          result['logon_server'] = string(session.server)
+          result['dns_domain_name'] = string(session.dns_domain)
+          result['upn'] = string(session.upn)
+          result['login_time'] = login_time(session.time)
+          # This read-only fixture uses an existing interactive SSH logon.
+          assert session.logon_type == 2, session.logon_type
+          result['logon_type'] = 'Interactive'
+          flags_available = session_size >= Session.flags.offset + 4
+          result['user_flags'] = ([name for mask, name in user_flags
+              if session.flags & mask == mask] if flags_available else None)
+      finally:
+          assert free_session(session_pointer) == 0
+      admin_sid, is_admin = pointer(), ctypes.c_int()
+      checked(parse_sid('S-1-5-32-544', ctypes.byref(admin_sid)))
+      try:
+          checked(check_membership(None, admin_sid, ctypes.byref(is_admin)))
+      finally:
+          assert not free_local(admin_sid)
+      result['rights'] = []
+      if is_admin.value:
+          attributes, policy = PolicyAttributes(), pointer()
+          attributes.length = ctypes.sizeof(attributes)
+          status = open_policy(None, ctypes.byref(attributes), 0x800,
+              ctypes.byref(policy))
+          assert status == 0, ('LsaOpenPolicy', status)
+          try:
+              for sid in enabled_sids:
+                  rights_pointer, count = pointer(), dword()
+                  status = read_rights(policy, sid,
+                      ctypes.byref(rights_pointer), ctypes.byref(count))
+                  assert status in (0, 0xc0000034), (
+                      'LsaEnumerateAccountRights', status)
+                  try:
+                      if status == 0:
+                          rights = (LsaString * count.value).from_address(
+                              rights_pointer.value)
+                          for right in rights:
+                              name = string(right)
+                              if ('Logon' in name and
+                                      name not in result['rights']):
+                                  result['rights'].append(name)
+                  finally:
+                      if rights_pointer:
+                          assert free_rights(rights_pointer) == 0
+          finally:
+              assert close_policy(policy) == 0
+  finally:
+      assert close_handle(token)
+  print(json.dumps({'python': list(sys.version_info[:3]), 'expected': result,
+      'integrity_error': 87 if label_buffer is None else 0,
+      'session_size': session_size, 'flags_offset': Session.flags.offset,
+      'is_admin': bool(is_admin.value)}))

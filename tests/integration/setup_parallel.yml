@@ -1,0 +1,199 @@
+---
+- name: Compare actual parallel native and released facts with exact recovery
+  hosts: legacy_windows
+  gather_facts: false
+  vars_files:
+    - vars/setup_parallel.yml
+  vars:
+    setup_parallel_compare: true
+    setup_parallel_become: false
+    setup_parallel_subsets: ['!all', '!min', distribution, user]
+  module_defaults:
+    sustainablelobster.legacy_windows.setup:
+      gather_subset: '{{ setup_parallel_subsets }}'
+      gather_timeout: '{{ setup_parallel_defaults_timeout | default(10) }}'
+    ansible.windows.setup:
+      gather_subset: '{{ setup_parallel_subsets }}'
+  tasks:
+    - name: Verify authorized guest identity and actual Python minimum
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import json,os,subprocess,sys;
+        assert sys.version_info[:3]==(3,4,4);
+        hardware=subprocess.check_output(['getmac','/fo','csv','/nh']);
+        assert '{{ contract_gap_mac }}'.encode('ascii') in
+        hardware.upper().replace(b'-',b':');
+        print(json.dumps(dict(python=list(sys.version_info[:3]),
+        windows=list(sys.getwindowsversion()),computer=os.environ['COMPUTERNAME'],
+        interpreter=sys.executable)))""
+      register: setup_parallel_runtime
+      changed_when: false
+
+    - name: Require actual target runtime and record original staging
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import glob,json,os,sys,tempfile;assert sys.version_info[:3]==(3,4,4);
+        print(json.dumps(sorted(glob.glob(os.path.join(
+        tempfile.gettempdir(),'ansible-tmp-*')))))""
+      register: setup_parallel_staging_before
+      changed_when: false
+
+    - name: Allocate a private controller capture
+      ansible.builtin.tempfile:
+        path: >-
+          {{ setup_parallel_evidence_dir |
+             default(playbook_dir + '/../../tmp/codex/evidence') }}
+        prefix: 'setup-parallel-{{ inventory_hostname }}-'
+        suffix: .json
+      delegate_to: localhost
+      vars: &controller
+        ansible_connection: local
+        ansible_shell_type: sh
+        ansible_python_interpreter: '{{ ansible_playbook_python }}'
+      register: setup_parallel_capture
+      changed_when: false
+
+    - name: Allocate an exclusively owned fact workspace
+      sustainablelobster.legacy_windows.win_tempfile:
+        state: directory
+        prefix: legacy-windows-setup-parallel-
+      register: setup_parallel_workspace
+
+    - name: Exercise parallel facts with mandatory protected recovery
+      block:
+        - name: Journal protected state and private cache ownership
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}', '-',
+                   '{{ setup_parallel_workspace.path }}', setup]
+            stdin: '{{ setup_parallel_program }}'
+          register: setup_parallel_setup
+          changed_when: false
+          no_log: true
+
+        - name: Gather native distribution and product facts in parallel
+          sustainablelobster.legacy_windows.gather_facts:
+            parallel: true
+            gather_timeout: '{{ setup_parallel_timeout | default(30) }}'
+            gather_subset: '{{ setup_parallel_subsets }}'
+          become: '{{ setup_parallel_become | bool }}'
+          become_method: ansible.builtin.runas
+          become_user: '{{ setup_parallel_user | default(ansible_user) }}'
+          vars:
+            ansible_become_password: >-
+              {{ setup_parallel_password | default(ansible_password) }}
+            ansible_facts_modules:
+              - sustainablelobster.legacy_windows.setup
+              - sustainablelobster.legacy_windows.win_product_facts
+            ansible_async_dir: >-
+              {{ setup_parallel_workspace.path }}\native-cache
+            ansible_remote_tmp: >-
+              {{ setup_parallel_workspace.path }}\staging
+          register: setup_parallel_native
+          ignore_errors: true
+          no_log: true
+
+        - name: Preserve native public results before running the comparison
+          ansible.builtin.copy:
+            dest: '{{ setup_parallel_capture.path }}.native.json'
+            mode: '0600'
+            content: '{{ setup_parallel_native | to_nice_json }}'
+          delegate_to: localhost
+          vars: *controller
+          changed_when: false
+          no_log: true
+
+        # The tested core/source parallel loop repeatedly launches status jobs.
+        # Serial source gathering computes the same facts without that failure.
+        - name: Gather complete untouched released facts serially
+          ansible.builtin.gather_facts:
+            parallel: false
+            gather_timeout: 30
+            gather_subset: '{{ setup_parallel_subsets }}'
+          become: '{{ setup_parallel_become | bool }}'
+          become_method: ansible.builtin.runas
+          become_user: '{{ setup_parallel_user | default(ansible_user) }}'
+          vars:
+            ansible_become_password: >-
+              {{ setup_parallel_password | default(ansible_password) }}
+            ansible_facts_modules:
+              - ansible.legacy.setup
+              - ansible.windows.win_product_facts
+            ansible_async_dir: >-
+              {{ setup_parallel_workspace.path | replace('\\', '/')
+              }}/source-cache/
+            ansible_remote_tmp: >-
+              {{ setup_parallel_workspace.path }}\staging
+            ansible_shell_type: cmd
+          register: setup_parallel_source
+          ignore_errors: true
+          no_log: true
+          when: setup_parallel_compare | bool
+
+        - name: Preserve source public results before recovery gates
+          ansible.builtin.copy:
+            dest: '{{ setup_parallel_capture.path }}.source.json'
+            mode: '0600'
+            content: '{{ setup_parallel_source | to_nice_json }}'
+          delegate_to: localhost
+          vars: *controller
+          changed_when: false
+          no_log: true
+          when: setup_parallel_compare | bool
+
+        - name: Read the requested identity with matching runas options
+          sustainablelobster.legacy_windows.win_whoami:
+          become: '{{ setup_parallel_become | bool }}'
+          become_method: ansible.builtin.runas
+          become_user: '{{ setup_parallel_user | default(ansible_user) }}'
+          vars:
+            ansible_become_password: >-
+              {{ setup_parallel_password | default(ansible_password) }}
+          register: setup_parallel_identity
+          no_log: true
+
+        - name: Observe all actual job records and complete protected state
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}', '-',
+                   '{{ setup_parallel_workspace.path }}', observe]
+            stdin: '{{ setup_parallel_program }}'
+          register: setup_parallel_observation
+          changed_when: false
+          no_log: true
+
+        - name: Require complete typed public source parity and both real jobs
+          vars:
+            observed: '{{ setup_parallel_observation.stdout | from_json }}'
+          ansible.builtin.assert:
+            that:
+              - setup_parallel_native is not failed
+              - >-
+                not setup_parallel_compare | bool or
+                setup_parallel_source is not failed
+              - >-
+                not setup_parallel_compare | bool or
+                (setup_parallel_native | to_json(sort_keys=true)) ==
+                (setup_parallel_source |
+                combine({'warnings': setup_parallel_source.warnings |
+                map('replace', 'ansible.windows.',
+                'sustainablelobster.legacy_windows.') | list}
+                if setup_parallel_source.warnings is defined else {}) |
+                to_json(sort_keys=true))
+              - setup_parallel_native.ansible_facts._ansible_facts_gathered
+              - setup_parallel_native.ansible_facts.module_setup
+              - setup_parallel_native is not changed
+              - >-
+                setup_parallel_native.ansible_facts.ansible_user_sid ==
+                setup_parallel_identity.account.sid
+              - >-
+                setup_parallel_native.ansible_facts.ansible_os_product_id
+                is defined
+              - >-
+                observed.jobs | selectattr('side', 'equalto', 'native-cache') |
+                list | length == 2
+              - >-
+                observed.jobs | selectattr('side', 'equalto', 'source-cache') |
+                list | length == 0
+          no_log: true
+      always:
+        - name: Recover owned parallel jobs and verify all staging
+          ansible.builtin.include_tasks: tasks/setup_parallel_cleanup.yml

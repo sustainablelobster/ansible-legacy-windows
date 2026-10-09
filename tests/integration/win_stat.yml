@@ -1,0 +1,989 @@
+---
+# SPDX-License-Identifier: GPL-3.0-or-later
+- name: Verify native file metadata on Windows Python 3.4.4
+  hosts: legacy_windows
+  gather_facts: false
+  vars:
+    workspace_path: '{{ workspace.stdout | from_json }}'
+    capabilities: '{{ fixtures.stdout | from_json }}'
+    share_code: |
+      import ctypes, json, os, sys
+      root, suffix = sys.argv[1:]
+      assert os.path.basename(root).startswith('legacy-windows-stat-')
+      name = 'lwstat_' + os.path.basename(root).split('-')[-1] + suffix
+      class Share(ctypes.Structure):
+          _fields_ = [
+              ('name', ctypes.c_wchar_p), ('type', ctypes.c_ulong),
+              ('remark', ctypes.c_wchar_p), ('permissions', ctypes.c_ulong),
+              ('maximum', ctypes.c_ulong), ('uses', ctypes.c_ulong),
+              ('path', ctypes.c_wchar_p), ('password', ctypes.c_wchar_p)]
+      net = ctypes.WinDLL('netapi32')
+      net.NetShareAdd.argtypes = [ctypes.c_wchar_p, ctypes.c_ulong,
+                                 ctypes.c_void_p,
+                                 ctypes.POINTER(ctypes.c_ulong)]
+      net.NetShareAdd.restype = ctypes.c_ulong
+      share = Share(name, 0, 'Owned win_stat integration fixture',
+                    0, 0xffffffff, 0, os.path.join(root, 'shared'), None)
+      parameter = ctypes.c_ulong()
+      status = net.NetShareAdd(None, 2, ctypes.byref(share),
+                              ctypes.byref(parameter))
+      if status not in (0, 5):
+          raise RuntimeError('NetShareAdd status {0}, parameter {1}'.format(
+              status, parameter.value))
+      if status == 0:
+          with open(os.path.join(root, 'owned-shares.txt'), 'a') as stream:
+              stream.write(name + '\n')
+      print(json.dumps({'created': status == 0, 'name': name,
+                        'status': status}))
+    cleanup_code: |
+      import ctypes, os, sys, tempfile, time
+      root = os.path.abspath(sys.argv[1])
+      assert os.path.basename(root).startswith('legacy-windows-stat-')
+      kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+      kernel.GetLongPathNameW.argtypes = [ctypes.c_wchar_p,
+                                        ctypes.c_wchar_p, ctypes.c_ulong]
+      kernel.GetLongPathNameW.restype = ctypes.c_ulong
+      temporary = ctypes.create_unicode_buffer(32768)
+      length = kernel.GetLongPathNameW(tempfile.gettempdir(), temporary,
+                                       len(temporary))
+      assert 0 < length < len(temporary)
+      assert os.path.normcase(os.path.dirname(root)) == os.path.normcase(
+          os.path.abspath(temporary.value))
+      open(os.path.join(root, 'lock-release'), 'wb').close()
+      pid_path = os.path.join(root, 'lock-pid')
+      if os.path.isfile(pid_path):
+          with open(pid_path) as stream:
+              pid = int(stream.read())
+          kernel.OpenProcess.argtypes = [ctypes.c_ulong, ctypes.c_int,
+                                         ctypes.c_ulong]
+          kernel.OpenProcess.restype = ctypes.c_void_p
+          kernel.WaitForSingleObject.argtypes = [ctypes.c_void_p,
+                                                 ctypes.c_ulong]
+          kernel.WaitForSingleObject.restype = ctypes.c_ulong
+          kernel.CloseHandle.argtypes = [ctypes.c_void_p]
+          kernel.CloseHandle.restype = ctypes.c_int
+          process = kernel.OpenProcess(0x100000, False, pid)
+          if process:
+              try:
+                  assert kernel.WaitForSingleObject(process, 15000) == 0
+              finally:
+                  assert kernel.CloseHandle(process)
+          else:
+              assert ctypes.get_last_error() == 87
+      shares = os.path.join(root, 'owned-shares.txt')
+      if os.path.isfile(shares):
+          net = ctypes.WinDLL('netapi32')
+          net.NetShareDel.argtypes = [ctypes.c_wchar_p, ctypes.c_wchar_p,
+                                     ctypes.c_ulong]
+          net.NetShareDel.restype = ctypes.c_ulong
+          with open(shares) as stream:
+              names = stream.read().splitlines()
+          prefix = 'lwstat_' + os.path.basename(root).split('-')[-1]
+          for name in names:
+              assert name in (prefix + '_one', prefix + '_two')
+              status = net.NetShareDel(None, name, 0)
+              assert status in (0, 2310), (name, status)
+      kernel.GetFileAttributesW.argtypes = [ctypes.c_wchar_p]
+      kernel.GetFileAttributesW.restype = ctypes.c_ulong
+      kernel.SetFileAttributesW.argtypes = [ctypes.c_wchar_p, ctypes.c_ulong]
+      kernel.SetFileAttributesW.restype = ctypes.c_int
+      def remove_owned(path):
+          attributes = kernel.GetFileAttributesW(path)
+          if attributes == 0xffffffff:
+              error = ctypes.get_last_error()
+              if error in (2, 3):
+                  return
+              raise ctypes.WinError(error)
+          if attributes & 1:
+              if not kernel.SetFileAttributesW(path, attributes & ~1):
+                  raise ctypes.WinError(ctypes.get_last_error())
+          if attributes & 0x10:
+              if not attributes & 0x400:
+                  for name in os.listdir(path):
+                      remove_owned(os.path.join(path, name))
+              os.rmdir(path)
+          else:
+              os.remove(path)
+      remove_owned(root)
+      assert kernel.GetFileAttributesW(root) == 0xffffffff
+      print('owned shares, file handle, and workspace removed')
+  tasks:
+    - name: Require the intended runtime and record task directories
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import glob, json, os, sys, tempfile;
+        assert sys.version_info[:3] == (3, 4, 4);
+        print(json.dumps(sorted(glob.glob(os.path.join(tempfile.gettempdir(),
+        'ansible-tmp-*')))))""
+      register: task_directories_before
+      changed_when: false
+      check_mode: false
+
+    - name: Allocate an owned workspace
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import ctypes, json, tempfile;
+        kernel = ctypes.WinDLL('kernel32', use_last_error=True);
+        kernel.GetLongPathNameW.argtypes =
+        [ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_ulong];
+        kernel.GetLongPathNameW.restype = ctypes.c_ulong;
+        root = tempfile.mkdtemp(prefix='legacy-windows-stat-');
+        expanded = ctypes.create_unicode_buffer(32768);
+        length = kernel.GetLongPathNameW(root, expanded, len(expanded));
+        assert length in range(1, len(expanded));
+        print(json.dumps(expanded.value))""
+      register: workspace
+      changed_when: true
+      check_mode: false
+
+    - name: Exercise metadata inside the owned workspace
+      block:
+        - name: Prepare files with native attributes and exact timestamps
+          # Native setup provides independent expected metadata for WANT_JSON.
+          sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - |
+                import ctypes, json, os, sys
+                root = sys.argv[1]
+                kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+                kernel.CreateFileW.argtypes = [
+                    ctypes.c_wchar_p, ctypes.c_ulong, ctypes.c_ulong,
+                    ctypes.c_void_p, ctypes.c_ulong, ctypes.c_ulong,
+                    ctypes.c_void_p]
+                kernel.CreateFileW.restype = ctypes.c_void_p
+                kernel.CloseHandle.argtypes = [ctypes.c_void_p]
+                kernel.CloseHandle.restype = ctypes.c_int
+                kernel.SetFileTime.argtypes = [ctypes.c_void_p,
+                    ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p]
+                kernel.SetFileTime.restype = ctypes.c_int
+                kernel.SetFileAttributesW.argtypes = [
+                    ctypes.c_wchar_p, ctypes.c_ulong]
+                kernel.SetFileAttributesW.restype = ctypes.c_int
+                kernel.CreateHardLinkW.argtypes = [
+                    ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_void_p]
+                kernel.CreateHardLinkW.restype = ctypes.c_int
+                # Temp folders can inherit NotContentIndexed. Initialize
+                # this owned parent so later junctions inherit known flags.
+                if not kernel.SetFileAttributesW(root, 16):
+                    raise ctypes.WinError(ctypes.get_last_error())
+                directories = ['nested', 'nested/child', 'empty',
+                               'hidden-dir', 'shared', 'link-target']
+                for name in directories:
+                    os.mkdir(os.path.join(root, name))
+                files = ['ordinary.ps1', 'hidden.txt', 'readonly.txt',
+                         'Caf\u00e9 \u96ea [x].txt', '.gitignore',
+                         'no-extension', 'multiple.parts.txt',
+                         'nested/first.txt', 'nested/child/second.txt',
+                         'nested/hidden.txt', 'nested/hard-target.txt',
+                         'link-target/retained.txt', 'locked.txt']
+                for name in files:
+                    with open(os.path.join(root, name), 'wb') as stream:
+                        stream.write(b'abc')
+                if not kernel.CreateHardLinkW(
+                        os.path.join(root, 'nested/hard-link.txt'),
+                        os.path.join(root, 'nested/hard-target.txt'), None):
+                    raise ctypes.WinError(ctypes.get_last_error())
+                files.append('nested/hard-link.txt')
+                timestamp = ctypes.c_ulonglong(
+                    (1477984205 + 11644473600) * 10000000)
+                for name in directories + files:
+                    path = os.path.join(root, name)
+                    handle = kernel.CreateFileW(
+                        path, 0x100, 7, None, 3, 0x02000000, None)
+                    assert handle != ctypes.c_void_p(-1).value
+                    try:
+                        if not kernel.SetFileTime(
+                                handle, ctypes.byref(timestamp),
+                                ctypes.byref(timestamp),
+                                ctypes.byref(timestamp)):
+                            raise ctypes.WinError(ctypes.get_last_error())
+                    finally:
+                        assert kernel.CloseHandle(handle)
+                for name, attributes in (
+                        ('ordinary.ps1', 32), ('hidden.txt', 34),
+                        ('readonly.txt', 33), ('hidden-dir', 18),
+                        ('nested/hidden.txt', 34)):
+                    if not kernel.SetFileAttributesW(
+                            os.path.join(root, name), attributes):
+                        raise ctypes.WinError(ctypes.get_last_error())
+                security = ctypes.WinDLL('advapi32', use_last_error=True)
+                security.GetFileSecurityW.argtypes = [
+                    ctypes.c_wchar_p, ctypes.c_ulong, ctypes.c_void_p,
+                    ctypes.c_ulong, ctypes.POINTER(ctypes.c_ulong)]
+                security.GetFileSecurityW.restype = ctypes.c_int
+                security.GetSecurityDescriptorOwner.argtypes = [
+                    ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p),
+                    ctypes.POINTER(ctypes.c_int)]
+                security.GetSecurityDescriptorOwner.restype = ctypes.c_int
+                security.LookupAccountSidW.argtypes = [
+                    ctypes.c_wchar_p, ctypes.c_void_p, ctypes.c_wchar_p,
+                    ctypes.POINTER(ctypes.c_ulong), ctypes.c_wchar_p,
+                    ctypes.POINTER(ctypes.c_ulong),
+                    ctypes.POINTER(ctypes.c_ulong)]
+                security.LookupAccountSidW.restype = ctypes.c_int
+                needed = ctypes.c_ulong()
+                path = os.path.join(root, 'ordinary.ps1')
+                security.GetFileSecurityW(path, 1, None, 0,
+                                          ctypes.byref(needed))
+                descriptor = ctypes.create_string_buffer(needed.value)
+                assert security.GetFileSecurityW(
+                    path, 1, descriptor, needed.value, ctypes.byref(needed))
+                sid, defaulted = ctypes.c_void_p(), ctypes.c_int()
+                assert security.GetSecurityDescriptorOwner(
+                    descriptor, ctypes.byref(sid), ctypes.byref(defaulted))
+                account, domain = (ctypes.create_unicode_buffer(256),
+                                   ctypes.create_unicode_buffer(256))
+                account_size, domain_size = (ctypes.c_ulong(256),
+                                             ctypes.c_ulong(256))
+                kind = ctypes.c_ulong()
+                assert security.LookupAccountSidW(
+                    None, sid, account, ctypes.byref(account_size),
+                    domain, ctypes.byref(domain_size), ctypes.byref(kind))
+                print(json.dumps({
+                    'owner': domain.value + '\\' + account.value,
+                    'symbolic_links': hasattr(kernel, 'CreateSymbolicLinkW'),
+                    'hardlink_names': hasattr(kernel, 'FindFirstFileNameW')}))
+              - '{{ workspace_path }}'
+          register: fixtures
+
+        - name: Query all ordinary file metadata using defaults
+          # Runtime assertions below verify the complete public return shape.
+          sustainablelobster.legacy_windows.win_stat:  # noqa: args[module]
+            path: '{{ workspace_path }}\ordinary.ps1'
+          register: ordinary
+
+        - name: Verify default file metadata and native timestamps
+          ansible.builtin.assert:
+            fail_msg: >-
+              Unexpected file metadata for {{ workspace_path }}\ordinary.ps1;
+              returned path {{ ordinary.stat.path | default(none) | to_json }}
+            that:
+              - ordinary is not changed
+              - ordinary.stat.exists
+              - ordinary.stat.attributes == 'Archive'
+              - ordinary.stat.checksum == ('abc' | hash('sha1'))
+              - ordinary.stat.creationtime == 1477984205
+              - ordinary.stat.lastaccesstime == 1477984205
+              - ordinary.stat.lastwritetime == 1477984205
+              - ordinary.stat.extension == '.ps1'
+              - ordinary.stat.filename == 'ordinary.ps1'
+              - ordinary.stat.hlnk_targets == []
+              - ordinary.stat.nlink == 1
+              - ordinary.stat.isarchive
+              - ordinary.stat.isreg
+              - not ordinary.stat.isdir
+              - not ordinary.stat.ishidden
+              - not ordinary.stat.isjunction
+              - not ordinary.stat.islnk
+              - not ordinary.stat.isreadonly
+              - not ordinary.stat.isshared
+              - ordinary.stat.owner == capabilities.owner
+              - ordinary.stat.path == workspace_path + '\\ordinary.ps1'
+              - ordinary.stat.size == 3
+              - ordinary.stat.sharename is not defined
+              - ordinary.stat.lnk_source is not defined
+              - ordinary.stat.lnk_target is not defined
+              - ordinary.stat.lnk_type is not defined
+
+        - name: Repeat reads and execute reads in check mode
+          # Check mode must return the same content and stable metadata.
+          sustainablelobster.legacy_windows.win_stat:  # noqa: args[module]
+            path: '{{ workspace_path }}\ordinary.ps1'
+          check_mode: '{{ item }}'
+          loop: [false, true]
+          register: repeated
+
+        - name: Verify repeated and check-mode results are unchanged
+          ansible.builtin.assert:
+            that:
+              - item is not changed
+              - item.stat.checksum == ordinary.stat.checksum
+              - item.stat.creationtime == ordinary.stat.creationtime
+              - item.stat.lastwritetime == ordinary.stat.lastwritetime
+              - item.stat.size == ordinary.stat.size
+              - item.stat.owner == ordinary.stat.owner
+              - item.stat.path == ordinary.stat.path
+          loop: '{{ repeated.results }}'
+          loop_control:
+            label: 'check_mode={{ item.item }}'
+
+        - name: Hash the same bytes with every supported algorithm
+          # The controller computes expected digests independently.
+          sustainablelobster.legacy_windows.win_stat:  # noqa: args[module]
+            path: '{{ workspace_path }}\ordinary.ps1'
+            checksum_algorithm: '{{ item | upper }}'
+          loop: [md5, sha1, sha256, sha384, sha512]
+          register: hashes
+
+        - name: Verify all native checksum algorithms and case conversion
+          ansible.builtin.assert:
+            that:
+              - item is not changed
+              - item.stat.checksum == ('abc' | hash(item.item))
+          loop: '{{ hashes.results }}'
+          loop_control:
+            label: '{{ item.item }}'
+
+        - name: Query hidden and readonly files
+          # Exact native flags make ordering and classification visible.
+          sustainablelobster.legacy_windows.win_stat:  # noqa: args[module]
+            path: '{{ workspace_path }}\{{ item }}.txt'
+          loop: [hidden, readonly]
+          register: flagged_files
+
+        - name: Verify flag names in numeric order
+          ansible.builtin.assert:
+            that:
+              - flagged_files.results[0].stat.attributes == 'Hidden, Archive'
+              - flagged_files.results[0].stat.ishidden
+              - not flagged_files.results[0].stat.isreadonly
+              - flagged_files.results[1].stat.attributes == 'ReadOnly, Archive'
+              - flagged_files.results[1].stat.isreadonly
+              - not flagged_files.results[1].stat.ishidden
+              - flagged_files.results[0].stat.checksum == ordinary.stat.checksum
+              - flagged_files.results[1].stat.checksum == ordinary.stat.checksum
+              - flagged_files.results | select('changed') | list | length == 0
+
+        - name: Query literal Unicode names and unusual extensions
+          # Brackets must identify the literal filename without expansion.
+          sustainablelobster.legacy_windows.win_stat:  # noqa: args[module]
+            path: '{{ workspace_path }}\{{ item.name }}'
+          loop:
+            - {name: 'Café 雪 [x].txt', extension: '.txt'}
+            - {name: '.gitignore', extension: '.gitignore'}
+            - {name: 'no-extension', extension: ''}
+            - {name: 'multiple.parts.txt', extension: '.txt'}
+          register: literal_files
+
+        - name: Verify literal filenames and final extensions
+          ansible.builtin.assert:
+            that:
+              - item is not changed
+              - item.stat.filename == item.item.name
+              - item.stat.extension == item.item.extension
+              - item.stat.path == workspace_path + '\\' + item.item.name
+              - item.stat.checksum == ordinary.stat.checksum
+          loop: '{{ literal_files.results }}'
+          loop_control:
+            label: '{{ item.item.name }}'
+
+        - name: Resolve the destination alias after the canonical path
+          # The Basic argument parser applies aliases in their declared order.
+          sustainablelobster.legacy_windows.win_stat:  # noqa: args[module]
+            path: '{{ workspace_path }}\missing-path'
+            dest: '{{ workspace_path }}\ordinary.ps1'
+          register: dest_alias
+
+        - name: Resolve the name alias after both earlier path options
+          # The final alias must select the existing file.
+          sustainablelobster.legacy_windows.win_stat:  # noqa: args[module]
+            path: '{{ workspace_path }}\missing-path'
+            dest: '{{ workspace_path }}\missing-dest'
+            name: '{{ workspace_path }}\ordinary.ps1'
+          register: name_alias
+
+        - name: Expand environment variables and accept forward slashes
+          # The workspace was allocated under the account's temporary directory.
+          sustainablelobster.legacy_windows.win_stat:  # noqa: args[module]
+            path: '%TEMP%/{{ workspace_path | win_basename }}/ordinary.ps1'
+          register: expanded_path
+
+        - name: Verify alias order and expanded absolute paths
+          ansible.builtin.assert:
+            that:
+              - item is not changed
+              - item.stat.path == ordinary.stat.path
+              - item.stat.checksum == ordinary.stat.checksum
+          loop: '{{ [dest_alias, name_alias, expanded_path] }}'
+          loop_control:
+            label: '{{ item.stat.path }}'
+
+        - name: Query empty hidden and recursively populated directories
+          # The nested tree includes hidden files and two names for one file.
+          sustainablelobster.legacy_windows.win_stat:  # noqa: args[module]
+            path: '{{ workspace_path }}\{{ item.name }}'
+          loop:
+            - {name: empty, size: 0, hidden: false, attributes: Directory}
+            - name: hidden-dir
+              size: 0
+              hidden: true
+              attributes: 'Hidden, Directory'
+            - {name: nested, size: 15, hidden: false, attributes: Directory}
+          register: directories
+
+        - name: Verify directory classification and complete sizes
+          ansible.builtin.assert:
+            that:
+              - item is not changed
+              - item.stat.exists
+              - item.stat.isdir
+              - not item.stat.isreg
+              - not item.stat.islnk
+              - not item.stat.isjunction
+              - not item.stat.isarchive
+              - not item.stat.isreadonly
+              - not item.stat.isshared
+              - item.stat.ishidden == item.item.hidden
+              - item.stat.attributes == item.item.attributes
+              - item.stat.filename == item.item.name
+              - item.stat.path == workspace_path + '\\' + item.item.name
+              - item.stat.size == item.item.size
+              - item.stat.nlink == 1
+              - item.stat.hlnk_targets == []
+              - item.stat.owner == capabilities.owner
+              - item.stat.creationtime == 1477984205
+              - item.stat.lastwritetime == 1477984205
+              - item.stat.lastaccesstime is number
+              - item.stat.checksum is not defined
+              - item.stat.extension is not defined
+              - item.stat.sharename is not defined
+          loop: '{{ directories.results }}'
+          loop_control:
+            label: '{{ item.item.name }}'
+
+        - name: Omit checksum and size using false and null booleans
+          # Explicit null bypasses defaults in the pinned Basic parser.
+          sustainablelobster.legacy_windows.win_stat:  # noqa: args[module]
+            path: '{{ workspace_path }}\{{ item.path }}'
+            get_checksum: '{{ item.value }}'
+            get_size: '{{ item.value }}'
+            follow: '{{ item.value }}'
+            checksum_algorithm: null
+          loop:
+            - {path: ordinary.ps1, value: false}
+            - {path: nested, value: false}
+            - {path: ordinary.ps1, value: null}
+            - {path: nested, value: null}
+          register: omitted_fields
+
+        - name: Verify disabled operations omit their fields
+          ansible.builtin.assert:
+            that:
+              - item is not changed
+              - item.stat.exists
+              - item.stat.size is not defined
+              - item.stat.checksum is not defined
+          loop: '{{ omitted_fields.results }}'
+          loop_control:
+            label: '{{ item.item }}'
+
+        - name: Omit size while retaining the default checksum
+          # These independent options must not disable each other.
+          sustainablelobster.legacy_windows.win_stat:  # noqa: args[module]
+            path: '{{ workspace_path }}\ordinary.ps1'
+            get_size: false
+          register: checksum_without_size
+
+        - name: Verify a checksum can be returned without size
+          ansible.builtin.assert:
+            that:
+              - checksum_without_size is not changed
+              - checksum_without_size.stat.checksum == ordinary.stat.checksum
+              - checksum_without_size.stat.size is not defined
+
+        - name: Return only absence for missing paths in both execution modes
+          # A missing parent and a missing leaf are both observable absence.
+          sustainablelobster.legacy_windows.win_stat:  # noqa: args[module]
+            path: '{{ workspace_path }}\{{ item.path }}'
+          check_mode: '{{ item.check }}'
+          loop:
+            - {path: missing.txt, check: false}
+            - {path: 'missing-parent\missing.txt', check: true}
+          register: missing_paths
+
+        - name: Verify missing paths are successful unchanged queries
+          ansible.builtin.assert:
+            that:
+              - item is not failed
+              - item is not changed
+              - "item.stat == {'exists': false}"
+          loop: '{{ missing_paths.results }}'
+          loop_control:
+            label: '{{ item.item.path }}'
+
+        - name: Verify required-path validation
+          block:
+            - name: Reject a query without any path option  # noqa: args[module]
+              # The intentional invalid interface call is asserted in rescue.
+              sustainablelobster.legacy_windows.win_stat: {}
+              register: required_path
+
+            - name: Reject unexpected success without a path
+              ansible.builtin.fail:
+                msg: A query without a path unexpectedly succeeded
+          rescue:
+            - name: Verify the required-argument failure is unchanged
+              ansible.builtin.assert:
+                that:
+                  - required_path is failed
+                  - required_path is not changed
+                  - >-
+                    required_path.msg == 'missing required arguments: path'
+
+        - name: Verify invalid arguments fail before any mutation
+          block:
+            - name: Reject unsupported algorithms and boolean values
+              # These invalid values must fail validation even without hashing.
+              sustainablelobster.legacy_windows.win_stat:  # noqa: args[module]
+                path: '{{ workspace_path }}\ordinary.ps1'
+                checksum_algorithm: '{{ item.algorithm }}'
+                get_checksum: '{{ item.boolean }}'
+              loop:
+                - {algorithm: crc32, boolean: false}
+                - {algorithm: sha1, boolean: invalid}
+              register: invalid_arguments
+
+            - name: Reject unexpected success for invalid argument values
+              ansible.builtin.fail:
+                msg: An invalid algorithm or boolean unexpectedly succeeded
+          rescue:
+            - name: Verify each validation failure is actionable
+              ansible.builtin.assert:
+                that:
+                  - invalid_arguments.results | length == 2
+                  - item is failed
+                  - item is not changed
+                  - item.msg | length > 0
+              loop: '{{ invalid_arguments.results }}'
+
+        - name: Query a real hardlink with follow enabled
+          # Older systems can create hardlinks but cannot enumerate their names.
+          sustainablelobster.legacy_windows.win_stat:  # noqa: args[module]
+            path: '{{ workspace_path }}\nested\hard-link.txt'
+            follow: true
+          register: hardlink
+
+        - name: Verify hardlink metadata and explicit legacy limitations
+          ansible.builtin.assert:
+            that:
+              - hardlink is not changed
+              - hardlink.stat.exists
+              - hardlink.stat.isreg
+              - not hardlink.stat.islnk
+              - not hardlink.stat.isjunction
+              - hardlink.stat.filename == 'hard-link.txt'
+              - hardlink.stat.path == workspace_path + '\\nested\\hard-link.txt'
+              - hardlink.stat.size == 3
+              - hardlink.stat.checksum == ordinary.stat.checksum
+              - >-
+                (capabilities.hardlink_names and hardlink.stat.nlink == 2 and
+                 hardlink.stat.lnk_type == 'hard' and
+                 hardlink.stat.hlnk_targets ==
+                 [workspace_path + '\\nested\\hard-target.txt']) or
+                (not capabilities.hardlink_names and hardlink.stat.nlink == 1
+                 and hardlink.stat.hlnk_targets == []
+                 and hardlink.stat.lnk_type is not defined)
+              - >-
+                capabilities.hardlink_names or
+                ('Failed to check/get link info for file:' in
+                 (hardlink.warnings | default([]) | join(' ')))
+
+        - name: Create a native junction to a directory with retained content
+          # Both the junction and its target belong to this workspace.
+          sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - |
+                import ctypes, os, struct, sys
+                root = sys.argv[1]
+                kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+                kernel.CreateFileW.argtypes = [
+                    ctypes.c_wchar_p, ctypes.c_ulong, ctypes.c_ulong,
+                    ctypes.c_void_p, ctypes.c_ulong, ctypes.c_ulong,
+                    ctypes.c_void_p]
+                kernel.CreateFileW.restype = ctypes.c_void_p
+                kernel.CloseHandle.argtypes = [ctypes.c_void_p]
+                kernel.CloseHandle.restype = ctypes.c_int
+                kernel.DeviceIoControl.argtypes = [
+                    ctypes.c_void_p, ctypes.c_ulong, ctypes.c_void_p,
+                    ctypes.c_ulong, ctypes.c_void_p, ctypes.c_ulong,
+                    ctypes.POINTER(ctypes.c_ulong), ctypes.c_void_p]
+                kernel.DeviceIoControl.restype = ctypes.c_int
+                path, target = (os.path.join(root, 'junction'),
+                                os.path.join(root, 'link-target'))
+                os.mkdir(path)
+                handle = kernel.CreateFileW(
+                    path, 0x40000000, 0, None, 3, 0x02200000, None)
+                assert handle != ctypes.c_void_p(-1).value
+                try:
+                    substitute = ('\\??\\' + target).encode('utf-16-le')
+                    printable = target.encode('utf-16-le')
+                    names = (substitute + b'\x00\x00'
+                             + printable + b'\x00\x00')
+                    data = struct.pack(
+                        '<IHHHHHH', 0xA0000003, 8 + len(names), 0, 0,
+                        len(substitute), len(substitute) + 2,
+                        len(printable)) + names
+                    received = ctypes.c_ulong()
+                    buffer = ctypes.create_string_buffer(data)
+                    if not kernel.DeviceIoControl(
+                            handle, 0x900a4, buffer, len(data), None, 0,
+                            ctypes.byref(received), None):
+                        raise ctypes.WinError(ctypes.get_last_error())
+                finally:
+                    assert kernel.CloseHandle(handle)
+              - '{{ workspace_path }}'
+
+        - name: Query the junction itself and its resolved target
+          # Directory size includes files behind a junction without follow.
+          sustainablelobster.legacy_windows.win_stat:  # noqa: args[module]
+            path: '{{ workspace_path }}\junction'
+            follow: '{{ item }}'
+          loop: [false, true]
+          register: junction
+
+        - name: Verify junction metadata and recursive following
+          ansible.builtin.assert:
+            that:
+              - junction.results | select('changed') | list | length == 0
+              - junction.results[0].stat.isdir
+              - junction.results[0].stat.isjunction
+              - not junction.results[0].stat.islnk
+              - not junction.results[0].stat.isreg
+              - >-
+                junction.results[0].stat.attributes == 'Directory, ReparsePoint'
+              - junction.results[0].stat.filename == 'junction'
+              - >-
+                junction.results[0].stat.lnk_target ==
+                workspace_path + '\\link-target'
+              - >-
+                junction.results[0].stat.lnk_source ==
+                workspace_path + '\\link-target'
+              - junction.results[0].stat.size == 3
+              - junction.results[0].stat.checksum is not defined
+              - junction.results[1].stat.isdir
+              - not junction.results[1].stat.isjunction
+              - not junction.results[1].stat.islnk
+              - junction.results[1].stat.attributes == 'Directory'
+              - junction.results[1].stat.filename == 'link-target'
+              - >-
+                junction.results[1].stat.path ==
+                workspace_path + '\\link-target'
+              - junction.results[1].stat.size == 3
+              - junction.results[1].stat.lnk_target is not defined
+
+        - name: Create absolute relative and chained native symbolic links
+          # CreateSymbolicLinkW is absent on XP and Server 2003.
+          sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - |
+                import ctypes, os, sys
+                root = sys.argv[1]
+                kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+                kernel.CreateSymbolicLinkW.argtypes = [
+                    ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_ulong]
+                kernel.CreateSymbolicLinkW.restype = ctypes.c_ubyte
+                for name, target, directory in (
+                        ('file-link.txt',
+                         os.path.join(root, 'ordinary.ps1'), 0),
+                        ('dir-link', os.path.join(root, 'link-target'), 1),
+                        ('relative-link', 'link-target', 1),
+                        ('outer-link', os.path.join(root, 'relative-link'), 1)):
+                    if not kernel.CreateSymbolicLinkW(
+                            os.path.join(root, name), target, directory):
+                        raise ctypes.WinError(ctypes.get_last_error())
+              - '{{ workspace_path }}'
+          when: capabilities.symbolic_links
+          register: symbolic_setup
+
+        - name: Query symbolic links and their final targets
+          # The same cases explicitly skip when the target lacks the native API.
+          sustainablelobster.legacy_windows.win_stat:  # noqa: args[module]
+            path: '{{ workspace_path }}\{{ item.name }}'
+            follow: '{{ item.follow }}'
+          loop:
+            - {name: file-link.txt, follow: false}
+            - {name: file-link.txt, follow: true}
+            - {name: dir-link, follow: false}
+            - {name: relative-link, follow: false}
+            - {name: outer-link, follow: true}
+          when: capabilities.symbolic_links
+          register: symbolic
+
+        - name: Verify symbolic-link results on capable targets
+          ansible.builtin.assert:
+            that:
+              - symbolic_setup is changed
+              - symbolic.results | select('changed') | list | length == 0
+              - symbolic.results[0].stat.islnk
+              - not symbolic.results[0].stat.isreg
+              - not symbolic.results[0].stat.isdir
+              - symbolic.results[0].stat.filename == 'file-link.txt'
+              - symbolic.results[0].stat.extension == '.txt'
+              - symbolic.results[0].stat.checksum == ordinary.stat.checksum
+              - symbolic.results[0].stat.lnk_source == ordinary.stat.path
+              - symbolic.results[0].stat.lnk_target == ordinary.stat.path
+              - not symbolic.results[1].stat.islnk
+              - symbolic.results[1].stat.isreg
+              - symbolic.results[1].stat.path == ordinary.stat.path
+              - symbolic.results[1].stat.filename == 'ordinary.ps1'
+              - symbolic.results[1].stat.extension == '.ps1'
+              - symbolic.results[1].stat.checksum == ordinary.stat.checksum
+              - symbolic.results[2].stat.islnk
+              - symbolic.results[2].stat.isdir
+              - not symbolic.results[2].stat.isjunction
+              - symbolic.results[2].stat.checksum is not defined
+              - symbolic.results[2].stat.size == 3
+              - symbolic.results[3].stat.islnk
+              - symbolic.results[3].stat.lnk_target == 'link-target'
+              - >-
+                symbolic.results[3].stat.lnk_source ==
+                workspace_path + '\\link-target'
+              - symbolic.results[4].stat.isdir
+              - not symbolic.results[4].stat.islnk
+              - >-
+                symbolic.results[4].stat.path ==
+                workspace_path + '\\link-target'
+              - symbolic.results[4].stat.size == 3
+          when: capabilities.symbolic_links
+
+        - name: Verify explicit symbolic-link skips on older targets
+          ansible.builtin.assert:
+            that:
+              - symbolic_setup is skipped
+              - symbolic.results | select('skipped') | list | length == 5
+          when: not capabilities.symbolic_links
+
+        - name: Create an isolated share with the native server API
+          # Denied access becomes an asserted skip without changing users.
+          sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - '{{ share_code }}'
+              - '{{ workspace_path }}'
+              - _one
+          register: first_share
+          changed_when: (first_share.stdout | from_json).created
+
+        - name: Query a directory with one owned share
+          # The public sharename field is scalar when exactly one share matches.
+          sustainablelobster.legacy_windows.win_stat:  # noqa: args[module]
+            path: '{{ workspace_path }}\shared'
+          when: (first_share.stdout | from_json).created
+          register: shared_once
+
+        - name: Create a second share of the same owned directory
+          # Both successful creations are recorded for unconditional cleanup.
+          sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - '{{ share_code }}'
+              - '{{ workspace_path }}'
+              - _two
+          when: (first_share.stdout | from_json).created
+          register: second_share
+          changed_when: (second_share.stdout | from_json).created
+
+        - name: Query the directory with two owned shares
+          # Multiple matching names retain the upstream array return shape.
+          sustainablelobster.legacy_windows.win_stat:  # noqa: args[module]
+            path: '{{ workspace_path }}\shared'
+          when: (first_share.stdout | from_json).created
+          register: shared_twice
+
+        - name: Verify scalar and multiple share names
+          ansible.builtin.assert:
+            that:
+              - shared_once is not changed
+              - shared_once.stat.isdir
+              - shared_once.stat.isshared
+              - >-
+                shared_once.stat.sharename ==
+                (first_share.stdout | from_json).name
+              - shared_once.stat.size == 0
+              - shared_once.stat.checksum is not defined
+              - second_share is changed
+              - shared_twice is not changed
+              - shared_twice.stat.isshared
+              - >-
+                shared_twice.stat.sharename | sort ==
+                [(first_share.stdout | from_json).name,
+                 (second_share.stdout | from_json).name] | sort
+          when: (first_share.stdout | from_json).created
+
+        - name: Verify share creation skipped only for denied access
+          ansible.builtin.assert:
+            that:
+              - (first_share.stdout | from_json).status == 5
+              - first_share is not changed
+              - shared_once is skipped
+              - second_share is skipped
+              - shared_twice is skipped
+          when: not (first_share.stdout | from_json).created
+
+        - name: Start a bounded child holding an exclusive file handle
+          # Break away from the SSH command's job so task cleanup cannot kill
+          # the owned fixture. It inherits no SSH pipes and has a hard deadline.
+          sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - |
+                import os, subprocess, sys, time
+                process = subprocess.Popen(
+                    [sys.executable, '-c'] + sys.argv[1:],
+                    close_fds=True, creationflags=0x01000008,
+                    cwd=sys.argv[2])
+                with open(os.path.join(sys.argv[2], 'lock-pid'), 'w') as stream:
+                    stream.write(str(process.pid))
+                deadline = time.time() + 5
+                while (not os.path.isfile(os.path.join(sys.argv[2],
+                                                       'lock-ready'))
+                       and time.time() < deadline):
+                    time.sleep(0.05)
+                assert os.path.isfile(os.path.join(sys.argv[2], 'lock-ready'))
+                print(process.pid)
+              - |
+                import ctypes, os, sys, time
+                root = sys.argv[1]
+                kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+                kernel.CreateFileW.argtypes = [
+                    ctypes.c_wchar_p, ctypes.c_ulong, ctypes.c_ulong,
+                    ctypes.c_void_p, ctypes.c_ulong, ctypes.c_ulong,
+                    ctypes.c_void_p]
+                kernel.CreateFileW.restype = ctypes.c_void_p
+                kernel.CloseHandle.argtypes = [ctypes.c_void_p]
+                kernel.CloseHandle.restype = ctypes.c_int
+                handle = kernel.CreateFileW(
+                    os.path.join(root, 'locked.txt'), 0x80000000,
+                    0, None, 3, 0, None)
+                assert handle != ctypes.c_void_p(-1).value
+                try:
+                    open(os.path.join(root, 'lock-ready'), 'wb').close()
+                    deadline = time.time() + 120
+                    while (not os.path.isfile(os.path.join(root,
+                                                          'lock-release'))
+                           and time.time() < deadline):
+                        time.sleep(0.05)
+                finally:
+                    assert kernel.CloseHandle(handle)
+                    open(os.path.join(root, 'lock-done'), 'wb').close()
+              - '{{ workspace_path }}'
+
+        - name: Read locked-file metadata without requesting its checksum
+          # This exercises inaccessible content using only the owned fixture.
+          sustainablelobster.legacy_windows.win_stat:  # noqa: args[module]
+            path: '{{ workspace_path }}\locked.txt'
+            get_checksum: false
+          register: locked_metadata
+
+        - name: Verify checksum failure is actionable and recoverable
+          block:
+            - name: Request a checksum while the fixture is exclusively open
+              # The sharing violation is expected in normal and check mode.
+              sustainablelobster.legacy_windows.win_stat:  # noqa: args[module]
+                path: '{{ workspace_path }}\locked.txt'
+              check_mode: '{{ item }}'
+              loop: [false, true]
+              register: locked_checksums
+
+            - name: Reject unexpected checksum success on the locked fixture
+              ansible.builtin.fail:
+                msg: An exclusive fixture handle unexpectedly allowed hashing
+          rescue:
+            - name: Verify failure shape and unchanged metadata-only reads
+              ansible.builtin.assert:
+                that:
+                  - locked_metadata is not changed
+                  - locked_metadata.stat.exists
+                  - locked_metadata.stat.size == 3
+                  - locked_metadata.stat.checksum is not defined
+                  - locked_checksums.results | length == 2
+                  - item is failed
+                  - item is not changed
+                  - "item.stat == {'exists': false}"
+                  - >-
+                    item.msg.startswith('Failed to get hash of file, '
+                    'set get_checksum to False to ignore this error: ')
+                  - "'32' in item.msg"
+              loop: '{{ locked_checksums.results }}'
+
+        - name: Release the owned handle and wait for the child to exit
+          # A completion marker proves that recovery runs after CloseHandle.
+          sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - |
+                import os, sys, time
+                root = sys.argv[1]
+                open(os.path.join(root, 'lock-release'), 'wb').close()
+                deadline = time.time() + 10
+                while (not os.path.isfile(os.path.join(root, 'lock-done'))
+                       and time.time() < deadline):
+                    time.sleep(0.05)
+                assert os.path.isfile(os.path.join(root, 'lock-done'))
+              - '{{ workspace_path }}'
+
+        - name: Repeat successful checksums after releasing the fixture
+          # Recovery and repeated runs must both preserve the file.
+          sustainablelobster.legacy_windows.win_stat:  # noqa: args[module]
+            path: '{{ workspace_path }}\locked.txt'
+          loop: [first, repeated]
+          register: recovered
+
+        - name: Verify exact checksum recovery
+          ansible.builtin.assert:
+            that:
+              - item is not changed
+              - item.stat.exists
+              - item.stat.size == 3
+              - item.stat.checksum == ordinary.stat.checksum
+          loop: '{{ recovered.results }}'
+          loop_control:
+            label: '{{ item.item }}'
+
+        - name: Verify reads preserved ordinary content and link targets
+          # Direct inspection detects changes to content and write times.
+          sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - |
+                import os, sys
+                root = sys.argv[1]
+                for name in ('ordinary.ps1', 'locked.txt',
+                             'link-target/retained.txt',
+                             'nested/hard-target.txt', 'nested/hard-link.txt'):
+                    with open(os.path.join(root, name), 'rb') as stream:
+                        assert stream.read() == b'abc'
+                for name in ('missing-path', 'missing-dest', 'missing.txt',
+                             'missing-parent'):
+                    assert not os.path.exists(os.path.join(root, name))
+                assert os.stat(os.path.join(root, 'ordinary.ps1')).st_mtime == (
+                    1477984205)
+              - '{{ workspace_path }}'
+          changed_when: false
+      always:
+        - name: Release the owned handle and remove shares and workspace
+          ansible.builtin.raw: >-
+            cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+            "import base64;
+            exec(base64.b64decode('{{ cleanup_code | b64encode }}'))"
+            "{{ workspace_path }}""
+          changed_when: true
+          check_mode: false
+
+    - name: Record remaining task directories
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import glob, json, os, tempfile;
+        print(json.dumps(sorted(glob.glob(os.path.join(tempfile.gettempdir(),
+        'ansible-tmp-*')))))""
+      register: task_directories_after
+      changed_when: false
+      check_mode: false
+
+    - name: Verify successful and failed tasks removed their staged files
+      ansible.builtin.assert:
+        that:
+          - >-
+            (task_directories_before.stdout | from_json) ==
+            (task_directories_after.stdout | from_json)

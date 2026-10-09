@@ -1,0 +1,24 @@
+---
+# SPDX-License-Identifier: GPL-3.0-or-later
+slurp_inputs_compare_source: true
+slurp_inputs_root: '{{ (slurp_inputs_prepared.stdout | from_json).root }}'
+slurp_inputs_base_cases:
+  - {name: one-space, src: ' ', success: false}
+  - {name: spaces, src: '   ', success: false}
+  - {name: nonbreaking-space, src: "\u00a0", success: false}
+  - {name: ideographic-space, src: "\u3000", success: false}
+  - name: binary-file
+    src: '{{ slurp_inputs_root }}\binary.bin'
+    success: true
+  - name: literal-unicode-file
+    src: '{{ slurp_inputs_root }}\binary [literal] 雪.bin'
+    success: true
+  - name: directory
+    src: '{{ slurp_inputs_root }}\directory'
+    success: false
+  - name: missing
+    src: '{{ slurp_inputs_root }}\missing.bin'
+    success: false
+slurp_inputs_cases: >-
+  {{ (slurp_inputs_base_cases | map('combine', {'check': false}) | list) +
+     (slurp_inputs_base_cases | map('combine', {'check': true}) | list) }}

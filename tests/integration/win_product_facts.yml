@@ -1,0 +1,151 @@
+---
+# SPDX-License-Identifier: GPL-3.0-or-later
+- name: Verify read-only product facts on Windows Python 3.4.4
+  hosts: legacy_windows
+  gather_facts: false
+  vars_files:
+    - vars/product_observation.yml
+  vars:
+    observed: '{{ native_before.stdout | from_json }}'
+    product_fields:
+      - ansible_os_license_channel
+      - ansible_os_license_edition
+      - ansible_os_license_status
+      - ansible_os_product_id
+      - ansible_os_product_key
+  tasks:
+    - name: Require Python 3.4.4 and an initially clean staging area
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import glob, os, sys, tempfile;
+        assert sys.version_info[:3] == (3, 4, 4);
+        assert not glob.glob(os.path.join(tempfile.gettempdir(),
+        'ansible-tmp-*'));
+        print('Python 3.4.4 and clean staging verified')""
+      changed_when: false
+      check_mode: false
+
+    - name: Exercise product facts and validation recovery
+      block:
+        - name: Observe product and licensing data independently
+          # The lab fixture has no firmware OEM key; it uses registry fallback.
+          sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - import sys;exec(sys.stdin.read())
+            stdin: '{{ product_observation_code }}'
+          register: native_before
+          changed_when: false
+          check_mode: false
+          no_log: true
+
+        - name: Read product facts
+          sustainablelobster.legacy_windows.win_product_facts:
+          register: products
+          no_log: true
+
+        - name: Repeat the read
+          sustainablelobster.legacy_windows.win_product_facts:
+          register: repeated
+          no_log: true
+
+        - name: Read product facts in check mode
+          sustainablelobster.legacy_windows.win_product_facts:
+          check_mode: true
+          diff: true
+          register: checked
+          no_log: true
+
+        - name: Verify stable facts against independent product observations
+          ansible.builtin.assert:
+            that:
+              - observed.python == [3, 4, 4]
+              - item is not changed
+              - item is not skipped
+              - item.diff is not defined
+              - item.ansible_facts.keys() | sort == product_fields
+              - item.ansible_facts == products.ansible_facts
+              - item.warnings | default([]) == observed.license_warnings
+              - >-
+                item.ansible_facts.ansible_os_license_edition ==
+                observed.license_facts.ansible_os_license_edition
+              - >-
+                item.ansible_facts.ansible_os_license_channel ==
+                observed.license_facts.ansible_os_license_channel
+              - >-
+                item.ansible_facts.ansible_os_license_status ==
+                observed.license_facts.ansible_os_license_status
+              - item.ansible_facts.ansible_os_product_id == observed.product_id
+              - >-
+                item.ansible_facts.ansible_os_product_key ==
+                observed.product_key
+              - >-
+                item.ansible_facts.ansible_os_product_key is
+                match('^[A-Z0-9]{5}(-[A-Z0-9]{5}){4}$')
+          loop: ['{{ products }}', '{{ repeated }}', '{{ checked }}']
+          no_log: true
+
+        - name: Verify unsupported-argument failure
+          block:
+            - name: Supply an unsupported product argument
+              sustainablelobster.legacy_windows.win_product_facts:
+                unexpected_option: true
+              register: invalid
+              no_log: true
+            - name: Reject an unexpectedly accepted product argument
+              ansible.builtin.fail:
+                msg: Product module accepted an unsupported argument
+          rescue:
+            - name: Require a useful error without changes or partial facts
+              ansible.builtin.assert:
+                that:
+                  - invalid is failed
+                  - invalid is not changed
+                  - invalid.ansible_facts is not defined
+                  - "'unexpected_option' in invalid.msg"
+              no_log: true
+
+        - name: Read product facts after failure
+          sustainablelobster.legacy_windows.win_product_facts:
+          register: recovered
+          no_log: true
+
+        - name: Require unchanged recovery results
+          ansible.builtin.assert:
+            that:
+              - recovered is not changed
+              - recovered.ansible_facts == products.ansible_facts
+              - >-
+                recovered.warnings | default([]) ==
+                products.warnings | default([])
+          no_log: true
+
+        - name: Observe product and licensing data after all reads
+          sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - import sys;exec(sys.stdin.read())
+            stdin: '{{ product_observation_code }}'
+          register: native_after
+          changed_when: false
+          check_mode: false
+          no_log: true
+
+        - name: Verify unchanged product and licensing observations
+          ansible.builtin.assert:
+            that:
+              - (native_after.stdout | from_json) == observed
+          no_log: true
+      always:
+        - name: Require task-directory cleanup under the target runtime
+          ansible.builtin.raw: >-
+            cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+            "import glob, os, sys, tempfile;
+            assert sys.version_info[:3] == (3, 4, 4);
+            assert not glob.glob(os.path.join(tempfile.gettempdir(),
+            'ansible-tmp-*'));
+            print('Python 3.4.4 and task-directory cleanup verified')""
+          changed_when: false
+          check_mode: false

@@ -1,0 +1,184 @@
+---
+- name: Bind one complete public PowerShell request
+  ansible.builtin.set_fact:
+    powershell_params: >-
+      {{ powershell_case.params |
+         combine({'path': (powershell_source_root |
+           default(playbook_dir + '/../..')) +
+           '/tests/integration/fixtures/win_powershell_local.ps1'}
+           if powershell_case.local | default(false) else {}) |
+         combine({'path': powershell_workspace.path + '\\remote-script.ps1'}
+           if powershell_case.remote | default(false) else {}) |
+         combine({'path': powershell_workspace.path + '\\missing-script.ps1'}
+           if powershell_case.missing_remote | default(false) else {}) |
+         combine({'creates': powershell_workspace.path + '\\output.txt'}
+           if powershell_case.creates | default(false) else {}) |
+         combine({'removes': powershell_workspace.path + '\\output.txt'}
+           if powershell_case.removes | default(false) else {}) |
+         combine({'chdir': powershell_workspace.path}
+           if powershell_case.chdir | default(false) else {}) |
+         combine({'parameters': powershell_case.params.parameters |
+           default({}) |
+           combine({'OutputPath': powershell_workspace.path + '\\output.txt'})}
+           if powershell_case.script_output | default(false) else {}) }}
+
+- name: Prepare the exact native resource baseline # noqa: args[module]
+  sustainablelobster.legacy_windows.win_command:
+    argv:
+      - "{{ ansible_python_interpreter }}"
+      - "-"
+      - "{{ powershell_workspace.path }}"
+      - prepare
+      - "{{ powershell_case | to_json | b64encode }}"
+    stdin: "{{ powershell_program }}"
+  register: powershell_before_native
+  changed_when: false
+  no_log: true
+
+- name: Retain the complete native structured result including failures
+  block:
+    - name: Execute the public structured script interface # noqa: args[module]
+      sustainablelobster.legacy_windows.win_powershell: >-
+        {{ powershell_params }}
+      check_mode: "{{ powershell_case.check | default(false) }}"
+      diff: "{{ powershell_case.diff | default(false) }}"
+      register: powershell_native
+      no_log: true
+  rescue:
+    - name: Keep the literal native failure
+      ansible.builtin.debug:
+        msg: Native structured script failure retained.
+
+- name: Observe native resources and clock boundary # noqa: args[module]
+  sustainablelobster.legacy_windows.win_command:
+    argv:
+      - "{{ ansible_python_interpreter }}"
+      - "-"
+      - "{{ powershell_workspace.path }}"
+      - observe
+    stdin: "{{ powershell_program }}"
+  register: powershell_after_native
+  changed_when: false
+  no_log: true
+
+- name: Compare the unchanged released script interface on the same baseline
+  when: powershell_compare | bool
+  block:
+    - name: Prepare exact source baseline # noqa: args[module]
+      sustainablelobster.legacy_windows.win_command:
+        argv:
+          - "{{ ansible_python_interpreter }}"
+          - "-"
+          - "{{ powershell_workspace.path }}"
+          - prepare
+          - "{{ powershell_case | to_json | b64encode }}"
+        stdin: "{{ powershell_program }}"
+      register: powershell_before_original
+      changed_when: false
+      no_log: true
+
+    - name: Retain the complete source structured result including failures
+      block:
+        - name: Execute untouched source structured scripts # noqa: args[module]
+          ansible.windows.win_powershell: "{{ powershell_params }}"
+          check_mode: "{{ powershell_case.check | default(false) }}"
+          diff: "{{ powershell_case.diff | default(false) }}"
+          register: powershell_original
+          no_log: true
+      rescue:
+        - name: Keep the literal source failure
+          ansible.builtin.debug:
+            msg: Released structured script failure retained.
+
+    - name: Observe source resources and clock boundary # noqa: args[module]
+      sustainablelobster.legacy_windows.win_command:
+        argv:
+          - "{{ ansible_python_interpreter }}"
+          - "-"
+          - "{{ powershell_workspace.path }}"
+          - observe
+        stdin: "{{ powershell_program }}"
+      register: powershell_after_original
+      changed_when: false
+      no_log: true
+
+- name: Retain every raw field before comparison
+  ansible.builtin.set_fact:
+    powershell_record:
+      case: "{{ powershell_case }}"
+      params: "{{ powershell_params }}"
+      native: "{{ powershell_native }}"
+      original: "{{ powershell_original | default(none) }}"
+      before_native: "{{ powershell_before_native }}"
+      after_native: "{{ powershell_after_native }}"
+      before_original: "{{ powershell_before_original | default(none) }}"
+      after_original: "{{ powershell_after_original | default(none) }}"
+      validated: false
+  no_log: true
+
+- name: Append the whole unvalidated result
+  ansible.builtin.set_fact:
+    powershell_records: "{{ powershell_records + [powershell_record] }}"
+  no_log: true
+
+- name: Persist all complete raw request and effect records
+  ansible.builtin.copy:
+    content: >-
+      {{ {"results": powershell_records,
+          "workspace": powershell_workspace} | to_nice_json }}
+    dest: "{{ powershell_capture.path }}"
+    mode: "0600"
+  delegate_to: localhost
+  vars: &local
+    ansible_connection: local
+    ansible_shell_type: sh
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+  changed_when: false
+  no_log: true
+
+- name: Verify public parity without changing original fields or generated
+    clocks
+  when: powershell_compare | bool
+  ansible.builtin.command:
+    argv:
+      - "{{ ansible_playbook_python }}"
+      - >-
+        {{ (powershell_source_root | default(playbook_dir + "/../..")) +
+           '/scripts/verify_win_powershell_capture.py' }}
+      - "{{ powershell_capture.path }}"
+      - --last
+  delegate_to: localhost
+  vars: *local
+  register: powershell_comparison
+  changed_when: false
+  failed_when: false
+  no_log: true
+
+- name: Check declared failure change and owned resource outcomes
+  ansible.builtin.assert:
+    that:
+      - powershell_native.failed | default(false) == powershell_case.failed |
+        default(false)
+      - powershell_native.changed == powershell_case.changed | default(false)
+      - (powershell_after_native.stdout | from_json).protected ==
+        (powershell_setup.stdout | from_json).protected
+      - >-
+        (powershell_after_native.stdout | from_json).output['output.txt'][
+          'body_base64'] == powershell_case.output | b64encode
+        if powershell_case.output is defined else
+        (powershell_after_native.stdout | from_json).output[
+          'output.txt'] == none
+      - >-
+        powershell_case.changed | default(false) or
+        (powershell_after_native.stdout | from_json).output ==
+        (powershell_before_native.stdout | from_json).output
+  no_log: true
+
+- name: Keep independent comparison status without weakening the final gate
+  ansible.builtin.set_fact:
+    powershell_records: >-
+      {{ powershell_records[:-1] + [powershell_record |
+         combine({'validated': not powershell_compare or
+                    powershell_comparison.rc == 0,
+                  'comparison': powershell_comparison | default(none)})] }}
+  no_log: true

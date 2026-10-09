@@ -1,0 +1,342 @@
+---
+- name: Verify HTTPS URI and package downloads without package installation
+  hosts: legacy_windows
+  gather_facts: false
+  vars_files:
+    - vars/get_url_fixture.yml
+  vars:
+    https_evidence_dir: '{{ playbook_dir }}/../../tmp/codex/evidence'
+  tasks:
+    - name: Require minimum Python and record staging and package temporaries
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import glob,json,os,sys,tempfile;
+        assert sys.version_info[:3] == (3,4,4);
+        print(json.dumps(sorted(path for prefix in
+        ('ansible-tmp-','legacy-windows-package-url-') for path in
+        glob.glob(os.path.join(tempfile.gettempdir(),prefix+'*')))))""
+      register: https_staging_before
+      changed_when: false
+
+    - name: Prepare private controller evidence directory
+      ansible.builtin.file:
+        path: '{{ https_evidence_dir }}'
+        state: directory
+        mode: '0700'
+      delegate_to: localhost
+      vars: &local
+        ansible_connection: local
+        ansible_shell_type: sh
+        ansible_python_interpreter: '{{ ansible_playbook_python }}'
+      changed_when: false
+
+    - name: Allocate private controller evidence
+      ansible.builtin.tempfile:
+        state: file
+        path: '{{ https_evidence_dir }}'
+        prefix: 'https-{{ inventory_hostname }}-'
+        suffix: .json
+      register: https_capture
+      delegate_to: localhost
+      vars: *local
+      changed_when: false
+
+    - name: Exercise HTTPS consumers inside an owned TLS fixture
+      block:
+        - name: Allocate owned controller certificate material
+          ansible.builtin.tempfile:
+            state: directory
+            path: '{{ https_evidence_dir }}'
+            prefix: https-material-
+          register: https_tls_workspace
+          delegate_to: localhost
+          vars: *local
+          changed_when: false
+
+        - name: Generate a disposable self-signed certificate
+          ansible.builtin.command:
+            argv:
+              - openssl
+              - req
+              - -x509
+              - -newkey
+              - rsa:2048
+              - -nodes
+              - -days
+              - '1'
+              - -subj
+              - /CN=localhost
+              - -addext
+              - subjectAltName=DNS:localhost,IP:127.0.0.1
+              - -keyout
+              - '{{ https_tls_workspace.path }}/server-key.pem'
+              - -out
+              - '{{ https_tls_workspace.path }}/server-cert.pem'
+          delegate_to: localhost
+          vars: *local
+          changed_when: false
+
+        - name: Read only disposable certificate and key
+          ansible.builtin.slurp:
+            src: '{{ https_tls_workspace.path }}/server-{{ item }}.pem'
+          loop: [cert, key]
+          register: https_tls_files
+          delegate_to: localhost
+          vars: *local
+          no_log: true
+          changed_when: false
+
+        - name: Allocate owned Windows workspace  # noqa: args[module]
+          sustainablelobster.legacy_windows.win_tempfile:
+            state: directory
+            prefix: legacy-windows-get-url-https-
+          register: get_url_workspace
+
+        - name: Start the maintained TLS 1.2-only fixture  # noqa: args[module]
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - '-'
+              - '{{ get_url_workspace.path }}'
+              - setup
+              - >-
+                {{ {'cert': https_tls_files.results[0].content,
+                    'key': https_tls_files.results[1].content} |
+                   to_json | b64encode }}
+            stdin: '{{ get_url_program }}'
+          register: https_setup
+          no_log: true
+          changed_when: false
+
+        - name: Bind independently owned TLS endpoint
+          ansible.builtin.set_fact:
+            https_endpoint: >-
+              {{ (https_setup.stdout | from_json).https }}/payload.bin
+          no_log: true
+
+        - name: Prepare empty owned output  # noqa: args[module]
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}', '-',
+                   '{{ get_url_workspace.path }}', prepare, e30=]
+            stdin: '{{ get_url_program }}'
+          register: https_before
+          changed_when: false
+          no_log: true
+
+        - name: Read HTTPS URI response bytes  # noqa: args[module]
+          sustainablelobster.legacy_windows.win_uri:
+            url: '{{ https_endpoint }}'
+            url_timeout: 10
+            use_proxy: false
+            validate_certs: false
+            return_content: true
+          register: https_uri
+
+        - name: Preview HTTPS URI destination  # noqa: args[module]
+          sustainablelobster.legacy_windows.win_uri:
+            url: '{{ https_endpoint }}'
+            url_timeout: 10
+            use_proxy: false
+            validate_certs: false
+            dest: '{{ get_url_workspace.path }}\output\result.bin'
+          check_mode: true
+          register: https_uri_check
+
+        - name: Retain the URI certificate-validation failure
+          block:
+            - name: Require URI certificate validation  # noqa: args[module]
+              sustainablelobster.legacy_windows.win_uri:
+                url: '{{ https_endpoint }}'
+                url_timeout: 10
+                use_proxy: false
+              register: https_uri_reject
+          rescue:
+            - name: Preserve expected URI rejection
+              ansible.builtin.debug:
+                msg: Default certificate-validation result retained.
+
+        - name: Preview an HTTPS registry package  # noqa: args[module]
+          sustainablelobster.legacy_windows.win_package:
+            path: '{{ https_endpoint }}'
+            product_id: >-
+              {{ 'legacy-windows-https-' +
+                 (https_setup.stdout | from_json).server.token }}
+            provider: registry
+            url_timeout: 10
+            use_proxy: false
+            validate_certs: false
+          check_mode: true
+          register: https_package_check
+
+        - name: Retain the package certificate-validation failure
+          block:
+            - name: Require package cert validation  # noqa: args[module]
+              sustainablelobster.legacy_windows.win_package:
+                path: '{{ https_endpoint }}'
+                provider: registry
+                url_timeout: 10
+                use_proxy: false
+              check_mode: true
+              register: https_package_reject
+          rescue:
+            - name: Preserve expected package rejection
+              ansible.builtin.debug:
+                msg: Default certificate-validation result retained.
+
+        - name: Observe requests and owned files  # noqa: args[module]
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}', '-',
+                   '{{ get_url_workspace.path }}', observe]
+            stdin: '{{ get_url_program }}'
+          register: https_after
+          changed_when: false
+          no_log: true
+
+        - name: Require public HTTPS behavior and exact request effects
+          vars:
+            before: '{{ https_before.stdout | from_json }}'
+            after: '{{ https_after.stdout | from_json }}'
+          ansible.builtin.assert:
+            that:
+              - https_uri.status_code == 200 and not https_uri.changed
+              - https_uri.content == "legacy download fixture\u0000\ufffd\n"
+              - https_uri_check.status_code == 200 and https_uri_check.changed
+              - https_uri_reject is failed and not https_uri_reject.changed
+              - >-
+                https_package_check.status_code == 200 and
+                https_package_check.changed
+              - >-
+                https_package_check.rc == 0 and
+                not https_package_check.reboot_required
+              - >-
+                https_package_reject is failed and
+                not https_package_reject.changed
+              - before.output == after.output
+              - >-
+                before.sentinel == after.sentinel and
+                before.source == after.source
+              - after.request_methods == ['GET', 'GET', 'GET']
+              - >-
+                after.tls | selectattr('event', 'equalto', 'success') |
+                list | length >= 3
+              - >-
+                after.tls | selectattr('event', 'equalto', 'success') |
+                map(attribute='version') | unique | list == ['TLSv1.2']
+              - >-
+                https_uri_reject.msg is search('12175') and
+                https_package_reject.msg is search('12175')
+      always:
+        - name: Retain raw public results before recovery
+          ansible.builtin.copy:
+            content: >-
+              {{ {'endpoint': https_endpoint | default(none),
+                  'uri': https_uri | default(none),
+                  'uri_check': https_uri_check | default(none),
+                  'uri_reject': https_uri_reject | default(none),
+                  'package_check': https_package_check | default(none),
+                  'package_reject': https_package_reject | default(none),
+                  'before': https_before | default(none),
+                  'after': https_after | default(none),
+                  'workspace': get_url_workspace | default(none),
+                  'staging_before': https_staging_before} | to_nice_json }}
+            dest: '{{ https_capture.path }}'
+            mode: '0600'
+          delegate_to: localhost
+          vars: *local
+          changed_when: false
+          no_log: true
+
+        - name: Recover and independently verify owned resources
+          block:
+            - name: Verify owned fixture recovery  # noqa: args[module]
+              when: get_url_workspace.path is defined
+              sustainablelobster.legacy_windows.win_command:
+                argv: ['{{ ansible_python_interpreter }}', '-',
+                       '{{ get_url_workspace.path }}', cleanup]
+                stdin: '{{ get_url_program }}'
+              register: https_recovery
+              changed_when: false
+              no_log: true
+
+            - name: Persist raw recovery before the cleanup gate
+              ansible.builtin.copy:
+                content: >-
+                  {{ lookup('ansible.builtin.file', https_capture.path) |
+                     from_json |
+                     combine({'recovery': https_recovery | default(none)}) |
+                     to_nice_json }}
+                dest: '{{ https_capture.path }}'
+                mode: '0600'
+              delegate_to: localhost
+              vars: *local
+              changed_when: false
+              no_log: true
+
+            - name: Require fixture and process restoration
+              when: get_url_workspace.path is defined
+              ansible.builtin.assert:
+                that:
+                  - (https_recovery.stdout | from_json).restored
+                  - (https_recovery.stdout | from_json).server_stopped
+
+            - name: Finalize verified owned journal  # noqa: args[module]
+              when: get_url_workspace.path is defined
+              sustainablelobster.legacy_windows.win_command:
+                argv: ['{{ ansible_python_interpreter }}', '-',
+                       '{{ get_url_workspace.path }}', finalize]
+                stdin: '{{ get_url_program }}'
+              changed_when: false
+              no_log: true
+
+            - name: Remove verified owned workspace  # noqa: args[module]
+              when: get_url_workspace.path is defined
+              sustainablelobster.legacy_windows.win_file:
+                path: '{{ get_url_workspace.path }}'
+                state: absent
+
+            - name: Verify workspace absence and original temporary paths
+              when: get_url_workspace.path is defined
+              ansible.builtin.raw: >-
+                cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+                "import glob,json,os,sys,tempfile;
+                assert not os.path.exists(sys.argv[1]);
+                print(json.dumps(sorted(path for prefix in
+                ('ansible-tmp-','legacy-windows-package-url-') for path in
+                glob.glob(os.path.join(tempfile.gettempdir(),prefix+'*')))))"
+                "{{ get_url_workspace.path }}""
+              register: https_staging_after
+              changed_when: false
+
+            - name: Require unchanged staging
+              when: get_url_workspace.path is defined
+              ansible.builtin.assert:
+                that:
+                  - >-
+                    https_staging_before.stdout | from_json ==
+                    https_staging_after.stdout | from_json
+
+            - name: Retain final verified cleanup evidence
+              ansible.builtin.copy:
+                content: >-
+                  {{ lookup('ansible.builtin.file', https_capture.path) |
+                     from_json |
+                     combine({'staging_after':
+                                https_staging_after | default(none),
+                              'workspace_absent':
+                                get_url_workspace.path is defined}) |
+                     to_nice_json }}
+                dest: '{{ https_capture.path }}'
+                mode: '0600'
+              delegate_to: localhost
+              vars: *local
+              changed_when: false
+              no_log: true
+          always:
+            - name: Remove only owned controller certificate material
+              when: https_tls_workspace.path is defined
+              ansible.builtin.file:
+                path: '{{ https_tls_workspace.path }}'
+                state: absent
+              delegate_to: localhost
+              vars: *local
+              changed_when: false

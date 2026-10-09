@@ -1,0 +1,121 @@
+{
+  "source": "Windows PowerShell generated NetTCPConnection.State conversion",
+  "powershell": "5.1.26100.7462",
+  "upstream": "ansible.windows 3.8.0",
+  "cases": [
+    {
+      "error": "Cannot convert value \"0\" to type \"Microsoft.PowerShell.Cmdletization.GeneratedTypes.NetTCPConnection.State\" due to enumeration values that are not valid. Specify one of the following enumeration values and try again. The possible enumeration values are \"Closed,Listen,SynSent,SynReceived,Established,FinWait1,FinWait2,CloseWait,Closing,LastAck,TimeWait,DeleteTCB,Bound\".",
+      "input": "0"
+    },
+    {
+      "error": "Cannot convert value \"13\" to type \"Microsoft.PowerShell.Cmdletization.GeneratedTypes.NetTCPConnection.State\" due to enumeration values that are not valid. Specify one of the following enumeration values and try again. The possible enumeration values are \"Closed,Listen,SynSent,SynReceived,Established,FinWait1,FinWait2,CloseWait,Closing,LastAck,TimeWait,DeleteTCB,Bound\".",
+      "input": "13"
+    },
+    {
+      "error": "Cannot convert value \"-1\" to type \"Microsoft.PowerShell.Cmdletization.GeneratedTypes.NetTCPConnection.State\". Error: \"Value was either too large or too small for an unsigned byte.\"",
+      "input": "-1"
+    },
+    {
+      "input": "2",
+      "name": "Listen",
+      "value": 2
+    },
+    {
+      "error": "Cannot convert value \"0x2\" to type \"Microsoft.PowerShell.Cmdletization.GeneratedTypes.NetTCPConnection.State\". Error: \"Unable to match the identifier name 0x2 to a valid enumerator name. Specify one of the following enumerator names and try again:\r\nClosed, Listen, SynSent, SynReceived, Established, FinWait1, FinWait2, CloseWait, Closing, LastAck, TimeWait, DeleteTCB, Bound\"",
+      "input": "0x2"
+    },
+    {
+      "error": "Cannot convert value \"2.0\" to type \"Microsoft.PowerShell.Cmdletization.GeneratedTypes.NetTCPConnection.State\". Error: \"Unable to match the identifier name 2.0 to a valid enumerator name. Specify one of the following enumerator names and try again:\r\nClosed, Listen, SynSent, SynReceived, Established, FinWait1, FinWait2, CloseWait, Closing, LastAck, TimeWait, DeleteTCB, Bound\"",
+      "input": "2.0"
+    },
+    {
+      "input": "+2",
+      "name": "Listen",
+      "value": 2
+    },
+    {
+      "error": "Cannot convert value \"2e0\" to type \"Microsoft.PowerShell.Cmdletization.GeneratedTypes.NetTCPConnection.State\". Error: \"Unable to match the identifier name 2e0 to a valid enumerator name. Specify one of the following enumerator names and try again:\r\nClosed, Listen, SynSent, SynReceived, Established, FinWait1, FinWait2, CloseWait, Closing, LastAck, TimeWait, DeleteTCB, Bound\"",
+      "input": "2e0"
+    },
+    {
+      "input": "100",
+      "name": "Bound",
+      "value": 100
+    },
+    {
+      "input": "List",
+      "name": "Listen",
+      "value": 2
+    },
+    {
+      "error": "Cannot convert value \"C\" to type \"Microsoft.PowerShell.Cmdletization.GeneratedTypes.NetTCPConnection.State\". Error: \"The identifier name C cannot be processed because it is either too similar or identical to the following enumerator names: Closed, CloseWait, Closing. Use a more specific identifier name.\"",
+      "input": "C"
+    },
+    {
+      "error": "Cannot convert value \"Fin\" to type \"Microsoft.PowerShell.Cmdletization.GeneratedTypes.NetTCPConnection.State\". Error: \"The identifier name Fin cannot be processed because it is either too similar or identical to the following enumerator names: FinWait1, FinWait2. Use a more specific identifier name.\"",
+      "input": "Fin"
+    },
+    {
+      "error": "Cannot convert value \"L\" to type \"Microsoft.PowerShell.Cmdletization.GeneratedTypes.NetTCPConnection.State\". Error: \"The identifier name L cannot be processed because it is either too similar or identical to the following enumerator names: Listen, LastAck. Use a more specific identifier name.\"",
+      "input": "L"
+    },
+    {
+      "input": "B",
+      "name": "Bound",
+      "value": 100
+    },
+    {
+      "input": "listen,established",
+      "name": "FinWait2",
+      "value": 7
+    },
+    {
+      "error": "Cannot convert value \"bad\" to type \"Microsoft.PowerShell.Cmdletization.GeneratedTypes.NetTCPConnection.State\". Error: \"Unable to match the identifier name bad to a valid enumerator name. Specify one of the following enumerator names and try again:\r\nClosed, Listen, SynSent, SynReceived, Established, FinWait1, FinWait2, CloseWait, Closing, LastAck, TimeWait, DeleteTCB, Bound\"",
+      "input": "bad"
+    },
+    {
+      "error": "Cannot convert value \"listen,2\" to type \"Microsoft.PowerShell.Cmdletization.GeneratedTypes.NetTCPConnection.State\". Error: \"Unable to match the identifier name listen,2 to a valid enumerator name. Specify one of the following enumerator names and try again:\r\nClosed, Listen, SynSent, SynReceived, Established, FinWait1, FinWait2, CloseWait, Closing, LastAck, TimeWait, DeleteTCB, Bound\"",
+      "input": "listen,2"
+    },
+    {
+      "error": "Cannot convert value \"2,5\" to type \"Microsoft.PowerShell.Cmdletization.GeneratedTypes.NetTCPConnection.State\". Error: \"Unable to match the identifier name 2,5 to a valid enumerator name. Specify one of the following enumerator names and try again:\r\nClosed, Listen, SynSent, SynReceived, Established, FinWait1, FinWait2, CloseWait, Closing, LastAck, TimeWait, DeleteTCB, Bound\"",
+      "input": "2,5"
+    },
+    {
+      "error": "Cannot convert value \"\" to type \"Microsoft.PowerShell.Cmdletization.GeneratedTypes.NetTCPConnection.State\". Error: \"The identifier name  cannot be processed because it is either too similar or identical to the following enumerator names: Closed, Listen, SynSent, SynReceived, Established, FinWait1, FinWait2, CloseWait, Closing, LastAck, TimeWait, DeleteTCB, Bound. Use a more specific identifier name.\"",
+      "input": ""
+    },
+    {
+      "input": " Listen ",
+      "name": "Listen",
+      "value": 2
+    },
+    {
+      "error": "Cannot convert value \"Listen,Bound\" to type \"Microsoft.PowerShell.Cmdletization.GeneratedTypes.NetTCPConnection.State\" due to enumeration values that are not valid. Specify one of the following enumeration values and try again. The possible enumeration values are \"Closed,Listen,SynSent,SynReceived,Established,FinWait1,FinWait2,CloseWait,Closing,LastAck,TimeWait,DeleteTCB,Bound\".",
+      "input": "Listen,Bound"
+    },
+    {
+      "error": "Cannot convert value \"lis,est\" to type \"Microsoft.PowerShell.Cmdletization.GeneratedTypes.NetTCPConnection.State\". Error: \"Unable to match the identifier name lis,est to a valid enumerator name. Specify one of the following enumerator names and try again:\r\nClosed, Listen, SynSent, SynReceived, Established, FinWait1, FinWait2, CloseWait, Closing, LastAck, TimeWait, DeleteTCB, Bound\"",
+      "input": "lis,est"
+    },
+    {
+      "input": "listen,listen",
+      "name": "Listen",
+      "value": 2
+    },
+    {
+      "input": " Listen , Established ",
+      "name": "FinWait2",
+      "value": 7
+    },
+    {
+      "error": "Cannot convert value \"256\" to type \"Microsoft.PowerShell.Cmdletization.GeneratedTypes.NetTCPConnection.State\". Error: \"Value was either too large or too small for an unsigned byte.\"",
+      "input": "256"
+    },
+    {
+      "input": "Closed,Listen",
+      "name": "SynSent",
+      "value": 3
+    }
+  ]
+}

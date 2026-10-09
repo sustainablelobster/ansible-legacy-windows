@@ -1,0 +1,3 @@
+# Keep the upstream GPL copies verbatim, including their final blank line.
+/LICENSE whitespace=-blank-at-eof
+/LICENSES/ansible-windows-GPL-3.0-or-later.txt whitespace=-blank-at-eof

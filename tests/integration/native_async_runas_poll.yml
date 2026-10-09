@@ -1,0 +1,276 @@
+---
+# SPDX-License-Identifier: GPL-3.0-or-later
+- name: Verify automatic async polling under two requested Windows tokens
+  hosts: legacy_windows
+  gather_facts: false
+  vars_files:
+    - vars/native_async.yml
+    - vars/native_async_runas_poll.yml
+  vars:
+    native_async_poll_root: '{{ native_async_runas_poll_workspace.path }}'
+  tasks:
+    - name: Require actual Python and record original global staging
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import glob,json,os,subprocess,sys,tempfile;
+        assert sys.version_info[:3]==(3,4,4);
+        assert b'{{ native_async_runas_poll_expected_mac }}' in
+        subprocess.check_output(['getmac','/fo','csv','/nh']).upper();
+        print(json.dumps(sorted(glob.glob(os.path.join(
+        tempfile.gettempdir(),'ansible-tmp-*')))))""
+      register: native_async_runas_poll_staging_before
+      changed_when: false
+
+    - name: Record the connected account SID
+      sustainablelobster.legacy_windows.win_whoami:
+      register: native_async_runas_poll_identity
+      no_log: true
+
+    - name: Allocate private controller capture
+      ansible.builtin.tempfile:
+        path: '{{ playbook_dir }}/../../tmp'
+        prefix: 'native-async-runas-poll-{{ inventory_hostname }}-'
+        suffix: .json
+      register: native_async_runas_poll_capture
+      delegate_to: localhost
+      vars: &local
+        ansible_connection: local
+        ansible_shell_type: sh
+        ansible_python_interpreter: '{{ ansible_playbook_python }}'
+      changed_when: false
+
+    - name: Allocate an exclusively owned workspace
+      sustainablelobster.legacy_windows.win_tempfile:
+        prefix: legacy-windows-native-async-runas-poll-
+        state: directory
+      register: native_async_runas_poll_workspace
+
+    - name: Exercise automatic polling with mandatory protected recovery
+      block:
+        - name: Journal protected state and private cache directories
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - '-'
+              - '{{ native_async_poll_root }}'
+              - setup
+            stdin: '{{ native_async_program }}'
+          register: native_async_runas_poll_setup
+          changed_when: false
+          no_log: true
+
+        - name: Copy the frozen self-completing observer
+          sustainablelobster.legacy_windows.win_copy:
+            content: '{{ native_async_runas_poll_program }}'
+            dest: '{{ native_async_poll_root }}\payload.py'
+          no_log: true
+
+        - name: Automatically poll the native connected-administrator command
+          sustainablelobster.legacy_windows.win_command: &command
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - '{{ native_async_poll_root }}\payload.py'
+              - '{{ native_async_poll_root }}'
+              - payload
+              - user
+            stdin: '{{ native_async_runas_poll_stdin }}'
+          async: 60
+          poll: 1
+          become: true
+          become_method: ansible.builtin.runas
+          become_user: '{{ ansible_user }}'
+          vars: &user_vars
+            ansible_become_password: '{{ ansible_password }}'
+            ansible_remote_tmp: '{{ native_async_poll_root }}\staging'
+            ansible_async_dir: '{{ native_async_poll_root }}\cache'
+          environment: &environment
+            LEGACY_WINDOWS_RUNAS_TEST: >-
+              {{ native_async_runas_poll_environment }}
+          register: native_async_runas_poll_user_native
+          no_log: true
+
+        - name: Automatically poll the untouched released administrator command
+          ansible.windows.win_command: *command
+          async: 60
+          poll: 1
+          become: true
+          become_method: ansible.builtin.runas
+          become_user: '{{ ansible_user }}'
+          vars:
+            <<: *user_vars
+            ansible_shell_type: cmd
+          environment: *environment
+          register: native_async_runas_poll_user_source
+          no_log: true
+
+        - name: Automatically poll the native SYSTEM command
+          sustainablelobster.legacy_windows.win_command: &system_command
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - '{{ native_async_poll_root }}\payload.py'
+              - '{{ native_async_poll_root }}'
+              - payload
+              - system
+            stdin: '{{ native_async_runas_poll_stdin }}'
+          async: 60
+          poll: 1
+          become: true
+          become_method: ansible.builtin.runas
+          become_user: 'NT AUTHORITY\SYSTEM'
+          vars: &system_vars
+            ansible_become_password: null
+            ansible_remote_tmp: '{{ native_async_poll_root }}\staging'
+            ansible_async_dir: '{{ native_async_poll_root }}\cache'
+          environment: *environment
+          register: native_async_runas_poll_system_native
+          no_log: true
+
+        - name: Automatically poll the untouched released SYSTEM command
+          ansible.windows.win_command: *system_command
+          async: 60
+          poll: 1
+          become: true
+          become_method: ansible.builtin.runas
+          become_user: 'NT AUTHORITY\SYSTEM'
+          vars:
+            <<: *system_vars
+            ansible_shell_type: cmd
+          environment: *environment
+          register: native_async_runas_poll_system_source
+          no_log: true
+
+        - name: Compare every typed public result and the live birth journals
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - '{{ native_async_poll_root }}\payload.py'
+              - '{{ native_async_poll_root }}'
+              - compare
+              - >-
+                {{ [{'phase': 'user',
+                     'native': native_async_runas_poll_user_native,
+                     'source': native_async_runas_poll_user_source,
+                     'expected': {
+                       'sid': native_async_runas_poll_identity.account.sid,
+                                  'python': [3, 4, 4],
+                       'body_base64':
+                         native_async_runas_poll_stdin | b64encode,
+                       'environment': native_async_runas_poll_environment}},
+                    {'phase': 'system',
+                     'native': native_async_runas_poll_system_native,
+                     'source': native_async_runas_poll_system_source,
+                     'expected': {'sid': 'S-1-5-18',
+                                  'python': [3, 4, 4],
+                       'body_base64':
+                         native_async_runas_poll_stdin | b64encode,
+                       'environment': native_async_runas_poll_environment}}] |
+                   to_json | b64encode }}
+          become: true
+          become_method: ansible.builtin.runas
+          become_user: 'NT AUTHORITY\SYSTEM'
+          register: native_async_runas_poll_comparison
+          changed_when: false
+          no_log: true
+
+        - name: Verify natural exit and automatic cache deletion before recovery
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - '{{ native_async_poll_root }}\payload.py'
+              - '{{ native_async_poll_root }}'
+              - inspect
+          become: true
+          become_method: ansible.builtin.runas
+          become_user: 'NT AUTHORITY\SYSTEM'
+          register: native_async_runas_poll_observation
+          changed_when: false
+          no_log: true
+      always:
+        - name: Recover only journal-owned workers and preserve protected state
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - '{{ native_async_poll_root }}\payload.py'
+              - '{{ native_async_poll_root }}'
+              - recover
+          become: true
+          become_method: ansible.builtin.runas
+          become_user: 'NT AUTHORITY\SYSTEM'
+          register: native_async_runas_poll_recovery
+          failed_when: false
+          changed_when: false
+          no_log: true
+
+        - name: Preserve all raw results and recovery before enforcing gates
+          ansible.builtin.copy:
+            content: >-
+              {{ {'workspace': native_async_poll_root,
+                  'setup': native_async_runas_poll_setup | default(none),
+                  'user_native':
+                    native_async_runas_poll_user_native | default(none),
+                  'user_source':
+                    native_async_runas_poll_user_source | default(none),
+                  'system_native':
+                    native_async_runas_poll_system_native | default(none),
+                  'system_source':
+                    native_async_runas_poll_system_source | default(none),
+                  'comparison':
+                    native_async_runas_poll_comparison | default(none),
+                  'observation':
+                    native_async_runas_poll_observation | default(none),
+                  'recovery': native_async_runas_poll_recovery,
+                  'staging_before': native_async_runas_poll_staging_before} |
+                 to_nice_json }}
+            dest: '{{ native_async_runas_poll_capture.path }}'
+            mode: '0600'
+          delegate_to: localhost
+          vars: *local
+          changed_when: false
+          no_log: true
+
+        - name: Require protected recovery before deleting owned resources
+          ansible.builtin.assert:
+            that:
+              - native_async_runas_poll_recovery.rc == 0
+              - (native_async_runas_poll_recovery.stdout | from_json).restored
+
+        - name: Delete only the recovered owned workspace
+          sustainablelobster.legacy_windows.win_file:
+            path: '{{ native_async_poll_root }}'
+            state: absent
+          become: true
+          become_method: ansible.builtin.runas
+          become_user: 'NT AUTHORITY\SYSTEM'
+
+        - name: Independently require workspace absence and original staging
+          ansible.builtin.raw: >-
+            cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+            "import glob,json,os,sys,tempfile;
+            assert not os.path.exists(sys.argv[1]);
+            print(json.dumps(sorted(glob.glob(os.path.join(
+            tempfile.gettempdir(),'ansible-tmp-*')))))"
+            "{{ native_async_poll_root }}""
+          register: native_async_runas_poll_staging_after
+          changed_when: false
+          failed_when: >-
+            native_async_runas_poll_staging_after.rc != 0 or
+            (native_async_runas_poll_staging_after.stdout | from_json) !=
+            (native_async_runas_poll_staging_before.stdout | from_json)
+
+        - name: Preserve the final literal workspace and staging observation
+          ansible.builtin.copy:
+            content: >-
+              {{ (lookup('ansible.builtin.file',
+                         native_async_runas_poll_capture.path) |
+                  from_json) | combine({'workspace_absent': true,
+                    'staging_after': native_async_runas_poll_staging_after}) |
+                 to_nice_json }}
+            dest: '{{ native_async_runas_poll_capture.path }}'
+            mode: '0600'
+          delegate_to: localhost
+          vars: *local
+          changed_when: false
+          no_log: true
+
+        - name: Close the owner-private persistent connection
+          ansible.builtin.meta: reset_connection

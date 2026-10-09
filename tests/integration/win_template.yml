@@ -1,0 +1,332 @@
+---
+- name: Verify controller templates through native Windows copying
+  hosts: legacy_windows
+  gather_facts: false
+  vars:
+    template_fixture_root: '{{ playbook_dir }}/templates/win_template'
+    template_root: '{{ template_workspace.path }}'
+    template_value: 'Café 雪 \path % ! &'
+  tasks:
+    - name: Require Python 3.4.4 and record existing task directories
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import glob, json, os, sys, tempfile;
+        assert sys.version_info[:3] == (3, 4, 4);
+        print(json.dumps(sorted(glob.glob(os.path.join(tempfile.gettempdir(),
+        'ansible-tmp-*')))))""
+      register: task_directories_before
+      changed_when: false
+
+    - name: Exercise templates only inside a disposable workspace
+      block:
+        - name: Allocate the guest workspace
+          # WANT_JSON arguments are exercised by the assertions below.
+          sustainablelobster.legacy_windows.win_tempfile:  # noqa: args[module]
+            state: directory
+            prefix: legacy-windows-template-
+          register: template_workspace
+          check_mode: false
+
+        - name: Predict a rendered file without creating it
+          sustainablelobster.legacy_windows.win_template:
+            src: '{{ template_fixture_root }}/basic.j2'
+            dest: '{{ template_root }}\predicted.txt'
+          check_mode: true
+          register: predicted_template
+
+        - name: Render UTF-8 with default CRLF and a final newline
+          sustainablelobster.legacy_windows.win_template:
+            src: '{{ template_fixture_root }}/basic.j2'
+            dest: '{{ template_root }}\basic.txt'
+          register: first_template
+
+        - name: Require unchanged content in normal and check mode
+          sustainablelobster.legacy_windows.win_template:
+            src: '{{ template_fixture_root }}/basic.j2'
+            dest: '{{ template_root }}\basic.txt'
+          check_mode: '{{ item }}'
+          loop: [false, true]
+          register: repeated_template
+
+        - name: Predict changed text and a backup without changing the file
+          sustainablelobster.legacy_windows.win_template:
+            src: '{{ template_fixture_root }}/basic.j2'
+            dest: '{{ template_root }}\basic.txt'
+            backup: true
+          vars:
+            template_value: Replacement Café
+          check_mode: true
+          diff: true
+          register: predicted_replacement
+
+        - name: Preserve existing content when force is false
+          sustainablelobster.legacy_windows.win_template:
+            src: '{{ template_fixture_root }}/basic.j2'
+            dest: '{{ template_root }}\basic.txt'
+            force: false
+          vars:
+            template_value: This must not replace the existing bytes
+          register: preserved_template
+
+        - name: Replace text and retain the original file in a backup
+          sustainablelobster.legacy_windows.win_template:
+            src: '{{ template_fixture_root }}/basic.j2'
+            dest: '{{ template_root }}\basic.txt'
+            backup: true
+          vars:
+            template_value: Replacement Café
+          diff: true
+          register: replaced_template
+
+        - name: Render explicit newline and encoding choices
+          sustainablelobster.legacy_windows.win_template:
+            src: '{{ template_fixture_root }}/basic.j2'
+            dest: '{{ template_root }}\{{ item.name }}.txt'
+            newline_sequence: '{{ item.newline }}'
+            output_encoding: '{{ item.encoding }}'
+          vars:
+            template_value: '{{ item.value }}'
+          loop:
+            - {name: lf, newline: '\n', encoding: utf-8, value: 'Café 雪'}
+            - {name: cr, newline: '\r', encoding: utf-8, value: 'Café 雪'}
+            - name: utf16
+              newline: '\r\n'
+              encoding: utf-16-le
+              value: 'Café 雪'
+            - name: latin
+              newline: '\r\n'
+              encoding: windows-1252
+              value: 'Café €'
+          register: encoded_templates
+
+        - name: Preserve the original bytes when the source has no Jinja syntax
+          sustainablelobster.legacy_windows.win_template:
+            src: '{{ template_fixture_root }}/literal.j2'
+            dest: '{{ template_root }}\literal.txt'
+          register: literal_template
+
+        - name: Resolve an included template relative to its source
+          sustainablelobster.legacy_windows.win_template:
+            src: '{{ template_fixture_root }}/include.j2'
+            dest: '{{ template_root }}\included.txt'
+          register: included_template
+
+        - name: Render custom delimiters and strip block indentation
+          sustainablelobster.legacy_windows.win_template:
+            src: '{{ template_fixture_root }}/custom.j2'
+            dest: '{{ template_root }}\custom.txt'
+            block_start_string: '[%'
+            block_end_string: '%]'
+            variable_start_string: '[['
+            variable_end_string: ']]'
+            comment_start_string: '[#'
+            comment_end_string: '#]'
+            trim_blocks: true
+            lstrip_blocks: true
+          vars:
+            records: [one, two]
+          register: custom_template
+
+        - name: Honor delimiter settings in the Jinja header
+          sustainablelobster.legacy_windows.win_template:
+            src: '{{ template_fixture_root }}/header.j2'
+            dest: '{{ template_root }}\header.txt'
+          register: header_template
+
+        - name: Retain the filename when the destination ends in a separator
+          sustainablelobster.legacy_windows.win_template:
+            src: '{{ template_fixture_root }}/basic.j2'
+            dest: '{{ template_root }}\directory\'
+          register: directory_template
+
+        - name: Expose template metadata and preserve a user managed string
+          sustainablelobster.legacy_windows.win_template:
+            src: '{{ template_fixture_root }}/metadata.j2'
+            dest: '{{ template_root }}\metadata.json'
+          vars:
+            ansible_managed: Public fixture managed string
+            expected_template_destination: '{{ template_root }}\metadata.json'
+          register: metadata_template
+
+        - name: Verify public change and checksum fields
+          ansible.builtin.assert:
+            that:
+              - predicted_template is changed
+              - first_template is changed
+              - repeated_template is not changed
+              - predicted_replacement is changed
+              - >-
+                predicted_replacement.backup_file ==
+                'check-mode-backup-file.bak'
+              - preserved_template is not changed
+              - preserved_template.checksum == None
+              - replaced_template is changed
+              - replaced_template.diff is defined
+              - encoded_templates is changed
+              - directory_template.original_basename == 'basic.j2'
+              - directory_template.dest.endswith('basic.j2')
+
+        - name: Exercise expected input rendering and destination failures
+          block:
+            - name: Attempt invalid public template requests
+              sustainablelobster.legacy_windows.win_template: '{{ item }}'
+              loop:
+                - dest: '{{ template_root }}\invalid-missing.txt'
+                - src: '{{ template_fixture_root }}/basic.j2'
+                  dest: '{{ template_root }}\invalid-state.txt'
+                  state: present
+                - src: '{{ template_fixture_root }}/basic.j2'
+                  dest: '{{ template_root }}\invalid-newline.txt'
+                  newline_sequence: invalid
+                - src: '{{ template_fixture_root }}/absent.j2'
+                  dest: '{{ template_root }}\invalid-source.txt'
+                - src: '{{ template_fixture_root }}/undefined.j2'
+                  dest: '{{ template_root }}\invalid-undefined.txt'
+                - src: '{{ template_fixture_root }}/basic.j2'
+                  dest: '{{ template_root }}\invalid-encoding.txt'
+                  output_encoding: ascii
+                - src: '{{ template_fixture_root }}/basic.j2'
+                  dest: '{{ template_root }}\missing-parent\file.txt'
+              register: invalid_templates
+
+            - name: Reject unexpected success for invalid templates
+              ansible.builtin.fail:
+                msg: An invalid template request unexpectedly succeeded
+          rescue:
+            - name: Require all seven expected failures
+              ansible.builtin.assert:
+                that:
+                  - invalid_templates is failed
+                  - invalid_templates.results | length == 7
+                  - >-
+                    invalid_templates.results |
+                    selectattr('failed', 'equalto', true) | list | length == 7
+                  - >-
+                    'src and dest are required' in
+                    invalid_templates.results[0].msg
+                  - >-
+                    'this_template_variable_is_not_defined' in
+                    invalid_templates.results[4].msg
+
+        - name: Recover with a valid template after failures
+          sustainablelobster.legacy_windows.win_template:
+            src: '{{ template_fixture_root }}/basic.j2'
+            dest: '{{ template_root }}\recovered.txt'
+          register: recovered_template
+
+        - name: Independently verify exact rendered bytes and filesystem effects
+          # Python 3.4.4 stdlib reads do not import collection helpers.
+          sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - |
+                import hashlib, json, os, sys
+                assert sys.version_info[:3] == (3, 4, 4)
+                data = json.loads(sys.stdin.buffer.read().decode('utf-8'))
+                root = data['root']
+                value = 'Café 雪 \\path % ! &'
+                base = 'Header % ! &\r\n' + value + '\r\n'
+                expected = {
+                    'basic.txt': ('Header % ! &\r\nReplacement Café'
+                                  '\r\n').encode('utf-8'),
+                    'lf.txt': 'Header % ! &\nCafé 雪\n'.encode('utf-8'),
+                    'cr.txt': 'Header % ! &\rCafé 雪\r\r'.encode('utf-8'),
+                    'utf16.txt': ('Header % ! &\r\nCafé 雪\r\n'
+                                  ).encode('utf-16-le'),
+                    'latin.txt': ('Header % ! &\r\nCafé €\r\n'
+                                  ).encode('windows-1252'),
+                    'literal.txt': b'Literal template without Jinja\n',
+                    'included.txt': ('START ' + value + ' END\r\n'
+                                     ).encode('utf-8'),
+                    'custom.txt': b'  one\r\n  two\r\n',
+                    'header.txt': ('Header ' + value + '\r\n').encode('utf-8'),
+                    'directory/basic.j2': base.encode('utf-8'),
+                    'recovered.txt': base.encode('utf-8'),
+                }
+                expected[os.path.relpath(data['backup'], root)] = (
+                    base.encode('utf-8'))
+                assert hashlib.sha1(base.encode('utf-8')).hexdigest() == (
+                    data['checksum'])
+                for name, content in expected.items():
+                    with open(os.path.join(root, name), 'rb') as stream:
+                        actual = stream.read()
+                    assert actual == content, (name, actual, content)
+                with open(os.path.join(root, 'metadata.json'), 'rb') as stream:
+                    metadata = json.loads(stream.read().decode('utf-8'))
+                assert metadata['managed'] == 'Public fixture managed string'
+                assert metadata['source'] == data['metadata_source']
+                assert metadata['full'] == data['metadata_source']
+                assert metadata['dest_matches']
+                assert metadata['host'] and metadata['uid'] is not None
+                assert metadata['has_run_date'] and metadata['has_mtime']
+                observed = set()
+                for directory, unused, names in os.walk(root):
+                    observed.update(os.path.normcase(os.path.relpath(
+                        os.path.join(directory, name), root)) for name in names)
+                required = set(os.path.normcase(name) for name in expected)
+                required.add('metadata.json')
+                assert observed == required, sorted(observed)
+                assert not os.path.exists(os.path.join(root, 'missing-parent'))
+                print('rendered bytes, metadata, backups, check mode and'
+                      ' failure recovery verified')
+            stdin: >-
+              {{ {'root': template_root,
+                  'backup': replaced_template.backup_file,
+                  'checksum': first_template.checksum,
+                  'metadata_source': template_fixture_root + '/metadata.j2'}
+                 | to_json }}
+          changed_when: false
+
+        - name: Verify rendered controller files and directories were removed
+          ansible.builtin.command:
+            argv:
+              - '{{ ansible_playbook_python }}'
+              - -c
+              - |
+                import json, os, sys
+                for path in json.loads(sys.argv[1]):
+                    assert not os.path.exists(os.path.dirname(path)), path
+              - >-
+                {{ ([predicted_template.src, first_template.src,
+                    predicted_replacement.src, preserved_template.src,
+                    replaced_template.src, literal_template.src,
+                    included_template.src,
+                    custom_template.src, header_template.src,
+                    directory_template.src, metadata_template.src,
+                    recovered_template.src] +
+                   (encoded_templates.results | map(attribute='src') | list))
+                   | to_json }}
+          delegate_to: localhost
+          changed_when: false
+          vars:
+            ansible_connection: local
+            ansible_shell_type: sh
+            ansible_python_interpreter: '{{ ansible_playbook_python }}'
+      always:
+        - name: Remove the guest workspace created by this test
+          sustainablelobster.legacy_windows.win_file:  # noqa: args[module]
+            path: '{{ template_workspace.path }}'
+            state: absent
+          when: template_workspace.path is defined
+          check_mode: false
+
+        - name: Record task directories and verify workspace removal
+          ansible.builtin.raw: >-
+            cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+            "import glob, json, os, sys, tempfile;
+            assert not os.path.exists(sys.argv[1]);
+            print(json.dumps(sorted(glob.glob(os.path.join(tempfile.gettempdir(),
+            'ansible-tmp-*')))))" "{{ template_workspace.path }}""
+          when: template_workspace.path is defined
+          register: task_directories_after
+          changed_when: false
+          check_mode: false
+
+        - name: Require staging cleanup after successful and failed templates
+          ansible.builtin.assert:
+            that:
+              - >-
+                (task_directories_before.stdout | from_json) ==
+                (task_directories_after.stdout | from_json)
+          when: template_workspace.path is defined

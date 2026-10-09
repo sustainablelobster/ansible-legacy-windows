@@ -1,0 +1,152 @@
+---
+- name: Verify structured PowerShell through Python and its explicit engine
+  hosts: legacy_windows
+  gather_facts: false
+  vars_files:
+    - vars/win_powershell.yml
+  tasks:
+    - name: Require actual Python and record original global staging
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import glob,json,os,sys,tempfile;
+        assert sys.version_info[:3] == (3,4,4);
+        assert not glob.glob(os.path.join(
+        tempfile.gettempdir(),'legacy-windows-powershell-*'));
+        print(json.dumps(sorted(glob.glob(os.path.join(
+        tempfile.gettempdir(),'ansible-tmp-*')))))""
+      register: powershell_staging_before
+      changed_when: false
+
+    - name: Allocate private local evidence
+      ansible.builtin.tempfile:
+        path: "{{ playbook_dir }}/../../tmp"
+        state: file
+        prefix: "win-powershell-{{ inventory_hostname }}-"
+        suffix: .json
+      register: powershell_capture
+      delegate_to: localhost
+      vars: &local
+        ansible_connection: local
+        ansible_shell_type: sh
+        ansible_python_interpreter: "{{ ansible_playbook_python }}"
+
+    - name: Allocate the uniquely owned resource workspace
+      sustainablelobster.legacy_windows.win_tempfile:
+        prefix: legacy-windows-win-powershell-
+        state: directory
+      register: powershell_workspace
+
+    - name: Initialize literal request records
+      ansible.builtin.set_fact:
+        powershell_records: []
+
+    - name: Exercise only the journal-owned resource paths
+      block:
+        - name: Journal output ownership and protected bytes
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - "{{ ansible_python_interpreter }}"
+              - "-"
+              - "{{ powershell_workspace.path }}"
+              - setup
+            stdin: "{{ powershell_program }}"
+          register: powershell_setup
+          changed_when: false
+          no_log: true
+
+        - name: Exercise complete public requests and source comparisons
+          ansible.builtin.include_tasks: tasks/win_powershell_case.yml
+          loop: "{{ powershell_cases }}"
+          loop_control:
+            loop_var: powershell_case
+            label: "{{ powershell_case.name }}"
+      always:
+        - name: Recover only owned outputs and verify protected state
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - "{{ ansible_python_interpreter }}"
+              - "-"
+              - "{{ powershell_workspace.path }}"
+              - cleanup
+            stdin: "{{ powershell_program }}"
+          register: powershell_recovery
+          failed_when: false
+          changed_when: false
+          no_log: true
+
+        - name: Persist all raw outcomes before recovery validation
+          ansible.builtin.copy:
+            content: >-
+              {{ {'results': powershell_records,
+                  'workspace': powershell_workspace,
+                  'setup': powershell_setup | default(none),
+                  'recovery': powershell_recovery,
+                  'staging_before': powershell_staging_before} | to_nice_json }}
+            dest: "{{ powershell_capture.path }}"
+            mode: "0600"
+          delegate_to: localhost
+          vars: *local
+          changed_when: false
+          no_log: true
+
+        - name: Require exact protected resource recovery
+          ansible.builtin.assert:
+            that:
+              - powershell_recovery.rc == 0
+              - (powershell_recovery.stdout | from_json).restored
+
+        - name: Recheck protection before removing the owned journal
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - "{{ ansible_python_interpreter }}"
+              - "-"
+              - "{{ powershell_workspace.path }}"
+              - finalize
+            stdin: "{{ powershell_program }}"
+          changed_when: false
+          no_log: true
+
+        - name: Remove only the verified empty workspace
+          sustainablelobster.legacy_windows.win_file:
+            path: "{{ powershell_workspace.path }}"
+            state: absent
+
+        - name: Observe workspace absence and final global staging
+          ansible.builtin.raw: >-
+            cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+            "import glob,json,os,tempfile;
+            assert not os.path.exists(r'{{ powershell_workspace.path }}');
+            assert not glob.glob(os.path.join(
+            tempfile.gettempdir(),'legacy-windows-powershell-*'));
+            print(json.dumps(sorted(glob.glob(os.path.join(
+            tempfile.gettempdir(),'ansible-tmp-*')))))""
+          register: powershell_staging_after
+          changed_when: false
+
+        - name: Retain literal final recovery and staging
+          ansible.builtin.copy:
+            content: >-
+              {{ {'results': powershell_records,
+                  'workspace': powershell_workspace,
+                  'setup': powershell_setup | default(none),
+                  'recovery': powershell_recovery, 'workspace_absent': true,
+                  'staging_before': powershell_staging_before,
+                  'staging_after': powershell_staging_after} | to_nice_json }}
+            dest: "{{ powershell_capture.path }}"
+            mode: "0600"
+          delegate_to: localhost
+          vars: *local
+          changed_when: false
+          no_log: true
+
+        - name: Require exact original global staging
+          ansible.builtin.assert:
+            that:
+              - powershell_staging_before.stdout ==
+                powershell_staging_after.stdout
+
+    - name: Require every declared public case to be fully verified
+      ansible.builtin.assert:
+        that:
+          - powershell_records | length == powershell_cases | length
+          - powershell_records | rejectattr('validated') | list | length == 0

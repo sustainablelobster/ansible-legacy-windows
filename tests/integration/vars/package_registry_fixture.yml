@@ -1,0 +1,737 @@
+---
+package_registry_installer_source: |
+  """Exercise only a journal-owned registry package and its private output."""
+
+  # SPDX-License-Identifier: GPL-3.0-or-later
+
+  import json
+  import os
+  import sys
+  import winreg
+
+
+  def main():
+      """Install or remove the exact workspace-owned test registry entry."""
+      root, operation, hive_name, branch_name, uninstall_property = sys.argv[
+          1:6
+      ]
+      with open(
+          os.path.join(root, "registry-package-journal.json"),
+          encoding="utf-8",
+      ) as stream:
+          journal = json.load(stream)
+      assert journal["workspace"] == root
+      assert not journal["verified"]
+      identifier = journal["identifier"]
+      assert identifier.startswith("LegacyWindowsPackage-")
+      hive = {
+          "HKLM": winreg.HKEY_LOCAL_MACHINE,
+          "HKCU": winreg.HKEY_CURRENT_USER,
+      }[hive_name]
+      branch = {
+          "native": r"SOFTWARE",
+          "wow": r"SOFTWARE\Wow6432Node",
+      }[branch_name]
+      path = (
+          branch
+          + r"\Microsoft\Windows\CurrentVersion\Uninstall"
+          + "\\"
+          + identifier
+      )
+      access = winreg.KEY_READ | winreg.KEY_WRITE | journal["registry_view"]
+      if operation in ("remove", "uninstall_fail") and journal.get(
+          "record_uninstall", False
+      ):
+          invocation_path = os.path.join(root, "uninstall-arguments.json")
+          invocations = []
+          if os.path.isfile(invocation_path):
+              with open(invocation_path, encoding="utf-8") as stream:
+                  previous = json.load(stream)
+              assert previous["identifier"] == identifier
+              invocations = previous["invocations"]
+          invocations.append({
+              "arguments": sys.argv[6:],
+              "executable": sys.executable,
+              "operation": operation,
+          })
+          with open(invocation_path, "w", encoding="utf-8") as stream:
+              json.dump({"identifier": identifier,
+                         "invocations": invocations}, stream, sort_keys=True)
+      if operation in ("fail", "uninstall_fail"):
+          print("owned installer stdout")
+          sys.stderr.write("owned installer stderr\n")
+          return 23
+      if operation == "negative":
+          return -1
+      output = os.path.join(root, "installed.json")
+      if operation == "install":
+          try:
+              with winreg.OpenKey(hive, path, 0, access):
+                  raise AssertionError(
+                      "Do not adopt an existing uninstall entry"
+                  )
+          except FileNotFoundError:
+              pass
+          with winreg.CreateKeyEx(hive, path, 0, access) as key:
+              winreg.SetValueEx(
+                  key, "LegacyWindowsTestWorkspace", 0, winreg.REG_SZ, root
+              )
+              winreg.SetValueEx(
+                  key, "DisplayName", 0, winreg.REG_SZ, identifier
+              )
+              if uninstall_property != "missing":
+                  winreg.SetValueEx(
+                      key,
+                      uninstall_property,
+                      0,
+                      winreg.REG_SZ,
+                      journal["uninstall_commands"][
+                          hive_name + "/" + branch_name
+                      ],
+                  )
+              if uninstall_property == "QuietUninstallString":
+                  winreg.SetValueEx(
+                      key,
+                      "UninstallString",
+                      0,
+                      winreg.REG_SZ,
+                      journal["fail_command"],
+                  )
+          with open(output, "w", encoding="utf-8") as stream:
+              json.dump(
+                  {
+                      "identifier": identifier,
+                      "location": hive_name + "/" + branch_name,
+                  },
+                  stream,
+                  sort_keys=True,
+              )
+      elif operation == "remove":
+          with winreg.OpenKey(hive, path, 0, access) as key:
+              assert (
+                  winreg.QueryValueEx(key, "LegacyWindowsTestWorkspace")[0]
+                  == root
+              )
+              assert winreg.QueryInfoKey(key)[0] == 0
+          if journal["registry_view"]:
+              winreg.DeleteKeyEx(hive, path, journal["registry_view"], 0)
+          else:
+              winreg.DeleteKey(hive, path)
+          os.remove(output)
+      else:
+          raise ValueError("Unknown owned installer operation: " + operation)
+      return 0
+
+
+  if __name__ == "__main__":
+      assert sys.version_info[:3] == (3, 4, 4)
+      sys.exit(main())
+package_registry_fixture_source: |
+  """Journal and recover the exact registry-executable fixture resources."""
+
+  # SPDX-License-Identifier: GPL-3.0-or-later
+
+  import base64
+  import ctypes
+  import hashlib
+  import json
+  import os
+  import shutil
+  import subprocess
+  import sys
+  import tempfile
+  import time
+  import winreg
+
+  import legacy_windows_acl as acl  # pylint: disable=import-error
+  from legacy_windows_wmi import WmiConnection  # pylint: disable=import-error
+
+  ROOT, OPERATION = sys.argv[1:3]
+  JOURNAL = os.path.join(ROOT, "registry-package-journal.json")
+  INSTALLER = os.path.join(ROOT, "registry installer.exe")
+  PROGRAM = os.path.join(ROOT, "registry_installer.py")
+  BRANCHES = (
+      ("HKLM", winreg.HKEY_LOCAL_MACHINE, "native", r"SOFTWARE"),
+      ("HKLM", winreg.HKEY_LOCAL_MACHINE, "wow", r"SOFTWARE\Wow6432Node"),
+      ("HKCU", winreg.HKEY_CURRENT_USER, "native", r"SOFTWARE"),
+      ("HKCU", winreg.HKEY_CURRENT_USER, "wow", r"SOFTWARE\Wow6432Node"),
+  )
+  VIEW = (
+      0x100
+      if (
+          ctypes.sizeof(ctypes.c_void_p) == 8
+          or os.environ.get("PROCESSOR_ARCHITEW6432")
+      )
+      else 0
+  )
+
+
+  def encode(value):
+      if isinstance(value, bytes):
+          return {"raw_bytes": base64.b64encode(value).decode("ascii")}
+      raise TypeError("Unsupported journal value")
+
+
+  def decode(value):
+      return (
+          base64.b64decode(value["raw_bytes"])
+          if set(value) == {"raw_bytes"}
+          else value
+      )
+
+
+  def write(record):
+      with open(JOURNAL, "w", encoding="utf-8") as stream:
+          json.dump(record, stream, default=encode, sort_keys=True)
+          stream.flush()
+          os.fsync(stream.fileno())
+
+
+  def read():
+      with open(JOURNAL, encoding="utf-8") as stream:
+          record = json.load(stream, object_hook=decode)
+      assert record["workspace"] == ROOT
+      assert record["identifier"] == identifier()
+      return record
+
+
+  def identifier():
+      return "LegacyWindowsPackage-" + os.path.basename(ROOT)
+
+
+  def literal_state(value):
+      result = dict(value)
+      result.pop("utc")
+      return result
+
+
+  def now():
+      return time.time()
+
+
+  def validate_workspace():
+      kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+      kernel.GetLongPathNameW.argtypes = [
+          ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_uint32
+      ]
+      kernel.GetLongPathNameW.restype = ctypes.c_uint32
+
+      def long_path(path):
+          buffer = ctypes.create_unicode_buffer(32768)
+          count = kernel.GetLongPathNameW(path, buffer, len(buffer))
+          assert 0 < count < len(buffer)
+          return os.path.normcase(buffer.value.rstrip("\\"))
+
+      assert os.path.basename(ROOT).startswith(
+          "legacy-windows-package-registry-test-"
+      )
+      assert long_path(os.path.dirname(ROOT)) == long_path(
+          tempfile.gettempdir()
+      )
+      assert not os.path.islink(ROOT)
+
+
+  def python_dll():
+      kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+      kernel.GetModuleFileNameW.argtypes = [
+          ctypes.c_void_p,
+          ctypes.c_wchar_p,
+          ctypes.c_uint32,
+      ]
+      kernel.GetModuleFileNameW.restype = ctypes.c_uint32
+      buffer = ctypes.create_unicode_buffer(32768)
+      count = kernel.GetModuleFileNameW(
+          ctypes.pythonapi._handle, buffer, len(buffer)
+      )
+      assert 0 < count < len(buffer)
+      return buffer.value
+
+
+  def file_state(path):
+      with open(path, "rb") as stream:
+          content = stream.read()
+      kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+      kernel.GetFileAttributesW.argtypes = [ctypes.c_wchar_p]
+      kernel.GetFileAttributesW.restype = ctypes.c_uint32
+      attributes = kernel.GetFileAttributesW(path)
+      assert attributes != 0xFFFFFFFF
+      with acl.open_acl(acl.resolve_target(path, True)) as (
+          permissions,
+          _writer,
+      ):
+          value = {
+              "sha256": hashlib.sha256(content).hexdigest(),
+              "length": len(content),
+              "mtime": os.stat(path).st_mtime_ns,
+              "attributes": attributes,
+              "acl": permissions,
+          }
+          if path.endswith((".json", ".py")):
+              value["bytes"] = content
+          return value
+
+
+  def registry_values(key):
+      return [
+          list(winreg.EnumValue(key, index))
+          for index in range(winreg.QueryInfoKey(key)[1])
+      ]
+
+
+  def registry_catalogue():
+      result = {}
+      for hive_name, hive, branch_name, branch in BRANCHES:
+          path = branch + r"\Microsoft\Windows\CurrentVersion\Uninstall"
+          label = hive_name + "/" + branch_name
+          try:
+              with winreg.OpenKey(
+                  hive, path, 0, winreg.KEY_READ | VIEW
+              ) as parent:
+                  names = [
+                      winreg.EnumKey(parent, index)
+                      for index in range(winreg.QueryInfoKey(parent)[0])
+                  ]
+                  rows = []
+                  for name in names:
+                      with winreg.OpenKey(
+                          parent, name, 0, winreg.KEY_READ | VIEW
+                      ) as child:
+                          rows.append(
+                              {"name": name, "values": registry_values(child)}
+                          )
+                  result[label] = {
+                      "values": registry_values(parent),
+                      "children": rows,
+                  }
+          except FileNotFoundError:
+              result[label] = None
+      return result
+
+
+  def missing_registry_parents():
+      result = {}
+      for hive_name, hive, branch_name, branch in BRANCHES:
+          components = (
+              branch + r"\Microsoft\Windows\CurrentVersion\Uninstall"
+          ).split("\\")
+          missing = []
+          for count in range(1, len(components) + 1):
+              path = "\\".join(components[:count])
+              try:
+                  with winreg.OpenKey(hive, path, 0, winreg.KEY_READ | VIEW):
+                      pass
+              except FileNotFoundError:
+                  # Never adopt or remove the preexisting SOFTWARE root.
+                  assert count > 1
+                  missing.append(path)
+          result[hive_name + "/" + branch_name] = missing
+      return result
+
+
+  def remove_owned_registry_parents(record):
+      for hive_name, hive, branch_name, _branch in BRANCHES:
+          for path in reversed(
+              record["missing_parents"][hive_name + "/" + branch_name]
+          ):
+              try:
+                  with winreg.OpenKey(
+                      hive, path, 0, winreg.KEY_READ | VIEW
+                  ) as key:
+                      assert winreg.QueryInfoKey(key)[:2] == (0, 0)
+                  if VIEW:
+                      winreg.DeleteKeyEx(hive, path, VIEW, 0)
+                  else:
+                      winreg.DeleteKey(hive, path)
+              except FileNotFoundError:
+                  pass
+
+
+  def services():
+      with WmiConnection() as connection:
+          rows = connection.query(
+              "SELECT * FROM Win32_Service",
+              [
+                  "Name",
+                  "DisplayName",
+                  "StartMode",
+                  "PathName",
+                  "StartName",
+                  "State",
+              ],
+          )
+      return {
+          row["Name"]: {
+              key: value
+              for key, value in row.items()
+              if key != "State" or row["Name"] in ("MSIServer", "BvSshServer")
+          }
+          for row in rows
+      }
+
+
+  def pending():
+      result = {}
+      for path in (
+          r"SYSTEM\CurrentControlSet\Control\Session Manager",
+          (
+              r"SOFTWARE\Microsoft\Windows\CurrentVersion"
+              r"\Component Based Servicing\RebootPending"
+          ),
+          (
+              r"SOFTWARE\Microsoft\Windows\CurrentVersion"
+              r"\WindowsUpdate\Auto Update\RebootRequired"
+          ),
+      ):
+          try:
+              with winreg.OpenKey(
+                  winreg.HKEY_LOCAL_MACHINE, path, 0, winreg.KEY_READ | VIEW
+              ) as key:
+                  if path.endswith("Session Manager"):
+                      try:
+                          result[path] = list(winreg.QueryValueEx(
+                              key, "PendingFileRenameOperations"
+                          ))
+                      except FileNotFoundError:
+                          result[path] = None
+                  else:
+                      result[path] = registry_values(key)
+          except FileNotFoundError:
+              result[path] = None
+      return result
+
+
+  def source_files():
+      return {
+          name: file_state(os.path.join(ROOT, name))
+          for name in (
+              "registry installer.exe",
+              "python34.dll",
+              "MSVCR100.dll",
+              "registry_installer.py",
+          )
+          if os.path.isfile(os.path.join(ROOT, name))
+      }
+
+
+  def snapshot():
+      outputs = {}
+      for name in ("installed.json", "uninstall-arguments.json"):
+          path = os.path.join(ROOT, name)
+          if os.path.isfile(path):
+              outputs[name] = file_state(path)
+      value = {
+          "registry": registry_catalogue(),
+          "pending": pending(),
+          "services": services(),
+          "sources": source_files(),
+          "outputs": outputs,
+      }
+      # The observation is complete only after every file/native read. Using
+      # its start as an upper bound can precede the legacy clock's next tick.
+      value["utc"] = now()
+      return value
+
+
+  def protected(value):
+      result = literal_state(value)
+      result.pop("outputs")
+      baseline = read()["before"]["registry"]
+      branches = {}
+      for label, branch in value["registry"].items():
+          if branch is None:
+              branches[label] = None
+          elif baseline[label] is None:
+              assert branch["values"] == []
+              assert all(
+                  row["name"] == identifier() for row in branch["children"]
+              )
+              branches[label] = None
+          else:
+              branches[label] = {
+                  "values": branch["values"],
+                  "children": [
+                      row
+                      for row in branch["children"]
+                      if row["name"] != identifier()
+                  ],
+              }
+      result["registry"] = branches
+      return result
+
+
+  def remove_owned():
+      record = read()
+      for _hive_name, hive, _branch_name, branch in BRANCHES:
+          path = (
+              branch
+              + r"\Microsoft\Windows\CurrentVersion\Uninstall"
+              + "\\"
+              + identifier()
+          )
+          try:
+              with winreg.OpenKey(
+                  hive, path, 0, winreg.KEY_READ | VIEW
+              ) as key:
+                  assert (
+                      winreg.QueryValueEx(key, "LegacyWindowsTestWorkspace")[
+                          0
+                      ]
+                      == ROOT
+                  )
+                  assert winreg.QueryInfoKey(key)[0] == 0
+              if VIEW:
+                  winreg.DeleteKeyEx(hive, path, VIEW, 0)
+              else:
+                  winreg.DeleteKey(hive, path)
+          except FileNotFoundError:
+              pass
+      for name in ("installed.json", "uninstall-arguments.json"):
+          output = os.path.join(ROOT, name)
+          if os.path.isfile(output):
+              assert record["workspace"] == ROOT
+              with open(output, encoding="utf-8") as stream:
+                  assert json.load(stream)["identifier"] == identifier()
+              os.remove(output)
+      remove_owned_registry_parents(record)
+
+
+  def execute(arguments):
+      environment = dict(os.environ)
+      environment["PYTHONHOME"] = sys.prefix
+      with subprocess.Popen(
+          [INSTALLER, "-S", PROGRAM, ROOT] + arguments,
+          stdout=subprocess.PIPE,
+          stderr=subprocess.PIPE,
+          env=environment,
+      ) as child:
+          stdout, stderr = child.communicate()
+          assert child.returncode == 0, (child.returncode, stdout, stderr)
+
+
+  def journal():
+      assert not os.listdir(ROOT)
+      before = snapshot()
+      assert all(
+          not branch
+          or all(row["name"] != identifier() for row in branch["children"])
+          for branch in before["registry"].values()
+      )
+      commands = {}
+      for hive_name, _hive, branch_name, _branch in BRANCHES:
+          commands[hive_name + "/" + branch_name] = subprocess.list2cmdline(
+              [
+                  INSTALLER,
+                  "-S",
+                  PROGRAM,
+                  ROOT,
+                  "remove",
+                  hive_name,
+                  branch_name,
+                  "UninstallString",
+              ]
+          )
+      record = {
+          "workspace": ROOT,
+          "identifier": identifier(),
+          "before": before,
+          "missing_parents": missing_registry_parents(),
+          "python_home": sys.prefix,
+          "registry_view": VIEW,
+          "complete": False,
+          "verified": False,
+          "uninstall_commands": commands,
+          "fail_command": subprocess.list2cmdline(
+              [
+                  INSTALLER,
+                  "-S",
+                  PROGRAM,
+                  ROOT,
+                  "fail",
+                  "HKCU",
+                  "native",
+                  "UninstallString",
+              ]
+          ),
+          "protected_runtime": {
+              sys.executable: file_state(sys.executable),
+              python_dll(): file_state(python_dll()),
+          },
+      }
+      write(record)
+      return {
+          "journaled": True,
+          "runtime": sys.version,
+          "pointer_size": ctypes.sizeof(ctypes.c_void_p),
+          "identifier": identifier(),
+          "python_home": sys.prefix,
+          "workspace": ROOT,
+      }
+
+
+  def setup():
+      record = read()
+      assert not record["complete"]
+      mode = sys.argv[3] if len(sys.argv) > 3 else "native"
+      assert mode in ("native", "x86")
+      expected = {
+          "registry installer.exe": (
+              "3cc2f65337ff5d3f40af829d78dfe3a9a93f24ba2b4059be174ed2b4db2d3b68"
+          ),
+          "python34.dll": (
+              "fdcb5f85b9fa3bedcc9b2a999e8bd733412b60d9e5f9faa9d1a5858ae753f3c4"
+          ),
+          "MSVCR100.dll": (
+              "60c06e0fa4449314da3a0a87c1a9d9577df99226f943637e06f61188e5862efa"
+          ),
+      }
+      if mode == "native":
+          shutil.copy2(sys.executable, INSTALLER)
+          shutil.copy2(python_dll(), os.path.join(ROOT, "python34.dll"))
+          expected = {
+              "registry installer.exe": file_state(sys.executable)["sha256"],
+              "python34.dll": file_state(python_dll())["sha256"],
+          }
+      sources = source_files()
+      assert set(sources) == set(expected) | {"registry_installer.py"}
+      assert all(
+          sources[name]["sha256"] == digest
+          for name, digest in expected.items()
+      )
+      record["sources"] = sources
+      record["complete"] = True
+      write(record)
+      return {
+          "ready": True,
+          "sha256": {
+              name: value["sha256"] for name, value in sources.items()
+          },
+          "identifier": identifier(),
+          "python_home": sys.prefix,
+          "workspace": ROOT,
+      }
+
+
+  def prepare():
+      record = read()
+      assert record["complete"] and not record["verified"]
+      preparation_started = now()
+      remove_owned()
+      state, hive_name, branch_name, uninstall_property = sys.argv[3:7]
+      assert state in ("present", "absent")
+      specification = json.loads(sys.argv[7]) if len(sys.argv) > 7 else {}
+      form = specification.get("form", "quoted")
+      assert form in ("quoted", "unquoted", "environment",
+                      "quoted_environment", "missing")
+      executable = INSTALLER
+      if form in ("environment", "quoted_environment"):
+          executable = r"%LegacyWindowsPackageRoot%\registry installer.exe"
+      elif form == "missing":
+          executable = os.path.join(ROOT, "missing installer.exe")
+      if form in ("quoted", "quoted_environment"):
+          executable = subprocess.list2cmdline([executable])
+      arguments = specification.get("arguments", [])
+      assert isinstance(arguments, list)
+      record["record_uninstall"] = bool(arguments)
+      record["uninstall_commands"][hive_name + "/" + branch_name] = (
+          executable + " " + subprocess.list2cmdline([
+              "-S", PROGRAM, ROOT,
+              specification.get("operation", "remove"),
+              hive_name, branch_name, uninstall_property,
+          ] + arguments)
+      )
+      write(record)
+      if state == "present":
+          execute(["install", hive_name, branch_name, uninstall_property])
+      value = snapshot()
+      expected = dict(record["before"])
+      expected["sources"] = record["sources"]
+      assert protected(value) == protected(expected)
+      value["preparation_started_utc"] = preparation_started
+      return value
+
+
+  def cleanup():
+      if not os.path.exists(JOURNAL):
+          assert not os.listdir(ROOT)
+          return {"restored": True, "journal_absent": True}
+      record = read()
+      remove_owned()
+      assert set(os.listdir(ROOT)) == (
+          set(record.get("sources", {})) | {os.path.basename(JOURNAL)}
+      )
+      expected = dict(record["before"])
+      expected["sources"] = record.get("sources", {})
+      final = snapshot()
+      assert literal_state(final) == literal_state(expected)
+      assert {
+          path: file_state(path) for path in record["protected_runtime"]
+      } == record["protected_runtime"]
+      record["verified"] = True
+      write(record)
+      return {
+          "restored": True,
+          "before": expected,
+          "after": final,
+          "protected_runtime": record["protected_runtime"],
+      }
+
+
+  def finalize():
+      if not os.path.exists(JOURNAL):
+          assert not os.listdir(ROOT)
+          return {"finalized": True, "journal_absent": True}
+      record = read()
+      assert record["verified"]
+      assert set(os.listdir(ROOT)) == (
+          set(record.get("sources", {})) | {os.path.basename(JOURNAL)}
+      )
+      expected = dict(record["before"])
+      expected["sources"] = record.get("sources", {})
+      assert literal_state(snapshot()) == literal_state(expected)
+      assert {
+          path: file_state(path) for path in record["protected_runtime"]
+      } == record["protected_runtime"]
+      os.remove(JOURNAL)
+      return {"finalized": True}
+
+
+  if __name__ == "__main__":
+      assert sys.version_info[:3] == (3, 4, 4)
+      validate_workspace()
+      operations = {
+          "journal": journal,
+          "setup": setup,
+          "prepare": prepare,
+          "observe": snapshot,
+          "cleanup": cleanup,
+          "finalize": finalize,
+      }
+      print(
+          json.dumps(operations[OPERATION](), default=encode, sort_keys=True)
+      )
+package_registry_helper_names:
+  - legacy_windows_module
+  - legacy_windows_text
+  - legacy_windows_account
+  - legacy_windows_group
+  - legacy_windows_owner
+  - legacy_windows_link
+  - legacy_windows_acl_inheritance
+  - legacy_windows_acl
+  - legacy_windows_wmi
+package_registry_program: |
+  import base64
+  import sys
+  import types
+  assert sys.version_info[:3] == (3, 4, 4)
+  {% for name in package_registry_helper_names %}
+  helper = types.ModuleType('{{ name }}')
+  sys.modules[helper.__name__] = helper
+  source = '{{ lookup("file",
+      playbook_dir + "/../../plugins/module_utils/" + name + ".py")
+      | b64encode }}'
+  exec(compile(base64.b64decode(source), helper.__name__ + '.py', 'exec'),
+       helper.__dict__)
+  {% endfor %}
+  source = '{{ package_registry_fixture_source | b64encode }}'
+  exec(compile(base64.b64decode(source), 'registry_fixture.py', 'exec'))

@@ -1,0 +1,499 @@
+---
+# SPDX-License-Identifier: GPL-3.0-or-later
+- name: Verify registry reads on Windows Python 3.4.4
+  hosts: legacy_windows
+  gather_facts: false
+  vars:
+    fixture: '{{ fixtures.stdout | from_json }}'
+    typed_path: '{{ fixture.path }}\typed'
+    alias_cases:
+      - id: path_alias
+        key: '{{ typed_path }}'
+        name: string
+        selected: string
+      - id: canonical_path_precedence
+        path: '{{ typed_path }}'
+        key: '{{ fixture.path }}\missing'
+        name: string
+        selected: string
+      - id: null_path_alias_ignored
+        path: '{{ typed_path }}'
+        key: null
+        name: string
+        selected: string
+      - id: canonical_name_precedence
+        path: '{{ typed_path }}'
+        name: string
+        entry: missing
+        value: empty
+        selected: string
+      - id: null_canonical_name_precedence
+        path: '{{ typed_path }}'
+        name: null
+        entry: string
+        selected: null
+      - id: empty_canonical_name_precedence
+        path: '{{ typed_path }}'
+        name: ''
+        entry: string
+        selected: ''
+      - id: entry_alias_precedence
+        path: '{{ typed_path }}'
+        entry: string
+        value: empty
+        selected: string
+      - id: null_entry_precedence
+        path: '{{ typed_path }}'
+        entry: null
+        value: string
+        selected: null
+      - id: value_alias
+        path: '{{ typed_path }}'
+        value: string
+        selected: string
+      - id: documented_property_alias_is_ignored
+        path: '{{ typed_path }}'
+        property: string
+        unknown_option: ignored
+        selected: null
+    invalid_cases:
+      - id: missing_path
+        expected: 'Get-AnsibleParam: Missing required argument: path'
+      - id: null_path
+        path: null
+        rendered: ''
+      - id: empty_path
+        path: ''
+        rendered: ''
+      - id: invalid_hive
+        path: 'ABCD:\missing'
+        rendered: 'ABCD:\missing'
+      - id: invalid_separator
+        path: HKCU:/missing
+        rendered: HKCU:/missing
+      - id: null_canonical_path_precedence
+        path: null
+        key: '{{ typed_path }}'
+        rendered: ''
+    cleanup_code: |
+      import json, re, sys, winreg
+      assert sys.version_info[:3] == (3, 4, 4)
+      hive = winreg.HKEY_CURRENT_USER
+      children = ('typed', 'typed\\nested', 'typed\\literal / [&*]',
+          'empty', 'blank_default')
+
+      def owned_path(subkey):
+          assert re.match(r'^Software\\LW_REG_STAT_[a-f0-9]{32}$', subkey)
+          return subkey
+
+      def cleanup(subkey):
+          owned_path(subkey)
+          for child in sorted(children,
+                  key=lambda item: item.count('\\'), reverse=True):
+              try:
+                  winreg.DeleteKey(hive, subkey + '\\' + child)
+              except FileNotFoundError:
+                  pass
+          try:
+              winreg.DeleteKey(hive, subkey)
+          except FileNotFoundError:
+              pass
+          try:
+              with winreg.OpenKey(hive, subkey):
+                  raise AssertionError('Owned registry branch remains')
+          except FileNotFoundError:
+              pass
+
+      if sys.argv[1] == 'cleanup':
+          cleanup(sys.argv[2])
+          print(json.dumps({'removed': True}))
+          sys.exit(0)
+    fixture_code: |
+      {{ cleanup_code }}
+      import base64, ctypes, os, struct, uuid
+      library = ctypes.WinDLL('advapi32', use_last_error=True)
+      library.RegSetValueExW.argtypes = [ctypes.c_void_p,
+          ctypes.c_wchar_p, ctypes.c_uint32, ctypes.c_uint32,
+          ctypes.c_void_p, ctypes.c_uint32]
+      library.RegSetValueExW.restype = ctypes.c_long
+      library.RegQueryValueExW.argtypes = [ctypes.c_void_p,
+          ctypes.c_wchar_p, ctypes.c_void_p,
+          ctypes.POINTER(ctypes.c_uint32), ctypes.c_void_p,
+          ctypes.POINTER(ctypes.c_uint32)]
+      library.RegQueryValueExW.restype = ctypes.c_long
+      library.RegEnumValueW.argtypes = [ctypes.c_void_p, ctypes.c_uint32,
+          ctypes.c_wchar_p, ctypes.POINTER(ctypes.c_uint32),
+          ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p,
+          ctypes.c_void_p]
+      library.RegEnumValueW.restype = ctypes.c_long
+
+      def snapshot(subkey):
+          owned_path(subkey)
+          result = {}
+          for child in ('',) + children:
+              path = subkey + ('\\' + child if child else '')
+              with winreg.OpenKey(hive, path, 0, winreg.KEY_READ) as key:
+                  key_count, value_count, modified = winreg.QueryInfoKey(key)
+                  values = {}
+                  for index in range(value_count):
+                      name = ctypes.create_unicode_buffer(16384)
+                      length = ctypes.c_uint32(len(name))
+                      status = library.RegEnumValueW(int(key), index,
+                          name, ctypes.byref(length), None, None, None, None)
+                      if status:
+                          raise ctypes.WinError(status)
+                      kind = ctypes.c_uint32()
+                      size = ctypes.c_uint32()
+                      status = library.RegQueryValueExW(int(key), name.value,
+                          None, ctypes.byref(kind), None, ctypes.byref(size))
+                      if status:
+                          raise ctypes.WinError(status)
+                      data = ctypes.create_string_buffer(max(1, size.value))
+                      status = library.RegQueryValueExW(int(key), name.value,
+                          None, ctypes.byref(kind), data, ctypes.byref(size))
+                      if status:
+                          raise ctypes.WinError(status)
+                      encoded = base64.b64encode(data.raw[:size.value])
+                      values[name.value] = [kind.value, encoded.decode('ascii')]
+                  result[child] = {'values': values, 'modified': modified,
+                      'sub_keys': [winreg.EnumKey(key, index)
+                          for index in range(key_count)]}
+          return result
+
+      def write(key, name, kind, data):
+          buffer = ctypes.create_string_buffer(data)
+          status = library.RegSetValueExW(int(key), name, 0,
+              kind, buffer, len(data))
+          if status:
+              raise ctypes.WinError(status)
+
+      def text(value):
+          return (value + '\0').encode('utf-16-le')
+
+      if sys.argv[1] == 'snapshot':
+          print(json.dumps(snapshot(sys.argv[2])))
+          sys.exit(0)
+      assert sys.argv[1] == 'create'
+      subkey = 'Software\\LW_REG_STAT_' + uuid.uuid4().hex
+      try:
+          with winreg.OpenKey(hive, subkey):
+              raise AssertionError('Refusing to reuse an existing registry key')
+      except FileNotFoundError:
+          pass
+      properties = {}
+      try:
+          with winreg.CreateKeyEx(hive, subkey, 0,
+                  winreg.KEY_READ | winreg.KEY_WRITE) as root:
+              for child in children:
+                  with winreg.CreateKeyEx(root, child):
+                      pass
+              with winreg.OpenKey(root, 'typed', 0,
+                      winreg.KEY_SET_VALUE) as key:
+                  for name, value in (('', 'default'), ('(Default)', 'named'),
+                          ('string', 'Caf\u00e9 \u96ea'), ('empty', '')):
+                      write(key, name, 1, text(value))
+                      properties[name] = {'type': 'REG_SZ',
+                          'value': value, 'raw_value': value}
+                  stored = '%SystemRoot%\\dir'
+                  write(key, 'expand', 2, text(stored))
+                  properties['expand'] = {'type': 'REG_EXPAND_SZ',
+                      'value': os.environ['SystemRoot'] + '\\dir',
+                      'raw_value': stored}
+                  for label, kind, type_name in (
+                          ('binary', 3, 'REG_BINARY'), ('none', 0, 'REG_NONE')):
+                      for suffix, data in (('empty', b''), ('one', b'\x16'),
+                              ('many', b'\x00\x16\xff')):
+                          name = label + '_' + suffix
+                          write(key, name, kind, data)
+                          properties[name] = {'type': type_name,
+                              'value': list(data),
+                              'raw_value': ['0x{0:02x}'.format(byte)
+                                  for byte in data]}
+                  for suffix, values in (('empty', []), ('one', ['one']),
+                          ('many', ['one', 'two', 'Caf\u00e9 \u96ea'])):
+                      name = 'multi_' + suffix
+                      stored = '\0'.join(values) + ('\0\0' if values else '\0')
+                      data = stored.encode('utf-16-le')
+                      write(key, name, 7, data)
+                      properties[name] = {'type': 'REG_MULTI_SZ',
+                          'value': values, 'raw_value': values}
+                  for label, kind, format_code, maximum in (
+                          ('dword', 4, '<I', 4294967295),
+                          ('qword', 11, '<Q', 18446744073709551615)):
+                      for suffix, value in (('zero', 0), ('max', maximum)):
+                          name = label + '_' + suffix
+                          data = struct.pack(format_code, value)
+                          write(key, name, kind, data)
+                          properties[name] = {'type': 'REG_' + label.upper(),
+                              'value': value, 'raw_value': value}
+              with winreg.OpenKey(root, 'blank_default', 0,
+                      winreg.KEY_SET_VALUE) as key:
+                  write(key, '', 1, text(''))
+          before = snapshot(subkey)
+          expected = {}
+          for child in children:
+              values = properties if child == 'typed' else {}
+              if child == 'blank_default':
+                  values = {'': {'type': 'REG_SZ',
+                      'value': '', 'raw_value': ''}}
+              expected[child] = {'exists': True, 'properties': values,
+                  'sub_keys': before[child]['sub_keys']}
+          expected['missing'] = {'exists': False}
+          result = {'path': 'HKCU:\\' + subkey, 'subkey': subkey,
+              'properties': properties, 'expected_keys': expected,
+              'snapshot': before}
+          print(json.dumps(result))
+      except BaseException:
+          cleanup(subkey)
+          raise
+  tasks:
+    - name: Require Python 3.4.4 and record initial task directories
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import glob, json, os, sys, tempfile;
+        assert sys.version_info[:3] == (3, 4, 4);
+        print(json.dumps(sorted(glob.glob(os.path.join(tempfile.gettempdir(),
+        'ansible-tmp-*')))))""
+      register: task_directories_before
+      changed_when: false
+      check_mode: false
+
+    - name: Exercise only the newly owned registry branch
+      block:
+        - name: Create typed registry fixtures and snapshot their raw storage
+          # Raw writes avoid Python 3.4's limited registry type conversion.
+          sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - '{{ fixture_code }}'
+              - create
+          register: fixtures
+          check_mode: false
+
+        - name: Read whole keys normally repeatedly and in check mode
+          # WANT_JSON arguments and exact registry results are asserted below.
+          sustainablelobster.legacy_windows.win_reg_stat:  # noqa: args[module]
+            path: '{{ fixture.path }}\{{ item[0] }}'
+          loop: >-
+            {{ fixture.expected_keys.keys() |
+               product(["normal", "repeat", "check"]) | list }}
+          loop_control:
+            label: '{{ item[0] }} / {{ item[1] }}'
+          check_mode: '{{ item[1] == "check" }}'
+          diff: true
+          register: whole_results
+
+        - name: Verify exact key maps empty keys missing keys and no diff
+          ansible.builtin.assert:
+            that:
+              - item is not changed
+              - item.exists == expected.exists
+              - item.diff is not defined
+              - item.type is not defined
+              - item.value is not defined
+              - item.raw_value is not defined
+              - >-
+                (item.properties == expected.properties and
+                 item.sub_keys == expected.sub_keys) if expected.exists else
+                (item.properties is not defined and
+                 item.sub_keys is not defined)
+          loop: '{{ whole_results.results }}'
+          loop_control:
+            label: '{{ item.item[0] }} / {{ item.item[1] }}'
+          vars:
+            expected: '{{ fixture.expected_keys[item.item[0]] }}'
+
+        - name: Read each named and unnamed typed value
+          # Empty strings select the default rather than the whole key.
+          sustainablelobster.legacy_windows.win_reg_stat:  # noqa: args[module]
+            path: '{{ typed_path }}'
+            name: '{{ item.key }}'
+          loop: '{{ fixture.properties | dict2items }}'
+          loop_control:
+            label: '{{ item.key }}'
+          diff: true
+          register: selected_results
+
+        - name: Verify exact selected value types expanded values and raw values
+          ansible.builtin.assert:
+            that:
+              - item is not changed
+              - item.exists
+              - item.type == item.item.value.type
+              - item.value == item.item.value.value
+              - item.raw_value == item.item.value.raw_value
+              - item.properties is not defined
+              - item.sub_keys is not defined
+              - item.diff is not defined
+          loop: '{{ selected_results.results }}'
+          loop_control:
+            label: '{{ item.item.key }}'
+
+        - name: Read absent values unset defaults and explicitly empty defaults
+          # A missing default differs from an explicitly stored empty string.
+          sustainablelobster.legacy_windows.win_reg_stat:  # noqa: args[module]
+            path: '{{ fixture.path }}\{{ item.child }}'
+            name: '{{ item.name }}'
+          loop:
+            - {child: typed, name: missing, exists: false}
+            - {child: empty, name: '', exists: false}
+            - {child: missing, name: '', exists: false}
+            - {child: blank_default, name: '', exists: true}
+          loop_control:
+            label: '{{ item.child }} / {{ item.name }}'
+          register: empty_results
+
+        - name: Distinguish absent values from a stored empty default
+          ansible.builtin.assert:
+            that:
+              - item is not changed
+              - item.exists == item.item.exists
+              - item.properties is not defined
+              - item.sub_keys is not defined
+              - >-
+                (item.type == 'REG_SZ' and item.value == '' and
+                 item.raw_value == '') if item.item.exists else
+                (item.type is not defined and item.value is not defined and
+                 item.raw_value is not defined)
+          loop: '{{ empty_results.results }}'
+          loop_control:
+            label: '{{ item.item.child }} / {{ item.item.name }}'
+
+        - name: Exercise aliases null precedence and ignored options
+          # Legacy argument handling ignores unknown and property options.
+          sustainablelobster.legacy_windows.win_reg_stat:  # noqa: args[module]
+            path: '{{ item.path | default(omit) }}'
+            key: '{{ item.key | default(omit) }}'
+            name: '{{ item.name | default(omit) }}'
+            entry: '{{ item.entry | default(omit) }}'
+            value: '{{ item.value | default(omit) }}'
+            property: '{{ item.property | default(omit) }}'
+            unknown_option: '{{ item.unknown_option | default(omit) }}'
+          loop: '{{ alias_cases }}'
+          loop_control:
+            label: '{{ item.id }}'
+          diff: true
+          register: alias_results
+
+        - name: Verify aliases retain null and empty string distinctions
+          ansible.builtin.assert:
+            that:
+              - item is not changed
+              - item.exists
+              - item.diff is not defined
+              - >-
+                (item.properties == fixture.properties and
+                 item.sub_keys == fixture.expected_keys.typed.sub_keys and
+                 item.type is not defined and item.value is not defined and
+                 item.raw_value is not defined) if item.item.selected is none
+                else (item.type == expected.type and
+                      item.value == expected.value
+                      and item.raw_value == expected.raw_value and
+                      item.properties is not defined and
+                      item.sub_keys is not defined)
+          loop: '{{ alias_results.results }}'
+          loop_control:
+            label: '{{ item.item.id }}'
+          vars:
+            expected: >-
+              {{ fixture.properties[item.item.selected]
+                 if item.item.selected is not none else {} }}
+
+        - name: Verify invalid and missing paths fail without registry reads
+          block:
+            - name: Submit invalid paths  # noqa: args[module]
+              # Invalid requests must reach the target's own validation.
+              sustainablelobster.legacy_windows.win_reg_stat:
+                path: '{{ item.path | default(omit) }}'
+                key: '{{ item.key | default(omit) }}'
+                name: string
+              loop: '{{ invalid_cases }}'
+              loop_control:
+                label: '{{ item.id }}'
+              register: invalid_results
+
+            - name: Reject unexpected success for invalid paths
+              ansible.builtin.fail:
+                msg: Invalid registry path requests unexpectedly succeeded
+          rescue:
+            - name: Assert all expected validation failures and exact messages
+              ansible.builtin.assert:
+                that:
+                  - invalid_results.results | length == invalid_cases | length
+                  - item is failed
+                  - item is not changed
+                  - item.msg == expected_message
+                  - item.exists is not defined
+                  - item.properties is not defined
+                  - item.sub_keys is not defined
+              loop: '{{ invalid_results.results }}'
+              loop_control:
+                label: '{{ item.item.id }}'
+              vars:
+                expected_message: >-
+                  {{ item.item.expected | default('path: ' +
+                     (item.item.rendered | default('')) +
+                     ' is not a valid registry path, ' +
+                     'see module documentation for examples.') }}
+
+        - name: Read the full typed key again after validation failures
+          # Recovery must return the original values, not merely report success.
+          sustainablelobster.legacy_windows.win_reg_stat:  # noqa: args[module]
+            path: '{{ typed_path }}'
+          register: recovered
+
+        - name: Verify recovery preserves the complete key result
+          ansible.builtin.assert:
+            that:
+              - recovered is not changed
+              - recovered.exists
+              - recovered.properties == fixture.properties
+              - recovered.sub_keys == fixture.expected_keys.typed.sub_keys
+              - recovered.diff is not defined
+
+        - name: Snapshot raw registry storage after successful and failed reads
+          # Native bytes, types, child names, and write times detect mutation.
+          sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - '{{ fixture_code }}'
+              - snapshot
+              - '{{ fixture.subkey }}'
+          register: snapshot_after
+          changed_when: false
+
+        - name: Prove all reads left the owned registry branch unchanged
+          ansible.builtin.assert:
+            that:
+              - (snapshot_after.stdout | from_json) == fixture.snapshot
+      always:
+        - name: Remove only the owned branch and verify its absence
+          ansible.builtin.raw: >-
+            cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+            "import base64;
+            exec(base64.b64decode('{{ cleanup_code | b64encode }}'))"
+            cleanup "{{ fixture.subkey }}""
+          changed_when: true
+          check_mode: false
+          when:
+            - fixtures is defined
+            - fixtures is succeeded
+
+    - name: Record remaining task directories
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import glob, json, os, tempfile;
+        print(json.dumps(sorted(glob.glob(os.path.join(tempfile.gettempdir(),
+        'ansible-tmp-*')))))""
+      register: task_directories_after
+      changed_when: false
+      check_mode: false
+
+    - name: Verify successful and failed reads removed their staged files
+      ansible.builtin.assert:
+        that:
+          - >-
+            (task_directories_before.stdout | from_json) ==
+            (task_directories_after.stdout | from_json)

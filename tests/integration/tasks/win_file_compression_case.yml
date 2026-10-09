@@ -1,0 +1,37 @@
+---
+- name: '{{ compression_case.name }}'
+  # The native WANT_JSON interface is exercised below.
+  sustainablelobster.legacy_windows.win_file_compression:  # noqa: args[module]
+    path: '{{ compression_case.path | default(compression_tree) }}'
+    state: '{{ compression_case.state | default(omit) }}'
+    recurse: '{{ compression_case.recurse | default(omit) }}'
+    force: '{{ compression_case.force | default(omit) }}'
+  check_mode: '{{ compression_case.check | default(false) }}'
+  register: compression_result
+
+- name: Check public compression results
+  ansible.builtin.assert:
+    that:
+      - compression_result.changed == compression_case.changed
+      - compression_result.rc == 0
+      - compression_result.msg == 'The request was successful.'
+      - >-
+        (compression_result.warnings | default([])) ==
+        (['The recurse option has no effect when path is not a folder.']
+        if compression_case.warning | default(false) else [])
+
+- name: Independently check compression attributes and unchanged contents
+  sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+    argv:
+      - '{{ ansible_python_interpreter }}'
+      - '-'
+      - '{{ compression_tree }}'
+      - '{{ compression_case.compressed | to_json }}'
+    stdin: '{{ compression_observer }}'
+  changed_when: false
+  check_mode: false
+
+- name: Retain actual registered results for comparison
+  ansible.builtin.set_fact:
+    compression_results: >-
+      {{ compression_results | default([]) + [compression_result] }}

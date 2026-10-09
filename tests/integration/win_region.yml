@@ -1,0 +1,188 @@
+---
+- name: Verify regional settings and restore the complete original settings
+  hosts: legacy_windows
+  gather_facts: false
+  vars_files:
+    - vars/region.yml
+    - vars/region_fixture.yml
+  tasks:
+    - name: Load the established privilege-helper sources for the fixture
+      ansible.builtin.set_fact:
+        region_helper_sources: >-
+          {{ region_helper_sources | default({}) | combine({item:
+          lookup('ansible.builtin.file', playbook_dir ~
+          '/../../plugins/module_utils/' ~ item ~ '.py')}) }}
+      loop:
+        - legacy_windows_account
+        - legacy_windows_group
+        - legacy_windows_owner
+      no_log: true
+
+    - name: Require Python 3.4.4 and record task staging before execution
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import glob, json, os, sys, tempfile;
+        assert sys.version_info[:3] == (3, 4, 4);
+        print(json.dumps(sorted(glob.glob(os.path.join(tempfile.gettempdir(),
+        'ansible-tmp-*')))))""
+      register: region_staging_before
+      changed_when: false
+
+    - name: Allocate a private controller evidence file
+      ansible.builtin.tempfile:
+        state: file
+        path: '{{ playbook_dir }}/../../tmp'
+        prefix: 'region-{{ inventory_hostname }}-'
+        suffix: .json
+      register: region_capture
+      delegate_to: localhost
+      changed_when: false
+      vars: &region_local
+        ansible_connection: local
+        ansible_shell_type: sh
+        ansible_python_interpreter: '{{ ansible_playbook_python }}'
+
+    - name: Initialize the complete public evidence
+      ansible.builtin.set_fact:
+        region_results: []
+        region_restoration: null
+      no_log: true
+
+    - name: Exercise regional settings with a durable original-state journal
+      block:
+        - name: Allocate the uniquely named recovery workspace
+          sustainablelobster.legacy_windows.win_tempfile:  # noqa: args[module]
+            state: directory
+            prefix: legacy-windows-region-
+          register: region_workspace
+          check_mode: false
+
+        - name: Journal full original regional registry trees
+          sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - '-'
+              - '{{ region_workspace.path }}'
+              - setup
+            stdin: '{{ region_fixture }}'
+          register: region_setup
+          changed_when: false
+          check_mode: false
+          no_log: true
+
+        - name: Retain the initial independent native observation
+          ansible.builtin.set_fact:
+            region_previous: '{{ region_setup.stdout | from_json }}'
+            region_legacy: '{{ (region_setup.stdout | from_json).legacy }}'
+          no_log: true
+
+        - name: Exercise each declared regional request
+          ansible.builtin.include_tasks: tasks/win_region_case.yml
+          loop: '{{ region_cases }}'
+          loop_control:
+            loop_var: region_case
+            label: '{{ region_case.name }}'
+      always:
+        - name: Retain case evidence before attempting recovery
+          ansible.builtin.copy:
+            content: >-
+              {{ {'results': region_results, 'setup': region_setup}
+                 | to_nice_json }}
+            dest: '{{ region_capture.path }}'
+            mode: '0600'
+          delegate_to: localhost
+          changed_when: false
+          no_log: true
+          vars: *region_local
+
+        - name: Restore original settings before discarding recovery files
+          when: region_workspace.path is defined
+          block:
+            - name: Restore original regional settings # noqa: args[module]
+              sustainablelobster.legacy_windows.win_command:
+                argv:
+                  - '{{ ansible_python_interpreter }}'
+                  - '-'
+                  - '{{ region_workspace.path }}'
+                  - cleanup
+                stdin: '{{ region_fixture }}'
+              register: region_recovery_attempt
+              changed_when: true
+              check_mode: false
+              no_log: true
+
+            - name: Republish original locale # noqa: args[module]
+              sustainablelobster.legacy_windows.win_command:
+                argv:
+                  - '{{ ansible_python_interpreter }}'
+                  - '-'
+                  - '{{ region_workspace.path }}'
+                  - restore_locale
+                stdin: '{{ region_fixture }}'
+              changed_when: true
+              check_mode: false
+              no_log: true
+              when: region_legacy is defined and not region_legacy
+
+            - name: Verify native cache recovery # noqa: args[module]
+              sustainablelobster.legacy_windows.win_command:
+                argv:
+                  - '{{ ansible_python_interpreter }}'
+                  - '-'
+                  - '{{ region_workspace.path }}'
+                  - verify
+                stdin: '{{ region_fixture }}'
+              register: region_restoration
+              changed_when: false
+              check_mode: false
+              no_log: true
+              until: region_restoration is succeeded
+              retries: 15
+              delay: 1
+
+            - name: Require exact original-state restoration
+              ansible.builtin.assert:
+                that: (region_restoration.stdout | from_json).restored
+              no_log: true
+
+            - name: Remove only the verified recovery workspace
+              sustainablelobster.legacy_windows.win_file:  # noqa: args[module]
+                path: '{{ region_workspace.path }}'
+                state: absent
+              check_mode: false
+
+        - name: Retain complete public and independent recovery observations
+          ansible.builtin.copy:
+            content: >-
+              {{ {'results': region_results, 'setup': region_setup,
+                  'restoration': region_restoration} | to_nice_json }}
+            dest: '{{ region_capture.path }}'
+            mode: '0600'
+          delegate_to: localhost
+          changed_when: false
+          no_log: true
+          vars: *region_local
+
+        - name: Verify owned workspace absence and record final staging
+          ansible.builtin.raw: >-
+            cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+            "import glob, json, os, sys, tempfile;
+            assert not os.path.exists(sys.argv[1]);
+            print(json.dumps(sorted(glob.glob(os.path.join(tempfile.gettempdir(),
+            'ansible-tmp-*')))))" "{{ region_workspace.path }}""
+          when: region_workspace.path is defined
+          register: region_staging_after
+          changed_when: false
+          check_mode: false
+
+        - name: Require all cases and task staging to finish cleanly
+          ansible.builtin.assert:
+            that:
+              - >-
+                (region_staging_before.stdout | from_json) ==
+                (region_staging_after.stdout | from_json)
+              - region_results | length == region_cases | length
+              - >-
+                region_results | selectattr('validated', 'equalto', true) |
+                list | length == region_results | length
+          when: region_workspace.path is defined

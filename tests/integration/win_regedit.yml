@@ -1,0 +1,674 @@
+---
+# SPDX-License-Identifier: GPL-3.0-or-later
+- name: Verify registry edits on Windows Python 3.4.4
+  hosts: legacy_windows
+  gather_facts: false
+  vars:
+    fixture: '{{ setup.stdout | from_json }}'
+    live_path: '{{ fixture.path }}\live'
+    typed_values:
+      - {name: string, type: string, data: 'Café 雪', raw: 'Café 雪'}
+      - {name: expand, type: expandstring, data: '%TEMP%', raw: '%TEMP%'}
+      - {name: empty_multi, type: multistring, data: null, raw: []}
+      - name: multi
+        type: multistring
+        data: [One, '', two]
+        raw: [One, '', two]
+      - {name: binary, type: binary, data: 'hex:be,ef', raw: ['0xbe', '0xef']}
+      - {name: none, type: none, data: [0, 255], raw: ['0x00', '0xff']}
+      - {name: dword, type: dword, data: '0xffffffff', raw: 4294967295}
+      - name: qword
+        type: qword
+        data: '0xffffffffffffffff'
+        raw: 18446744073709551615
+    fixture_code: |
+      import ctypes, json, os, re, shutil, sys, tempfile, uuid, winreg
+      assert sys.version_info[:3] == (3, 4, 4)
+      library = ctypes.WinDLL('advapi32', use_last_error=True)
+      kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+      library.OpenProcessToken.argtypes = [ctypes.c_void_p, ctypes.c_uint32,
+          ctypes.POINTER(ctypes.c_void_p)]
+      library.OpenProcessToken.restype = ctypes.c_int
+      library.LookupPrivilegeValueW.argtypes = [ctypes.c_wchar_p,
+          ctypes.c_wchar_p, ctypes.c_void_p]
+      library.LookupPrivilegeValueW.restype = ctypes.c_int
+      library.AdjustTokenPrivileges.argtypes = [ctypes.c_void_p,
+          ctypes.c_int, ctypes.c_void_p, ctypes.c_uint32,
+          ctypes.c_void_p, ctypes.c_void_p]
+      library.AdjustTokenPrivileges.restype = ctypes.c_int
+      library.RegUnLoadKeyW.argtypes = [ctypes.c_void_p, ctypes.c_wchar_p]
+      library.RegUnLoadKeyW.restype = ctypes.c_long
+      library.RegQueryValueExW.argtypes = [ctypes.c_void_p,
+          ctypes.c_wchar_p, ctypes.c_void_p,
+          ctypes.POINTER(ctypes.c_uint32), ctypes.c_void_p,
+          ctypes.POINTER(ctypes.c_uint32)]
+      library.RegQueryValueExW.restype = ctypes.c_long
+      library.RegSetValueExW.argtypes = [ctypes.c_void_p, ctypes.c_wchar_p,
+          ctypes.c_uint32, ctypes.c_uint32, ctypes.c_void_p, ctypes.c_uint32]
+      library.RegSetValueExW.restype = ctypes.c_long
+      convert_descriptor = (
+          library.ConvertStringSecurityDescriptorToSecurityDescriptorW)
+      convert_descriptor.argtypes = [
+          ctypes.c_wchar_p, ctypes.c_uint32,
+          ctypes.POINTER(ctypes.c_void_p), ctypes.c_void_p]
+      convert_descriptor.restype = ctypes.c_int
+      library.RegSetKeySecurity.argtypes = [ctypes.c_void_p,
+          ctypes.c_uint32, ctypes.c_void_p]
+      library.RegSetKeySecurity.restype = ctypes.c_long
+      kernel.LocalFree.argtypes = [ctypes.c_void_p]
+      kernel.LocalFree.restype = ctypes.c_void_p
+      kernel.GetCurrentProcess.argtypes = []
+      kernel.GetCurrentProcess.restype = ctypes.c_void_p
+      kernel.CloseHandle.argtypes = [ctypes.c_void_p]
+      kernel.CloseHandle.restype = ctypes.c_int
+
+      class Privilege(ctypes.Structure):
+          _fields_ = [('count', ctypes.c_uint32), ('low', ctypes.c_uint32),
+              ('high', ctypes.c_int32), ('attributes', ctypes.c_uint32)]
+
+      def enable():
+          token = ctypes.c_void_p()
+          if not library.OpenProcessToken(kernel.GetCurrentProcess(),
+                  0x28, ctypes.byref(token)):
+              raise ctypes.WinError(ctypes.get_last_error())
+          try:
+              for name in ('SeBackupPrivilege', 'SeRestorePrivilege'):
+                  privilege = Privilege(1, 0, 0, 2)
+                  if not library.LookupPrivilegeValueW(None, name,
+                          ctypes.byref(privilege, Privilege.low.offset)):
+                      raise ctypes.WinError(ctypes.get_last_error())
+                  ctypes.set_last_error(0)
+                  success = library.AdjustTokenPrivileges(token,
+                      False, ctypes.byref(privilege), 0, None, None)
+                  error = ctypes.get_last_error()
+                  if not success or error:
+                      raise ctypes.WinError(error)
+          finally:
+              assert kernel.CloseHandle(token)
+
+      def assert_absent(hive, path):
+          try:
+              with winreg.OpenKey(hive, path):
+                  raise AssertionError('Registry key exists: ' + path)
+          except FileNotFoundError:
+              pass
+
+      def unload():
+          error = library.RegUnLoadKeyW(
+              int(winreg.HKEY_LOCAL_MACHINE), 'ANSIBLE')
+          if error:
+              raise ctypes.WinError(error)
+
+      def remove(path):
+          try:
+              with winreg.OpenKey(winreg.HKEY_CURRENT_USER, path,
+                      0, winreg.KEY_READ | winreg.KEY_WRITE) as key:
+                  while winreg.QueryInfoKey(key)[0]:
+                      remove(path + '\\' + winreg.EnumKey(key, 0))
+              winreg.DeleteKey(winreg.HKEY_CURRENT_USER, path)
+          except FileNotFoundError:
+              pass
+
+      def snapshot(hive, path):
+          with winreg.OpenKey(hive, path) as key:
+              children, count, modified = winreg.QueryInfoKey(key)
+              result = {'modified': modified, 'values': {}, 'children': {}}
+              for index in range(count):
+                  name = winreg.EnumValue(key, index)[0]
+                  kind, size = ctypes.c_uint32(), ctypes.c_uint32()
+                  error = library.RegQueryValueExW(int(key), name, None,
+                      ctypes.byref(kind), None, ctypes.byref(size))
+                  if error:
+                      raise ctypes.WinError(error)
+                  data = ctypes.create_string_buffer(max(size.value, 1))
+                  error = library.RegQueryValueExW(int(key), name, None,
+                      ctypes.byref(kind), data, ctypes.byref(size))
+                  if error:
+                      raise ctypes.WinError(error)
+                  result['values'][name] = [kind.value,
+                      list(bytearray(data.raw[:size.value]))]
+              for index in range(children):
+                  name = winreg.EnumKey(key, index)
+                  result['children'][name] = snapshot(hive, path + '\\' + name)
+              return result
+
+      enable()
+      mode = sys.argv[1]
+      if mode == 'create':
+          assert_absent(winreg.HKEY_LOCAL_MACHINE, 'ANSIBLE')
+          identity = uuid.uuid4().hex
+          subkey = 'Software\\LW_REGEDIT_' + identity
+          assert_absent(winreg.HKEY_CURRENT_USER, subkey)
+          workspace = tempfile.mkdtemp(prefix='legacy-windows-regedit-')
+          hivefile = os.path.join(workspace, 'owned.hive')
+          try:
+              with winreg.CreateKey(winreg.HKEY_CURRENT_USER, subkey) as key:
+                  winreg.SetValueEx(key, '__owner__', 0,
+                      winreg.REG_SZ, identity)
+                  data = ctypes.create_string_buffer(b'\0\0\0\1')
+                  for name in ('endian_present', 'endian_absent'):
+                      error = library.RegSetValueExW(
+                          int(key), name, 0, 5, data, 4)
+                      if error:
+                          raise ctypes.WinError(error)
+                  winreg.SaveKey(key, hivefile)
+              state = {'path': 'HKCU:\\' + subkey, 'subkey': subkey,
+                  'workspace': workspace, 'hive': hivefile, 'owner': identity}
+              with open(os.path.join(workspace, 'state.json'), 'w') as output:
+                  json.dump(state, output)
+          except Exception:
+              remove(subkey)
+              for name in os.listdir(workspace):
+                  os.remove(os.path.join(workspace, name))
+              os.rmdir(workspace)
+              raise
+          print(json.dumps(state))
+          sys.exit(0)
+
+      workspace = os.path.abspath(sys.argv[2])
+      assert os.path.dirname(workspace).lower() == tempfile.gettempdir().lower()
+      assert os.path.basename(workspace).startswith('legacy-windows-regedit-')
+      with open(os.path.join(workspace, 'state.json')) as source:
+          state = json.load(source)
+      subkey = state['subkey']
+      assert re.match(r'^Software\\LW_REGEDIT_[a-f0-9]{32}$', subkey)
+      assert state['workspace'] == workspace
+      assert state['hive'] == os.path.join(workspace, 'owned.hive')
+      with winreg.OpenKey(winreg.HKEY_CURRENT_USER, subkey) as key:
+          assert winreg.QueryValueEx(key, '__owner__')[0] == state['owner']
+      if mode == 'mount':
+          assert_absent(winreg.HKEY_LOCAL_MACHINE, 'ANSIBLE')
+          winreg.LoadKey(winreg.HKEY_LOCAL_MACHINE, 'ANSIBLE', state['hive'])
+          print(json.dumps({'mounted': True}))
+      elif mode == 'mount_readonly':
+          assert_absent(winreg.HKEY_LOCAL_MACHINE, 'ANSIBLE')
+          copyfile = state['hive'] + '.readonly'
+          assert not os.path.exists(copyfile)
+          shutil.copyfile(state['hive'], copyfile)
+          winreg.LoadKey(winreg.HKEY_LOCAL_MACHINE, 'ANSIBLE', copyfile)
+          # WRITE_DAC applies only to this disposable hive copy.
+          with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, 'ANSIBLE',
+                  0, winreg.KEY_READ | 0x40000) as key:
+              assert winreg.QueryValueEx(key, '__owner__')[0] == state['owner']
+              descriptor = ctypes.c_void_p()
+              if not convert_descriptor(
+                      'D:P(A;;KR;;;WD)', 1, ctypes.byref(descriptor), None):
+                  raise ctypes.WinError(ctypes.get_last_error())
+              try:
+                  error = library.RegSetKeySecurity(int(key), 4, descriptor)
+                  if error:
+                      raise ctypes.WinError(error)
+              finally:
+                  kernel.LocalFree(descriptor)
+          try:
+              with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, 'ANSIBLE',
+                      0, winreg.KEY_READ | winreg.KEY_WRITE):
+                  raise AssertionError('Owned hive copy still permits writes')
+          except OSError as error:
+              assert error.winerror == 5
+          with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, 'ANSIBLE') as key:
+              assert winreg.QueryValueEx(key, '__owner__')[0] == state['owner']
+          print(json.dumps({'hive': copyfile, 'mounted': True,
+              'write_denied': True}))
+      elif mode == 'cleanup':
+          try:
+              with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, 'ANSIBLE') as key:
+                  actual = winreg.QueryValueEx(key, '__owner__')[0]
+                  assert actual == state['owner']
+          except FileNotFoundError:
+              pass
+          else:
+              unload()
+          remove(subkey)
+          for name in os.listdir(workspace):
+              assert (name == 'state.json'
+                  or name.lower().startswith('owned.hive'))
+              os.remove(os.path.join(workspace, name))
+          os.rmdir(workspace)
+          assert_absent(winreg.HKEY_CURRENT_USER, subkey)
+          assert_absent(winreg.HKEY_LOCAL_MACHINE, 'ANSIBLE')
+          assert not os.path.exists(workspace)
+          print(json.dumps({'removed': True}))
+      else:
+          assert mode == 'snapshot'
+          assert_absent(winreg.HKEY_LOCAL_MACHINE, 'ANSIBLE')
+          result = {'live': snapshot(winreg.HKEY_CURRENT_USER, subkey)}
+          winreg.LoadKey(winreg.HKEY_LOCAL_MACHINE, 'ANSIBLE', state['hive'])
+          try:
+              with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, 'ANSIBLE') as key:
+                  actual = winreg.QueryValueEx(key, '__owner__')[0]
+                  assert actual == state['owner']
+              result['offline'] = snapshot(
+                  winreg.HKEY_LOCAL_MACHINE, 'ANSIBLE')
+          finally:
+              unload()
+          assert_absent(winreg.HKEY_LOCAL_MACHINE, 'ANSIBLE')
+          print(json.dumps(result))
+  tasks:
+    - name: Require Python 3.4.4 and record initial task directories
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import glob, json, os, sys, tempfile;
+        assert sys.version_info[:3] == (3, 4, 4);
+        print(json.dumps(sorted(glob.glob(os.path.join(tempfile.gettempdir(),
+        'ansible-tmp-*')))))""
+      register: task_directories_before
+      changed_when: false
+      check_mode: false
+
+    - name: Allocate an owned registry branch and offline hive
+      sustainablelobster.legacy_windows.win_command:
+        argv:
+          - '{{ ansible_python_interpreter }}'
+          - -c
+          - '{{ fixture_code }}'
+          - create
+      register: setup
+
+    - name: Exercise registry changes and recovery
+      block:
+        - name: Preview a value in a missing key
+          sustainablelobster.legacy_windows.win_regedit:
+            path: '{{ live_path }}'
+            name: preview
+            data: value
+          check_mode: true
+          diff: true
+          register: missing_preview
+
+        - name: Verify the predicted key was not created
+          sustainablelobster.legacy_windows.win_reg_stat:
+            path: '{{ live_path }}'
+          register: missing_actual
+
+        - name: Verify missing-key prediction contains no value data
+          ansible.builtin.assert:
+            that:
+              - missing_preview is changed
+              - not missing_preview.data_changed
+              - not missing_preview.data_type_changed
+              - missing_preview.diff.before == {}
+              - 'missing_preview.diff.after == {live_path: {}}'
+              - not missing_actual.exists
+
+        - name: Create every supported registry kind
+          sustainablelobster.legacy_windows.win_regedit:
+            path: '{{ live_path }}'
+            name: '{{ item.name }}'
+            type: '{{ item.type }}'
+            data: '{{ item.data }}'
+          loop: '{{ typed_values }}'
+          loop_control: {label: '{{ item.name }}'}
+          diff: true
+          register: created
+
+        - name: Repeat every registry value
+          sustainablelobster.legacy_windows.win_regedit:
+            path: '{{ live_path }}'
+            name: '{{ item.name }}'
+            type: '{{ item.type }}'
+            data: '{{ item.data }}'
+          loop: '{{ typed_values }}'
+          loop_control: {label: '{{ item.name }}'}
+          diff: true
+          register: repeated
+
+        - name: Read stored values independently
+          sustainablelobster.legacy_windows.win_reg_stat:
+            path: '{{ live_path }}'
+            name: '{{ item.name }}'
+          loop: '{{ typed_values }}'
+          loop_control: {label: '{{ item.name }}'}
+          register: inspected
+
+        - name: Verify typed storage and repeat behavior
+          ansible.builtin.assert:
+            that:
+              - created.results[item].changed
+              - not created.results[item].data_changed
+              - not created.results[item].data_type_changed
+              - not repeated.results[item].changed
+              - not repeated.results[item].data_changed
+              - not repeated.results[item].data_type_changed
+              - >-
+                repeated.results[item].diff.before ==
+                repeated.results[item].diff.after
+              - inspected.results[item].raw_value == typed_values[item].raw
+          loop: '{{ range(typed_values | length) | list }}'
+
+        - name: Record live and offline state before previews
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - '{{ fixture_code }}'
+              - snapshot
+              - '{{ fixture.workspace }}'
+          register: before_preview
+
+        - name: Preview replacement values of every kind
+          sustainablelobster.legacy_windows.win_regedit:
+            path: '{{ live_path }}'
+            name: '{{ item.name }}'
+            type: string
+            data: replacement
+          check_mode: true
+          loop: '{{ typed_values }}'
+          loop_control: {label: '{{ item.name }}'}
+          register: replacement_previews
+
+        - name: Preview recursive deletion
+          sustainablelobster.legacy_windows.win_regedit:
+            path: '{{ live_path }}'
+            state: absent
+          check_mode: true
+          register: deletion_preview
+
+        - name: Preview replacement and removal of legacy stored types
+          sustainablelobster.legacy_windows.win_regedit:
+            path: '{{ fixture.path }}'
+            name: 'endian_{{ item }}'
+            state: '{{ item }}'
+            type: dword
+            data: 42
+          loop: [present, absent]
+          check_mode: true
+          diff: true
+          register: endian_previews
+
+        - name: Preview a new offline key and value
+          sustainablelobster.legacy_windows.win_regedit:
+            hive: '{{ fixture.hive }}'
+            path: HKLM:\ANSIBLE\Settings
+            name: Preview
+            data: value
+          check_mode: true
+          register: offline_preview
+
+        - name: Snapshot both hives after previews and verify unmounting
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - '{{ fixture_code }}'
+              - snapshot
+              - '{{ fixture.workspace }}'
+          register: after_preview
+
+        - name: Verify previews made no registry changes
+          ansible.builtin.assert:
+            that:
+              - >-
+                (before_preview.stdout | from_json) ==
+                (after_preview.stdout | from_json)
+              - deletion_preview is changed
+              - offline_preview is changed
+              - >-
+                endian_previews.results | selectattr('changed') |
+                list | length == 2
+              - >-
+                replacement_previews.results | selectattr('changed') |
+                list | length == typed_values | length
+
+        - name: Replace and remove legacy stored types
+          sustainablelobster.legacy_windows.win_regedit:
+            path: '{{ fixture.path }}'
+            name: 'endian_{{ item }}'
+            state: '{{ item }}'
+            type: dword
+            data: 42
+          loop: [present, absent]
+          diff: true
+          register: endian_edits
+
+        - name: Verify legacy values remain representable in diffs
+          ansible.builtin.assert:
+            that:
+              - endian_edits.results[item].changed
+              - >-
+                endian_edits.results[item].diff ==
+                endian_previews.results[item].diff
+              - >-
+                endian_edits.results[item].diff.before[fixture.path]
+                ['endian_' + ['present', 'absent'][item]] ==
+                {'type': 'Unknown', 'value': [0, 0, 0, 1]}
+              - endian_edits.results[item].data_changed == (item == 0)
+              - endian_edits.results[item].data_type_changed == (item == 0)
+          loop: [0, 1]
+
+        - name: Change a value and its type
+          sustainablelobster.legacy_windows.win_regedit:
+            path: '{{ live_path }}'
+            name: string
+            type: expandstring
+            data: '%SystemRoot%'
+          register: replacement
+
+        - name: Set a non-string default through an explicitly empty name
+          # Empty selects the default, not an omitted argument.
+          sustainablelobster.legacy_windows.win_regedit:  # noqa: args[module]
+            path: '{{ live_path }}'
+            name: ''
+            type: dword
+            data: 42
+          register: default_created
+
+        - name: Remove only the default value
+          sustainablelobster.legacy_windows.win_regedit:
+            path: '{{ live_path }}'
+            state: absent
+            delete_key: false
+          register: default_removed
+
+        - name: Verify replacement flags and default removal
+          ansible.builtin.assert:
+            that:
+              - replacement is changed
+              - replacement.data_changed
+              - replacement.data_type_changed
+              - default_created is changed
+              - not default_created.data_changed
+              - default_removed is changed
+              - not default_removed.data_changed
+
+        - name: Exercise a partial failure after creating a key
+          block:
+            - name: Request invalid binary storage
+              sustainablelobster.legacy_windows.win_regedit:
+                path: '{{ live_path }}\partial\nested'
+                name: invalid
+                type: binary
+                data: true
+              register: partial
+            - name: Reject unexpected successful storage
+              ansible.builtin.fail:
+                msg: Invalid binary storage unexpectedly succeeded
+          rescue:
+            - name: Verify failure retains the created-key change
+              ansible.builtin.assert:
+                that:
+                  - partial is failed
+                  - partial is changed
+                  - not partial.data_changed
+                  - not partial.data_type_changed
+                  - partial.msg is search('failed to create registry property')
+
+        - name: Recover the partially created key
+          sustainablelobster.legacy_windows.win_regedit:
+            path: '{{ live_path }}\partial\nested'
+            name: invalid
+            type: binary
+            data: [1, 2, 3]
+          register: recovered
+
+        - name: Verify a missing offline hive fails before registry edits
+          block:
+            - name: Request an absent owned hive file
+              sustainablelobster.legacy_windows.win_regedit:
+                hive: '{{ fixture.hive }}.missing'
+                path: HKLM:\ANSIBLE\Settings
+                name: Enabled
+                data: value
+              register: invalid_hive
+            - name: Reject unexpected successful hive loading
+              ansible.builtin.fail:
+                msg: A nonexistent hive unexpectedly loaded
+          rescue:
+            - name: Verify the missing hive failure
+              ansible.builtin.assert:
+                that:
+                  - invalid_hive is failed
+                  - invalid_hive is not changed
+                  - not invalid_hive.data_changed
+                  - not invalid_hive.data_type_changed
+                  - invalid_hive.msg is search('cannot load hive')
+
+        - name: Leave only this test's hive mounted for replacement
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - '{{ fixture_code }}'
+              - mount
+              - '{{ fixture.workspace }}'
+          register: preloaded
+
+        - name: Set an offline value then repeat it
+          sustainablelobster.legacy_windows.win_regedit:
+            hive: '{{ fixture.hive }}'
+            path: HKLM:\ANSIBLE\Settings
+            name: Enabled
+            type: dword
+            data: 1
+          loop: [create, repeat]
+          register: offline_written
+
+        - name: Verify persisted offline data and closed mount handles
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - '{{ fixture_code }}'
+              - snapshot
+              - '{{ fixture.workspace }}'
+          register: offline_actual
+
+        - name: Verify recovery and offline idempotence
+          ansible.builtin.assert:
+            that:
+              - recovered is changed
+              - (preloaded.stdout | from_json).mounted
+              - offline_written.results[0].changed
+              - >-
+                'hive already loaded at HKLM:\ANSIBLE, had to unload hive
+                for win_regedit to continue'
+                in offline_written.results[0].warnings
+              - not offline_written.results[1].changed
+              - offline_written.results[1].warnings | default([]) == []
+              - >-
+                (offline_actual.stdout | from_json).offline.children.Settings
+                ['values'].Enabled == [4, [1, 0, 0, 0]]
+
+        - name: Mount a disposable read-only copy of the owned hive
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - '{{ fixture_code }}'
+              - mount_readonly
+              - '{{ fixture.workspace }}'
+          register: readonly_mount
+
+        - name: Replace the read-only mount while leaving the live key unchanged
+          sustainablelobster.legacy_windows.win_regedit:
+            hive: '{{ (readonly_mount.stdout | from_json).hive }}'
+            path: '{{ live_path }}'
+          register: readonly_replaced
+
+        - name: Verify read-only mount replacement and unchanged original hive
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - '{{ fixture_code }}'
+              - snapshot
+              - '{{ fixture.workspace }}'
+          register: after_readonly
+
+        - name: Verify read-only mount detection needs no write access
+          ansible.builtin.assert:
+            that:
+              - (readonly_mount.stdout | from_json).write_denied
+              - readonly_replaced is not changed
+              - >-
+                'hive already loaded at HKLM:\ANSIBLE, had to unload hive
+                for win_regedit to continue' in readonly_replaced.warnings
+              - >-
+                (offline_actual.stdout | from_json) ==
+                (after_readonly.stdout | from_json)
+
+        - name: Remove live descendants and repeat deletion
+          sustainablelobster.legacy_windows.win_regedit:
+            path: '{{ live_path }}'
+            state: absent
+          loop: [remove, repeat]
+          register: live_removed
+
+        - name: Remove the offline key and repeat deletion
+          sustainablelobster.legacy_windows.win_regedit:
+            hive: '{{ fixture.hive }}'
+            path: HKLM:\ANSIBLE\Settings
+            state: absent
+          loop: [remove, repeat]
+          register: offline_removed
+
+        - name: Inspect final state
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - '{{ fixture_code }}'
+              - snapshot
+              - '{{ fixture.workspace }}'
+          register: final_state
+
+        - name: Verify recursive removal and repeat behavior
+          ansible.builtin.assert:
+            that:
+              - live_removed.results[0].changed
+              - not live_removed.results[1].changed
+              - offline_removed.results[0].changed
+              - not offline_removed.results[1].changed
+              - (final_state.stdout | from_json).live.children == {}
+              - (final_state.stdout | from_json).offline.children == {}
+      always:
+        - name: Remove only the owned branch hive files and workspace
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - '{{ fixture_code }}'
+              - cleanup
+              - '{{ fixture.workspace }}'
+          register: cleanup
+
+        - name: Verify owned resources were removed
+          ansible.builtin.assert:
+            that: (cleanup.stdout | from_json).removed
+
+    - name: Record remaining task directories
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import glob, json, os, tempfile;
+        print(json.dumps(sorted(glob.glob(os.path.join(tempfile.gettempdir(),
+        'ansible-tmp-*')))))""
+      register: task_directories_after
+      changed_when: false
+      check_mode: false
+
+    - name: Verify successful and failed edits removed their staged files
+      ansible.builtin.assert:
+        that:
+          - >-
+            (task_directories_before.stdout | from_json) ==
+            (task_directories_after.stdout | from_json)

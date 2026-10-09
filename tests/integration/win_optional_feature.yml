@@ -1,0 +1,259 @@
+---
+- name: Verify optional features and exact original servicing-state recovery
+  hosts: legacy_windows
+  gather_facts: false
+  vars_files:
+    - vars/optional_feature.yml
+    - vars/optional_feature_fixture.yml
+    - vars/optional_feature_legacy.yml
+  vars:
+    optional_feature_names: '{{ optional_feature_setup.stdout | from_json }}'
+    optional_feature_capture:
+      observation_scope: >-
+        Full catalogue at setup, around each actual servicing request,
+        contiguous read-only batch boundaries, and final recovery.
+        Per-case read-only observations cover all selected names and both
+        owned features, service configuration/protected runtime, reboot flags,
+        client files, and the separately journaled extra native feature.
+      results: '{{ optional_feature_results }}'
+      final_catalogue_anchor: '{{ optional_feature_anchor | default(none) }}'
+      workspace: '{{ optional_feature_workspace.path | default(none) }}'
+      setup: '{{ optional_feature_setup.stdout | default("") }}'
+      cleanup: '{{ optional_feature_cleanup.stdout | default("") }}'
+      initial_cleanup: >-
+        {{ optional_feature_initial_cleanup.stdout | default("") }}
+      rebooted: >-
+        {{ optional_feature_reboot is defined and not
+        (optional_feature_reboot.skipped | default(false)) }}
+      cleanup_command: '{{ optional_feature_cleanup | default({}) }}'
+      staging_before: >-
+        {{ optional_feature_staging_before.stdout | default("") }}
+      staging_after: '{{ optional_feature_staging_after.stdout | default("") }}'
+  tasks:
+    - name: Prepare private local evidence directory before guest changes
+      ansible.builtin.file:
+        path: '{{ playbook_dir }}/../../tmp/codex/evidence'
+        state: directory
+        mode: '0700'
+      delegate_to: localhost
+      vars:
+        ansible_connection: local
+        ansible_shell_type: sh
+        ansible_python_interpreter: '{{ ansible_playbook_python }}'
+
+    - name: Allocate unique private controller evidence
+      ansible.builtin.tempfile:
+        state: file
+        prefix: optional-feature-{{ inventory_hostname }}-
+        suffix: .json
+        path: '{{ playbook_dir }}/../../tmp/codex/evidence'
+      register: optional_feature_capture_file
+      delegate_to: localhost
+      vars: &local
+        ansible_connection: local
+        ansible_shell_type: sh
+        ansible_python_interpreter: '{{ ansible_playbook_python }}'
+      changed_when: false
+      check_mode: false
+
+    - name: Record private evidence location
+      ansible.builtin.debug:
+        msg: >-
+          Optional feature evidence: {{ optional_feature_capture_file.path }}
+
+    - name: Initialize optional-feature evidence
+      ansible.builtin.set_fact:
+        optional_feature_results: []
+
+    - name: Require Python 3.4.4 and record existing staging directories
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import glob,json,os,sys,tempfile;
+        assert sys.version_info[:3] == (3,4,4);
+        print(json.dumps(sorted(glob.glob(os.path.join(tempfile.gettempdir(),
+        'ansible-tmp-*')) + glob.glob(os.path.join(tempfile.gettempdir(),
+        'legacy-windows-optional-feature-*')))))""
+      register: optional_feature_staging_before
+      changed_when: false
+
+    - name: Exercise only journaled staged optional features
+      block:
+        - name: Allocate a journal-owned recovery workspace
+          sustainablelobster.legacy_windows.win_tempfile: # noqa: args[module]
+            state: directory
+            prefix: legacy-windows-optional-feature-demo-
+          register: optional_feature_workspace
+          check_mode: false
+
+        - name: Flush complete feature servicing service and file state
+          sustainablelobster.legacy_windows.win_command: # noqa: args[module]
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - '-'
+              - '{{ optional_feature_workspace.path }}'
+              - setup
+            stdin: '{{ optional_feature_program }}'
+          register: optional_feature_setup
+          changed_when: true
+          check_mode: false
+
+        - name: Require a complete journal before feature changes
+          ansible.builtin.assert:
+            that: [(optional_feature_setup.stdout | from_json).journaled]
+
+        - name: Retain setup catalogue after read-only servicing discovery
+          ansible.builtin.set_fact:
+            optional_feature_anchor: >-
+              {{ (optional_feature_setup.stdout | from_json).anchor }}
+
+        - name: Exercise public cases and independent observations
+          ansible.builtin.include_tasks: tasks/win_optional_feature_case.yml
+          loop: >-
+            {{ (optional_feature_legacy_cases if
+            optional_feature_use_legacy_cases | default(false)
+            else optional_feature_cases) if
+            (optional_feature_setup.stdout | from_json).supported
+            else optional_feature_unsupported_cases }}
+          loop_control:
+            loop_var: optional_feature_case
+            label: '{{ optional_feature_case.name }}'
+      always:
+        - name: Recover original servicing state and verify workspace absence
+          block:
+            - name: Restore all journaled feature state # noqa: args[module]
+              sustainablelobster.legacy_windows.win_command:
+                argv:
+                  - '{{ ansible_python_interpreter }}'
+                  - '-'
+                  - '{{ optional_feature_workspace.path }}'
+                  - cleanup
+                stdin: '{{ optional_feature_program }}'
+              when: optional_feature_workspace.path is defined
+              register: optional_feature_cleanup
+              changed_when: true
+              check_mode: false
+
+            - name: Retain the first pre-recovery boundary through any reboot
+              ansible.builtin.set_fact:
+                optional_feature_initial_cleanup: >-
+                  {{ optional_feature_cleanup }}
+              when: optional_feature_workspace.path is defined
+
+            - name: Complete pending fixture recovery on the leased host
+              when:
+                - optional_feature_workspace.path is defined
+                - >-
+                  (optional_feature_cleanup.stdout | from_json).requires_reboot
+                  | default(false)
+              block:
+                - name: Reboot only for recovery # noqa: args[module]
+                  sustainablelobster.legacy_windows.win_command:
+                    argv: [shutdown.exe, /r, /f, /t, '5']
+                  register: optional_feature_reboot
+                  check_mode: false
+
+                - name: Observe the SSH listener stop
+                  ansible.builtin.wait_for:
+                    host: '{{ ansible_host }}'
+                    port: '{{ ansible_port | default(22) }}'
+                    state: stopped
+                    timeout: 120
+                  delegate_to: localhost
+                  vars: *local
+
+                - name: Wait for the SSH listener to return
+                  ansible.builtin.wait_for:
+                    host: '{{ ansible_host }}'
+                    port: '{{ ansible_port | default(22) }}'
+                    state: started
+                    delay: 10
+                    timeout: 300
+                  delegate_to: localhost
+                  vars: *local
+
+                - name: Retry recovery after boot # noqa: args[module]
+                  sustainablelobster.legacy_windows.win_command:
+                    argv:
+                      - '{{ ansible_python_interpreter }}'
+                      - '-'
+                      - '{{ optional_feature_workspace.path }}'
+                      - cleanup
+                    stdin: '{{ optional_feature_program }}'
+                  register: optional_feature_cleanup_after_reboot
+                  changed_when: true
+                  check_mode: false
+
+                - name: Retain post-reboot recovery observations
+                  ansible.builtin.set_fact:
+                    optional_feature_cleanup: >-
+                      {{ optional_feature_cleanup_after_reboot }}
+
+            - name: Save restoration evidence before asserting
+              ansible.builtin.copy:
+                content: '{{ optional_feature_capture | to_nice_json }}'
+                dest: '{{ optional_feature_capture_file.path }}'
+                mode: '0600'
+              delegate_to: localhost
+              vars: *local
+              changed_when: false
+
+            - name: Require exact equality before deleting recovery data
+              ansible.builtin.assert:
+                that:
+                  - (optional_feature_cleanup.stdout | from_json).restored
+                  - >-
+                    optional_feature_setup.rc | default(1) != 0 or
+                    (optional_feature_cleanup.stdout | from_json).after ==
+                    (optional_feature_setup.stdout | from_json).snapshot
+              when: optional_feature_workspace.path is defined
+
+            - name: Verify the final read-only batch catalogue boundary
+              ansible.builtin.assert:
+                that:
+                  - >-
+                    (optional_feature_initial_cleanup.stdout | from_json).
+                    before_recovery == optional_feature_anchor
+              when:
+                - optional_feature_setup.rc | default(1) == 0
+                - (optional_feature_setup.stdout | from_json).supported
+                - >-
+                  optional_feature_results | rejectattr('validated') |
+                  list | length == 0
+
+            - name: Remove only the verified owned recovery workspace
+              sustainablelobster.legacy_windows.win_file: # noqa: args[module]
+                path: '{{ optional_feature_workspace.path }}'
+                state: absent
+              when: optional_feature_workspace.path is defined
+              check_mode: false
+
+            - name: Independently verify workspace and staging cleanup
+              ansible.builtin.raw: >-
+                cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+                "import glob,json,os,sys,tempfile;
+                assert not os.path.exists(sys.argv[1]);
+                print(json.dumps(sorted(glob.glob(os.path.join(
+                tempfile.gettempdir(),'ansible-tmp-*')) + glob.glob(
+                os.path.join(tempfile.gettempdir(),
+                'legacy-windows-optional-feature-*')))))"
+                "{{ optional_feature_workspace.path }}""
+              when: optional_feature_workspace.path is defined
+              register: optional_feature_staging_after
+              changed_when: false
+              check_mode: false
+
+            - name: Require unchanged staging
+              ansible.builtin.assert:
+                that:
+                  - optional_feature_staging_before.stdout | from_json ==
+                    optional_feature_staging_after.stdout | from_json
+              when: optional_feature_workspace.path is defined
+          always:
+            - name: Save final public and recovery evidence
+              ansible.builtin.copy:
+                content: '{{ optional_feature_capture | to_nice_json }}'
+                dest: '{{ optional_feature_capture_file.path }}'
+                mode: '0600'
+              delegate_to: localhost
+              vars: *local
+              changed_when: false

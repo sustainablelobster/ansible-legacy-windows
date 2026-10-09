@@ -1,0 +1,326 @@
+---
+owner_fixture: |
+  # Copyright 2026 Joe Lustri
+  # SPDX-License-Identifier: GPL-3.0-or-later
+  """Create and independently inspect ownership fixtures on Python 3.4.4."""
+
+  import ctypes
+  import json
+  import os
+  import sys
+
+  assert sys.version_info[:3] == (3, 4, 4)
+  WORKSPACE, OPERATION = sys.argv[1:3]
+  TREE = "tree \u00c9 ' % ! & [literal]"
+  FILE = "sample \u96ea '.txt"
+  ORDINARY = [".", "nested", "nested\\deep", FILE, "nested\\deep\\data.bin"]
+  SECURE = ["secure", "secure\\folder 1", "secure\\folder 1\\folder 2"]
+  FRESH = ["fresh", "fresh\\nested", "fresh\\nested\\deep"]
+  ENTRIES = [os.path.join(TREE, name) for name in ORDINARY] + SECURE
+  CONTENT = b"Owner fixture\x00\xff\r\n" * 17
+  SECURITY = ctypes.WinDLL("advapi32", use_last_error=True)
+  KERNEL = ctypes.WinDLL("kernel32", use_last_error=True)
+  POINTER = ctypes.c_void_p
+  DWORD = ctypes.c_uint32
+
+
+  def bind(library, name, result, arguments):
+      function = getattr(library, name)
+      function.restype, function.argtypes = result, arguments
+      return function
+
+
+  open_token = bind(
+      SECURITY,
+      "OpenProcessToken",
+      ctypes.c_int,
+      [POINTER, DWORD, ctypes.POINTER(POINTER)],
+  )
+  lookup_privilege = bind(
+      SECURITY,
+      "LookupPrivilegeValueW",
+      ctypes.c_int,
+      [ctypes.c_wchar_p, ctypes.c_wchar_p, POINTER],
+  )
+  adjust_privilege = bind(
+      SECURITY,
+      "AdjustTokenPrivileges",
+      ctypes.c_int,
+      [POINTER, ctypes.c_int, POINTER, DWORD, POINTER, POINTER],
+  )
+  create_file = bind(
+      KERNEL,
+      "CreateFileW",
+      POINTER,
+      [ctypes.c_wchar_p, DWORD, DWORD, POINTER, DWORD, DWORD, POINTER],
+  )
+  close_handle = bind(KERNEL, "CloseHandle", ctypes.c_int, [POINTER])
+  local_free = bind(KERNEL, "LocalFree", POINTER, [POINTER])
+  get_security = bind(
+      SECURITY,
+      "GetSecurityInfo",
+      DWORD,
+      [POINTER, ctypes.c_int, DWORD] + [POINTER] * 5,
+  )
+  to_sddl = bind(
+      SECURITY,
+      "ConvertSecurityDescriptorToStringSecurityDescriptorW",
+      ctypes.c_int,
+      [POINTER, DWORD, DWORD, POINTER, POINTER],
+  )
+  from_sddl = bind(
+      SECURITY,
+      "ConvertStringSecurityDescriptorToSecurityDescriptorW",
+      ctypes.c_int,
+      [ctypes.c_wchar_p, DWORD, POINTER, POINTER],
+  )
+  get_control = bind(
+      SECURITY,
+      "GetSecurityDescriptorControl",
+      ctypes.c_int,
+      [POINTER, ctypes.POINTER(ctypes.c_uint16), ctypes.POINTER(DWORD)],
+  )
+  set_security = bind(
+      SECURITY,
+      "SetSecurityInfo",
+      DWORD,
+      [POINTER, ctypes.c_int, DWORD] + [POINTER] * 4,
+  )
+  get_owner = bind(
+      SECURITY,
+      "GetSecurityDescriptorOwner",
+      ctypes.c_int,
+      [POINTER, POINTER, POINTER],
+  )
+  get_group = bind(
+      SECURITY,
+      "GetSecurityDescriptorGroup",
+      ctypes.c_int,
+      [POINTER, POINTER, POINTER],
+  )
+  get_dacl = bind(
+      SECURITY,
+      "GetSecurityDescriptorDacl",
+      ctypes.c_int,
+      [POINTER, POINTER, POINTER, POINTER],
+  )
+  get_attributes = bind(
+      KERNEL, "GetFileAttributesW", DWORD, [ctypes.c_wchar_p]
+  )
+  set_attributes = bind(
+      KERNEL, "SetFileAttributesW", ctypes.c_int, [ctypes.c_wchar_p, DWORD]
+  )
+
+
+  def require(result):
+      if not result:
+          raise ctypes.WinError(ctypes.get_last_error())
+
+
+  def enable_privileges():
+      # This process exits after each operation. No account rights are assigned;
+      # only privileges already held by its token are enabled.
+      token = POINTER()
+      require(open_token(POINTER(-1), 0x28, ctypes.byref(token)))
+      try:
+          for name in (
+              "SeBackupPrivilege",
+              "SeRestorePrivilege",
+              "SeTakeOwnershipPrivilege",
+              "SeChangeNotifyPrivilege",
+          ):
+              value = (DWORD * 4)(1, 0, 0, 2)
+              require(lookup_privilege(None, name, ctypes.byref(value, 4)))
+              require(adjust_privilege(token, False, value, 0, None, None))
+              if ctypes.get_last_error():
+                  raise ctypes.WinError(ctypes.get_last_error())
+      finally:
+          close_handle(token)
+
+
+  def descriptor(path, flags):
+      handle = create_file(path, 0x20000, 7, None, 3, 0x02000000, None)
+      if handle == POINTER(-1).value:
+          raise ctypes.WinError(ctypes.get_last_error())
+      security, text = POINTER(), POINTER()
+      try:
+          error = get_security(
+              handle, 1, flags, None, None, None, None, ctypes.byref(security)
+          )
+          if error:
+              raise ctypes.WinError(error)
+          require(to_sddl(security, 1, flags, ctypes.byref(text), None))
+          return ctypes.wstring_at(text)
+      finally:
+          if text:
+              local_free(text)
+          if security:
+              local_free(security)
+          close_handle(handle)
+
+
+  def write_descriptor(path, sddl, flags):
+      security = POINTER()
+      require(from_sddl(sddl, 1, ctypes.byref(security), None))
+      try:
+          owner, group, dacl = POINTER(), POINTER(), POINTER()
+          defaulted, present = ctypes.c_int(), ctypes.c_int()
+          access = 0
+          if flags & 1:
+              require(get_owner(security, ctypes.byref(owner),
+                                ctypes.byref(defaulted)))
+              access |= 0x80000
+          if flags & 2:
+              require(get_group(security, ctypes.byref(group),
+                                ctypes.byref(defaulted)))
+              access |= 0x80000
+          if flags & 4:
+              require(get_dacl(security, ctypes.byref(present),
+                               ctypes.byref(dacl), ctypes.byref(defaulted)))
+              assert present.value, "Fixture descriptor must include a DACL"
+              # Inheritance merging also reads the existing descriptor.
+              access |= 0x60000
+              control, revision = ctypes.c_uint16(), DWORD()
+              require(
+                  get_control(
+                      security, ctypes.byref(control), ctypes.byref(revision)
+                  )
+              )
+              # Setting the DACL alone does not restore its inheritance state.
+              # Select protection explicitly from this saved descriptor.
+              flags &= ~(0x80000000 | 0x20000000)
+              flags |= 0x80000000 if control.value & 0x1000 else 0x20000000
+          handle = create_file(path, access, 7, None, 3, 0x02000000, None)
+          if handle == POINTER(-1).value:
+              raise ctypes.WinError(ctypes.get_last_error())
+          try:
+              error = set_security(handle, 1, flags, owner, group, dacl, None)
+              if error:
+                  raise ctypes.WinError(error)
+          finally:
+              close_handle(handle)
+      finally:
+          local_free(security)
+
+
+  def snapshot():
+      return {
+          name: {
+              "security": descriptor(os.path.join(WORKSPACE, name), 7),
+              "permissions": descriptor(os.path.join(WORKSPACE, name), 6),
+              "attributes": get_attributes(os.path.join(WORKSPACE, name)),
+          }
+          for name in ENTRIES
+      }
+
+
+  def save(name, value):
+      with open(os.path.join(WORKSPACE, name), "w") as stream:
+          json.dump(value, stream)
+
+
+  def read(name):
+      with open(os.path.join(WORKSPACE, name)) as stream:
+          return json.load(stream)
+
+
+  enable_privileges()
+  if OPERATION == "setup":
+      os.makedirs(os.path.join(WORKSPACE, FRESH[-1]))
+      save("owner-inheritance-before.json", {
+          name: descriptor(os.path.join(WORKSPACE, name), 7)
+          for name in FRESH
+      })
+      os.makedirs(os.path.join(WORKSPACE, TREE, "nested", "deep"))
+      os.makedirs(os.path.join(WORKSPACE, SECURE[-1]))
+      for name in (FILE, "nested\\deep\\data.bin"):
+          with open(os.path.join(WORKSPACE, TREE, name), "wb") as output:
+              output.write(CONTENT)
+      require(set_attributes(os.path.join(WORKSPACE, TREE, "nested"), 2))
+      # Canonicalize inheritance before recording the exact baseline. Windows
+      # marks DACLs auto-inherited when ACL tools persist these descriptors.
+      for name in ENTRIES:
+          path = os.path.join(WORKSPACE, name)
+          write_descriptor(path, descriptor(path, 7), 7)
+      save("owner-original.json", snapshot())
+      for name in ENTRIES:
+          write_descriptor(os.path.join(WORKSPACE, name), "O:BA", 1)
+      for name in reversed(SECURE):
+          write_descriptor(
+              os.path.join(WORKSPACE, name),
+              "O:SYD:P(A;OICI;FA;;;SY)",
+              1 | 4 | 0x80000000,
+          )
+      save("owner-baseline.json", snapshot())
+      print(json.dumps({"computer": os.environ["COMPUTERNAME"]}))
+  elif OPERATION == "observe":
+      system_entries, secure_owner = set(json.loads(sys.argv[3])), sys.argv[4]
+      baseline = read("owner-baseline.json")
+      actual = snapshot()
+      for name in ENTRIES:
+          assert (
+              actual[name]["permissions"] == baseline[name]["permissions"]
+          ), (name, "permissions", baseline[name]["permissions"],
+              actual[name]["permissions"])
+          assert (
+              actual[name]["attributes"] == baseline[name]["attributes"]
+          ), (name, "attributes", baseline[name]["attributes"],
+              actual[name]["attributes"])
+          relative = os.path.relpath(name, TREE)
+          expected = (
+              secure_owner
+              if name in SECURE
+              else ("SY" if relative in system_entries else "BA")
+          )
+          assert (
+              descriptor(os.path.join(WORKSPACE, name), 1) == "O:" + expected
+          ), name
+      found = set(["."])
+      for directory, subdirs, files in os.walk(os.path.join(WORKSPACE, TREE)):
+          for name in subdirs + files:
+              found.add(
+                  os.path.relpath(
+                      os.path.join(directory, name),
+                      os.path.join(WORKSPACE, TREE),
+                  )
+              )
+      assert found == set(ORDINARY), sorted(found)
+      for name in (FILE, "nested\\deep\\data.bin"):
+          with open(os.path.join(WORKSPACE, TREE, name), "rb") as stream:
+              assert stream.read() == CONTENT, name
+      print(
+          json.dumps(
+              {
+                  "owners_verified": len(ENTRIES),
+                  "permissions_unchanged": True,
+                  "contents_unchanged": True,
+              }
+          )
+      )
+  elif OPERATION == "inheritance":
+      original = read("owner-inheritance-before.json")
+      for name in FRESH:
+          # Both native and upstream ACL persistence mark inherited DACLs AI.
+          # Compare the full descriptor, not a normalized observation.
+          expected = original[name].replace("D:(", "D:AI(")
+          if name == "fresh":
+              expected = "O:SY" + expected[expected.index("G:"):]
+          actual = descriptor(os.path.join(WORKSPACE, name), 7)
+          assert actual == expected, (name, expected, actual)
+      print(json.dumps({"inheritance_verified": True}))
+  elif OPERATION == "restore":
+      original_path = os.path.join(WORKSPACE, "owner-original.json")
+      if os.path.exists(original_path):
+          originals = read("owner-original.json")
+          for name in ENTRIES:
+              # Restore parents before removal; descriptors belong only to this
+              # allocated fixture. No existing filesystem object is touched.
+              write_descriptor(
+                  os.path.join(WORKSPACE, name),
+                  originals[name]["security"],
+                  7,
+              )
+          assert snapshot() == originals
+      print(json.dumps({"restored": True}))
+  else:
+      raise ValueError("Unknown fixture operation: " + OPERATION)

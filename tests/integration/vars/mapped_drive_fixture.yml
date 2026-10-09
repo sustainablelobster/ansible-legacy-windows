@@ -1,0 +1,235 @@
+---
+mapped_drive_fixture: |
+  # Independent native observer and narrowly owned loopback SMB fixture.
+  import base64
+  import ctypes
+  import json
+  import os
+  import sys
+  import uuid
+  import winreg
+
+  assert sys.version_info[:3] == (3, 4, 4), sys.version
+  WORKSPACE, OPERATION = sys.argv[1:3]
+  JOURNAL = os.path.join(WORKSPACE, "mapped-drive.json")
+  NETWORK = ctypes.WinDLL("mpr", use_last_error=True)
+  NETAPI = ctypes.WinDLL("netapi32", use_last_error=True)
+  KERNEL = ctypes.WinDLL("kernel32", use_last_error=True)
+  SECURITY = ctypes.WinDLL("advapi32", use_last_error=True)
+
+  class Resource(ctypes.Structure):
+      _fields_ = [
+          ("scope", ctypes.c_uint32), ("kind", ctypes.c_uint32),
+          ("display", ctypes.c_uint32), ("usage", ctypes.c_uint32),
+          ("local", ctypes.c_wchar_p), ("remote", ctypes.c_wchar_p),
+          ("comment", ctypes.c_wchar_p), ("provider", ctypes.c_wchar_p),
+      ]
+
+  class Share(ctypes.Structure):
+      _fields_ = [
+          ("name", ctypes.c_wchar_p), ("kind", ctypes.c_uint32),
+          ("remark", ctypes.c_wchar_p), ("permissions", ctypes.c_uint32),
+          ("max_uses", ctypes.c_uint32), ("current_uses", ctypes.c_uint32),
+          ("path", ctypes.c_wchar_p), ("password", ctypes.c_wchar_p),
+          ("reserved", ctypes.c_uint32), ("descriptor", ctypes.c_void_p),
+      ]
+
+  NETWORK.WNetOpenEnumW.argtypes = [
+      ctypes.c_uint32, ctypes.c_uint32, ctypes.c_uint32, ctypes.c_void_p,
+      ctypes.POINTER(ctypes.c_void_p)]
+  NETWORK.WNetOpenEnumW.restype = ctypes.c_uint32
+  NETWORK.WNetEnumResourceW.argtypes = [
+      ctypes.c_void_p, ctypes.POINTER(ctypes.c_uint32), ctypes.c_void_p,
+      ctypes.POINTER(ctypes.c_uint32)]
+  NETWORK.WNetEnumResourceW.restype = ctypes.c_uint32
+  NETWORK.WNetCloseEnum.argtypes = [ctypes.c_void_p]
+  NETWORK.WNetCloseEnum.restype = ctypes.c_uint32
+  NETWORK.WNetCancelConnection2W.argtypes = [
+      ctypes.c_wchar_p, ctypes.c_uint32, ctypes.c_int]
+  NETWORK.WNetCancelConnection2W.restype = ctypes.c_uint32
+  NETAPI.NetShareAdd.argtypes = [
+      ctypes.c_wchar_p, ctypes.c_uint32, ctypes.c_void_p,
+      ctypes.POINTER(ctypes.c_uint32)]
+  NETAPI.NetShareAdd.restype = ctypes.c_uint32
+  NETAPI.NetShareGetInfo.argtypes = [
+      ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_uint32,
+      ctypes.POINTER(ctypes.c_void_p)]
+  NETAPI.NetShareGetInfo.restype = ctypes.c_uint32
+  NETAPI.NetShareDel.argtypes = [
+      ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_uint32]
+  NETAPI.NetShareDel.restype = ctypes.c_uint32
+  NETAPI.NetApiBufferFree.argtypes = [ctypes.c_void_p]
+  NETAPI.NetApiBufferFree.restype = ctypes.c_uint32
+  KERNEL.GetLogicalDrives.argtypes = []
+  KERNEL.GetLogicalDrives.restype = ctypes.c_uint32
+  KERNEL.LocalFree.argtypes = [ctypes.c_void_p]
+  KERNEL.LocalFree.restype = ctypes.c_void_p
+  SECURITY.ConvertStringSecurityDescriptorToSecurityDescriptorW.argtypes = [
+      ctypes.c_wchar_p, ctypes.c_uint32, ctypes.POINTER(ctypes.c_void_p),
+      ctypes.c_void_p]
+  CONVERT_DESCRIPTOR = getattr(
+      SECURITY, "ConvertStringSecurityDescriptorToSecurityDescriptorW")
+  CONVERT_DESCRIPTOR.restype = ctypes.c_int
+
+  def checked(code):
+      if code:
+          raise ctypes.WinError(ctypes.c_int32(code).value)
+
+  def mappings(scope):
+      handle = ctypes.c_void_p()
+      checked(NETWORK.WNetOpenEnumW(scope, 1, 0, None, ctypes.byref(handle)))
+      try:
+          result = []
+          while True:
+              count = ctypes.c_uint32(0xFFFFFFFF)
+              size = ctypes.c_uint32(16384)
+              buffer = ctypes.create_string_buffer(size.value)
+              code = NETWORK.WNetEnumResourceW(
+                  handle, ctypes.byref(count), buffer, ctypes.byref(size))
+              if code == 259:
+                  return sorted(result, key=lambda entry: entry["drive"] or "")
+              checked(code)
+              for entry in (Resource * count.value).from_buffer(buffer):
+                  result.append({"drive": entry.local, "path": entry.remote})
+      finally:
+          NETWORK.WNetCloseEnum(handle)
+
+  def registry():
+      result = {}
+      def visit(path):
+          with winreg.OpenKey(winreg.HKEY_CURRENT_USER, path) as key:
+              children, count, unused_time = winreg.QueryInfoKey(key)
+              values = []
+              for index in range(count):
+                  name, value, kind = winreg.EnumValue(key, index)
+                  if isinstance(value, bytes):
+                      encoded = base64.b64encode(value).decode("ascii")
+                      value = {"base64": encoded}
+                  values.append([name, kind, value])
+              result[path] = sorted(values)
+              for index in range(children):
+                  visit(path + "\\" + winreg.EnumKey(key, index))
+      try:
+          visit("Network")
+      except OSError as error:
+          if error.winerror != 2:
+              raise
+      return result
+
+  def observe():
+      mask = KERNEL.GetLogicalDrives()
+      if not mask:
+          checked(ctypes.get_last_error())
+      return {
+          "remembered": mappings(3), "connected": mappings(1),
+          "logical": [chr(65 + bit) for bit in range(26) if mask & (1 << bit)],
+          "registry": registry(),
+      }
+
+  def share_path(name):
+      buffer = ctypes.c_void_p()
+      code = NETAPI.NetShareGetInfo(None, name, 502, ctypes.byref(buffer))
+      try:
+          if code == 2310:
+              return None
+          checked(code)
+          return ctypes.cast(buffer, ctypes.POINTER(Share)).contents.path
+      finally:
+          if buffer:
+              NETAPI.NetApiBufferFree(buffer)
+
+  def create_share(state):
+      descriptor = ctypes.c_void_p()
+      if not SECURITY.ConvertStringSecurityDescriptorToSecurityDescriptorW(
+              "O:SYG:SYD:(A;;0x1200a9;;;WD)", 1,
+              ctypes.byref(descriptor), None):
+          checked(ctypes.get_last_error())
+      try:
+          share = Share(name=state["share"], kind=0,
+                        remark="Owned mapped-drive integration fixture",
+                        max_uses=0xFFFFFFFF, path=state["directory"],
+                        descriptor=descriptor)
+          field = ctypes.c_uint32()
+          checked(NETAPI.NetShareAdd(
+              None, 502, ctypes.byref(share), ctypes.byref(field)))
+      finally:
+          KERNEL.LocalFree(descriptor)
+
+  def setup():
+      assert not os.path.exists(JOURNAL), "Recovery journal already exists"
+      initial = observe()
+      occupied = set(initial["logical"])
+      occupied.update(entry["drive"][:1].upper()
+                      for group in ("remembered", "connected")
+                      for entry in initial[group] if entry["drive"])
+      occupied.update(path.split("\\")[1].upper()
+                      for path in initial["registry"] if "\\" in path)
+      letter = next(value for value in "ZYXWVUTSRQPONMLKJIHGFED"
+                    if value not in occupied)
+      name = "LW_DRIVE_" + uuid.uuid4().hex
+      directory = os.path.join(WORKSPACE, "endpoint")
+      state = {"initial": initial, "letter": letter, "share": name,
+               "directory": directory,
+               "primary": "\\\\127.0.0.1\\" + name + "\\primary",
+               "alternative": "\\\\127.0.0.1\\" + name + "\\alternative"}
+      assert share_path(name) is None and not os.path.exists(directory)
+      with open(JOURNAL, "x", encoding="utf-8") as stream:
+          json.dump(state, stream, sort_keys=True)
+          stream.flush()
+          os.fsync(stream.fileno())
+      with open(JOURNAL, encoding="utf-8") as stream:
+          assert json.load(stream) == state
+      os.mkdir(directory)
+      os.mkdir(os.path.join(directory, "primary"))
+      os.mkdir(os.path.join(directory, "alternative"))
+      create_share(state)
+      assert share_path(name) == directory
+      return dict(state, snapshot=observe())
+
+  def cleanup():
+      if not os.path.exists(JOURNAL):
+          return {"restored": True, "journal_exists": False}
+      with open(JOURNAL, encoding="utf-8") as stream:
+          state = json.load(stream)
+      drive = state["letter"] + ":"
+      current = observe()
+      selected = [entry for group in ("remembered", "connected")
+                  for entry in current[group]
+                  if entry["drive"] and entry["drive"].lower() == drive.lower()]
+      for entry in selected:
+          assert entry["path"].lower() in (
+              state["primary"].lower(), state["alternative"].lower()), entry
+      if selected:
+          checked(NETWORK.WNetCancelConnection2W(drive, 1, True))
+      if "Network" not in state["initial"]["registry"]:
+          try:
+              with winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Network") as key:
+                  subkeys, values, unused_time = winreg.QueryInfoKey(key)
+                  assert subkeys == values == 0, "Unexpected network data"
+              winreg.DeleteKey(winreg.HKEY_CURRENT_USER, "Network")
+          except OSError as error:
+              if error.winerror != 2:
+                  raise
+      assert observe() == state["initial"], "Original mapping state differs"
+      actual_path = share_path(state["share"])
+      if actual_path is not None:
+          assert actual_path == state["directory"], "Owned share path changed"
+          checked(NETAPI.NetShareDel(None, state["share"], 0))
+      assert share_path(state["share"]) is None, "Owned share remains"
+      for path in (os.path.join(state["directory"], "primary"),
+                   os.path.join(state["directory"], "alternative"),
+                   state["directory"]):
+          if os.path.exists(path):
+              os.rmdir(path)
+      assert observe() == state["initial"], "Original mapping state differs"
+      return {"restored": True, "journal_exists": True,
+              "snapshot": observe(), "share_removed": True}
+
+  assert OPERATION in ("setup", "observe", "cleanup"), OPERATION
+  if OPERATION == "setup":
+      RESULT = setup()
+  elif OPERATION == "cleanup":
+      RESULT = cleanup()
+  else:
+      RESULT = observe()
+  print(json.dumps(RESULT, sort_keys=True, ensure_ascii=True))

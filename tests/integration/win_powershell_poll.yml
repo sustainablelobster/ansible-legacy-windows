@@ -1,0 +1,182 @@
+---
+# SPDX-License-Identifier: GPL-3.0-or-later
+- name: Compare automatic PowerShell polling with exact owned closure
+  hosts: legacy_windows
+  gather_facts: false
+  vars_files:
+    - vars/win_powershell_poll.yml
+  tasks:
+    - name: Require the accepted collection polling adapter
+      ansible.builtin.assert:
+        that:
+          - >-
+            '_native_async_polling' in
+            lookup('ansible.builtin.env', 'ANSIBLE_ACTION_PLUGINS')
+
+    - name: Guard actual MAC Python version engine scratch and global staging
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import glob,json,os,subprocess,sys,tempfile;
+        assert sys.version_info[:3]==(3,4,4);
+        mac=subprocess.check_output(['getmac','/nh']).decode('ascii');
+        assert '{{ powershell_poll_expected_mac }}' in mac.upper();
+        assert not glob.glob(os.path.join(tempfile.gettempdir(),
+        'legacy-windows-powershell-*'));
+        print(json.dumps({'python':list(sys.version_info[:3]),'mac':mac,
+        'staging':sorted(glob.glob(os.path.join(
+        tempfile.gettempdir(),'ansible-tmp-*')))}))""
+      register: powershell_poll_guard
+      changed_when: false
+
+    - name: Observe the connected account SID independently
+      sustainablelobster.legacy_windows.win_whoami:
+      register: powershell_poll_identity
+      changed_when: false
+
+    - name: Allocate a private controller raw capture
+      ansible.builtin.tempfile:
+        path: '{{ playbook_dir }}/../../tmp'
+        prefix: 'win-powershell-poll-{{ inventory_hostname }}-'
+        suffix: .json
+      delegate_to: localhost
+      vars: &local
+        ansible_connection: local
+        ansible_shell_type: sh
+        ansible_python_interpreter: '{{ ansible_playbook_python }}'
+      register: powershell_poll_capture
+      changed_when: false
+
+    - name: Allocate the exclusive script and cache workspace
+      sustainablelobster.legacy_windows.win_tempfile:
+        prefix: legacy-windows-win-powershell-async-
+        state: directory
+      register: powershell_poll_workspace
+
+    - name: Initialize complete raw phase records
+      ansible.builtin.set_fact:
+        powershell_poll_records: []
+
+    - name: Compare four public inputs with mandatory protected recovery
+      block:
+        - name: Journal resources and start the owned cache observer
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}', '-',
+                   '{{ powershell_poll_workspace.path }}', setup]
+            stdin: '{{ powershell_poll_setup_program }}'
+          register: powershell_poll_setup
+          changed_when: false
+          no_log: true
+
+        - name: Compare each input under native and released automatic polling
+          ansible.builtin.include_tasks: tasks/win_powershell_poll_case.yml
+          loop: >-
+            {{ powershell_poll_cases | product(["native", "original"]) | list }}
+          loop_control:
+            loop_var: powershell_poll_item
+            label: >-
+              {{ powershell_poll_item.0.name }} / {{ powershell_poll_item.1 }}
+          vars:
+            powershell_poll_case: '{{ powershell_poll_item.0 }}'
+            powershell_poll_phase: '{{ powershell_poll_item.1 }}'
+            powershell_poll_index: >-
+              {{ powershell_poll_cases.index(powershell_poll_item.0) }}
+      always:
+        - name: Stop only the owned observer and await natural engine closure
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}', '-',
+                   '{{ powershell_poll_workspace.path }}', cleanup]
+            stdin: '{{ powershell_poll_program }}'
+          register: powershell_poll_recovery
+          failed_when: false
+          changed_when: false
+          no_log: true
+
+        - name: Preserve complete partial and failed fields before recovery
+          ansible.builtin.copy:
+            content: >-
+              {{ {'records': powershell_poll_records,
+                  'current': {'params': powershell_poll_params | default(none),
+                    'native': powershell_poll_native | default(none),
+                    'original': powershell_poll_original | default(none),
+                    'before': powershell_poll_before | default(none),
+                    'after': powershell_poll_after | default(none)},
+                  'guard': powershell_poll_guard,
+                  'identity': powershell_poll_identity,
+                  'workspace': powershell_poll_workspace.path,
+                  'setup': powershell_poll_setup | default(none),
+                  'recovery': powershell_poll_recovery} | to_nice_json }}
+            dest: '{{ powershell_poll_capture.path }}'
+            mode: '0600'
+          delegate_to: localhost
+          vars: *local
+          changed_when: false
+          no_log: true
+
+        - name: Require exact protected resources cache and process closure
+          ansible.builtin.assert:
+            that:
+              - powershell_poll_recovery.rc == 0
+              - (powershell_poll_recovery.stdout | from_json).recovery.restored
+
+        - name: Reobserve protection and remove exact journaled owned artifacts
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}', '-',
+                   '{{ powershell_poll_workspace.path }}', finalize]
+            stdin: '{{ powershell_poll_program }}'
+          register: powershell_poll_finalized
+          changed_when: false
+          no_log: true
+
+        - name: Remove only the verified empty workspace
+          sustainablelobster.legacy_windows.win_file:
+            path: '{{ powershell_poll_workspace.path }}'
+            state: absent
+
+        - name: Observe workspace scratch absence and original global staging
+          ansible.builtin.raw: >-
+            cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+            "import glob,json,os,sys,tempfile;
+            assert not os.path.exists(sys.argv[1]);
+            assert not glob.glob(os.path.join(tempfile.gettempdir(),
+            'legacy-windows-powershell-*'));
+            print(json.dumps(sorted(glob.glob(os.path.join(
+            tempfile.gettempdir(),'ansible-tmp-*')))))"
+            "{{ powershell_poll_workspace.path }}""
+          register: powershell_poll_staging_after
+          changed_when: false
+
+        - name: Retain final closure without replacing earlier observations
+          ansible.builtin.copy:
+            content: >-
+              {{ (lookup('ansible.builtin.file', powershell_poll_capture.path) |
+                  from_json) | combine({'staging_after':
+                  powershell_poll_staging_after, 'workspace_absent': true,
+                  'finalized': powershell_poll_finalized}) | to_nice_json }}
+            dest: '{{ powershell_poll_capture.path }}'
+            mode: '0600'
+          delegate_to: localhost
+          vars: *local
+          changed_when: false
+          no_log: true
+
+        - name: Require literal original global staging
+          ansible.builtin.assert:
+            that:
+              - >-
+                (powershell_poll_guard.stdout | from_json).staging ==
+                (powershell_poll_staging_after.stdout | from_json)
+
+        - name: Close the exclusively owned persistent SSH connection
+          ansible.builtin.meta: reset_connection
+
+    - name: Verify typed final public results cache bytes and live identities
+      ansible.builtin.command:
+        argv:
+          - '{{ ansible_playbook_python }}'
+          - >-
+            {{ playbook_dir +
+               '/../../scripts/verify_win_powershell_poll_capture.py' }}
+          - '{{ powershell_poll_capture.path }}'
+      delegate_to: localhost
+      vars: *local
+      changed_when: false

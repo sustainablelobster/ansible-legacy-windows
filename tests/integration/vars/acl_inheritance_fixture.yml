@@ -1,0 +1,454 @@
+---
+acl_inheritance_fixture: |
+  # Copyright 2026 Joe Lustri
+  # SPDX-License-Identifier: GPL-3.0-or-later
+  """Create and inspect isolated inheritance fixtures on Python 3.4.4."""
+
+  import binascii
+  import ctypes
+  import json
+  import os
+  import struct
+  import sys
+  import uuid
+  import winreg
+
+  assert sys.version_info[:3] == (3, 4, 4)
+  WORKSPACE, OPERATION, KIND = sys.argv[1:4]
+  assert KIND in ("filesystem", "registry"), KIND
+  STATE = os.path.join(WORKSPACE, "acl-inheritance-" + KIND + ".json")
+  CONTAINER = "Software\\LegacyWindowsTests"
+  CONTENT = b"Inheritance fixture\x00\xff\r\n" * 17
+  SECURITY = ctypes.WinDLL("advapi32", use_last_error=True)
+  KERNEL = ctypes.WinDLL("kernel32", use_last_error=True)
+  POINTER, DWORD = ctypes.c_void_p, ctypes.c_uint32
+  OBJECT_TYPE = 1 if KIND == "filesystem" else 4
+
+
+  def bind(library, name, result, arguments):
+      function = getattr(library, name)
+      function.restype, function.argtypes = result, arguments
+      return function
+
+
+  create_file = bind(
+      KERNEL, "CreateFileW", POINTER,
+      [ctypes.c_wchar_p, DWORD, DWORD, POINTER, DWORD, DWORD, POINTER],
+  )
+  close_handle = bind(KERNEL, "CloseHandle", ctypes.c_int, [POINTER])
+  open_token = bind(
+      SECURITY, "OpenProcessToken", ctypes.c_int,
+      [POINTER, DWORD, POINTER],
+  )
+  read_token = bind(
+      SECURITY, "GetTokenInformation", ctypes.c_int,
+      [POINTER, DWORD, POINTER, DWORD, POINTER],
+  )
+  local_free = bind(KERNEL, "LocalFree", POINTER, [POINTER])
+  get_security = bind(
+      SECURITY, "GetSecurityInfo", DWORD,
+      [POINTER, ctypes.c_int, DWORD] + [POINTER] * 5,
+  )
+  set_security = bind(
+      SECURITY, "SetSecurityInfo", DWORD,
+      [POINTER, ctypes.c_int, DWORD] + [POINTER] * 4,
+  )
+  to_sddl = bind(
+      SECURITY, "ConvertSecurityDescriptorToStringSecurityDescriptorW",
+      ctypes.c_int, [POINTER, DWORD, DWORD, POINTER, POINTER],
+  )
+  from_sddl = bind(
+      SECURITY, "ConvertStringSecurityDescriptorToSecurityDescriptorW",
+      ctypes.c_int, [ctypes.c_wchar_p, DWORD, POINTER, POINTER],
+  )
+  get_control = bind(
+      SECURITY, "GetSecurityDescriptorControl", ctypes.c_int,
+      [POINTER, POINTER, POINTER],
+  )
+  get_dacl = bind(
+      SECURITY, "GetSecurityDescriptorDacl", ctypes.c_int,
+      [POINTER, POINTER, POINTER, POINTER],
+  )
+  get_ace = bind(
+      SECURITY, "GetAce", ctypes.c_int, [POINTER, DWORD, POINTER],
+  )
+  sid_to_string = bind(
+      SECURITY, "ConvertSidToStringSidW", ctypes.c_int, [POINTER, POINTER],
+  )
+  get_attributes = bind(
+      KERNEL, "GetFileAttributesW", DWORD, [ctypes.c_wchar_p],
+  )
+  create_key = bind(
+      SECURITY, "RegCreateKeyExW", ctypes.c_long,
+      [POINTER, ctypes.c_wchar_p, DWORD, ctypes.c_wchar_p, DWORD,
+       DWORD, POINTER, POINTER, POINTER],
+  )
+  close_key = bind(SECURITY, "RegCloseKey", ctypes.c_long, [POINTER])
+
+
+  def require(result):
+      if not result:
+          raise ctypes.WinError(ctypes.get_last_error())
+
+
+  def check_error(error):
+      if error:
+          raise ctypes.WinError(error)
+
+
+  def save(state):
+      with open(STATE, "w") as stream:
+          json.dump(state, stream)
+
+
+  def registry_relative(path):
+      assert path.startswith("HKCU:\\" + CONTAINER + "\\"), path
+      return path[6:]
+
+
+  def open_object(path, access):
+      if KIND == "registry":
+          return winreg.OpenKey(
+              winreg.HKEY_CURRENT_USER, registry_relative(path), 0, access
+          )
+      handle = create_file(path, access, 7, None, 3, 0x02000000, None)
+      if handle == POINTER(-1).value:
+          raise ctypes.WinError(ctypes.get_last_error())
+      return handle
+
+
+  def close_object(handle):
+      if KIND == "registry":
+          handle.Close()
+      else:
+          require(close_handle(handle))
+
+
+  def sid_text(sid):
+      text = POINTER()
+      require(sid_to_string(sid, ctypes.byref(text)))
+      try:
+          return ctypes.wstring_at(text)
+      finally:
+          local_free(text)
+
+
+  def current_user_sid():
+      token = POINTER()
+      require(open_token(POINTER(-1), 0x8, ctypes.byref(token)))
+      try:
+          needed = DWORD()
+          assert not read_token(token, 1, None, 0, ctypes.byref(needed))
+          if ctypes.get_last_error() != 122:
+              raise ctypes.WinError(ctypes.get_last_error())
+          buffer = ctypes.create_string_buffer(needed.value)
+          require(read_token(
+              token, 1, buffer, len(buffer), ctypes.byref(needed)
+          ))
+          return sid_text(POINTER.from_buffer(buffer).value)
+      finally:
+          require(close_handle(token))
+
+
+  def descriptor(path):
+      handle = open_object(path, 0x20000)
+      security, owner, group, dacl = [POINTER() for unused in range(4)]
+      text = POINTER()
+      try:
+          check_error(get_security(
+              int(handle), OBJECT_TYPE, 7, ctypes.byref(owner),
+              ctypes.byref(group), ctypes.byref(dacl), None,
+              ctypes.byref(security),
+          ))
+          control, revision = ctypes.c_uint16(), DWORD()
+          require(get_control(
+              security, ctypes.byref(control), ctypes.byref(revision)
+          ))
+          require(to_sddl(security, 1, 7, ctypes.byref(text), None))
+          entries = []
+          if dacl:
+              count = ctypes.c_uint16.from_address(dacl.value + 4).value
+              for index in range(count):
+                  ace = POINTER()
+                  require(get_ace(dacl, index, ctypes.byref(ace)))
+                  size = ctypes.c_uint16.from_address(ace.value + 2).value
+                  raw = ctypes.string_at(ace, size)
+                  ace_type, flags = struct.unpack_from("BB", raw)
+                  entries.append({
+                      "type": ace_type,
+                      "flags": flags,
+                      "mask": struct.unpack_from("<I", raw, 4)[0],
+                      "sid": sid_text(ace.value + 8)
+                      if ace_type in (0, 1, 2, 3) else None,
+                      "raw": list(bytearray(raw)),
+                  })
+          return {
+              "protected": bool(control.value & 0x1000),
+              "aces": entries,
+              "null_dacl": not bool(dacl),
+              "owner": sid_text(owner),
+              "group": sid_text(group),
+              "sddl": ctypes.wstring_at(text),
+          }
+      finally:
+          if text:
+              local_free(text)
+          if security:
+              local_free(security)
+          close_object(handle)
+
+
+  def write_dacl(path, sddl):
+      security = POINTER()
+      require(from_sddl(sddl, 1, ctypes.byref(security), None))
+      try:
+          present, defaulted, dacl = ctypes.c_int(), ctypes.c_int(), POINTER()
+          require(get_dacl(
+              security, ctypes.byref(present), ctypes.byref(dacl),
+              ctypes.byref(defaulted),
+          ))
+          assert present.value and dacl, "Fixture requires a non-null DACL"
+          control, revision = ctypes.c_uint16(), DWORD()
+          require(get_control(
+              security, ctypes.byref(control), ctypes.byref(revision)
+          ))
+          flags = 4 | (0x80000000 if control.value & 0x1000 else 0x20000000)
+          handle = open_object(path, 0x60000)
+          try:
+              check_error(set_security(
+                  int(handle), OBJECT_TYPE, flags, None, None, dacl, None
+              ))
+          finally:
+              close_object(handle)
+      finally:
+          local_free(security)
+
+
+  def snapshot(paths):
+      result = {}
+      for path in paths.values():
+          current = descriptor(path)
+          if KIND == "filesystem":
+              attributes = get_attributes(path)
+              if attributes == 0xffffffff:
+                  raise ctypes.WinError(ctypes.get_last_error())
+              current["attributes"] = attributes
+              if attributes & 0x10:
+                  current["data"] = sorted(os.listdir(path))
+              else:
+                  with open(path, "rb") as stream:
+                      current["data"] = binascii.hexlify(
+                          stream.read()
+                      ).decode("ascii")
+          else:
+              with open_object(path, winreg.KEY_READ) as key:
+                  values = []
+                  subkeys, count, unused = winreg.QueryInfoKey(key)
+                  for index in range(count):
+                      name, data, value_type = winreg.EnumValue(key, index)
+                      if value_type == winreg.REG_BINARY:
+                          data = binascii.hexlify(data).decode("ascii")
+                      values.append([name, value_type, data])
+                  current["data"] = sorted(values)
+                  current["subkeys"] = sorted(
+                      winreg.EnumKey(key, index) for index in range(subkeys)
+                  )
+              current["attributes"] = None
+          result[path] = current
+      return result
+
+
+  def create_registry_key(relative, state, ownership_field):
+      handle, disposition = POINTER(), DWORD()
+      check_error(create_key(
+          int(winreg.HKEY_CURRENT_USER), relative, 0, None, 0,
+          winreg.KEY_ALL_ACCESS, None, ctypes.byref(handle),
+          ctypes.byref(disposition),
+      ))
+      try:
+          state[ownership_field] = disposition.value == 1
+          save(state)
+      finally:
+          check_error(close_key(handle))
+
+
+  def require_key_absent(relative):
+      try:
+          key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, relative)
+      except OSError as error:
+          if error.winerror == 2:
+              return
+          raise
+      key.Close()
+      raise AssertionError("Registry key remains after cleanup: " + relative)
+
+
+  def setup():
+      assert not os.path.exists(STATE), "Fixture already exists; use reset"
+      user_sid = current_user_sid()
+      if KIND == "filesystem":
+          parent = os.path.join(
+              WORKSPACE, "inheritance \u00c9 ' % ! & [literal]"
+          )
+          paths = {
+              "parent": parent,
+              "directory": os.path.join(parent, "directory \u96ea '"),
+              "file": os.path.join(parent, "sample \u96ea '.bin"),
+          }
+          assert not os.path.exists(parent), parent
+          state = {"paths": paths}
+          save(state)
+          os.mkdir(parent)
+          write_dacl(
+              parent, "D:P(A;OICI;FA;;;BA)(A;OICI;FA;;;SY)(A;OICI;FR;;;WD)"
+              + "(A;OICI;FR;;;" + user_sid + ")"
+          )
+          os.mkdir(paths["directory"])
+          with open(paths["file"], "wb") as stream:
+              stream.write(CONTENT)
+          write_dacl(
+              paths["directory"], "D:AI(A;OICI;FA;;;BA)(A;OICI;FR;;;"
+              + user_sid + ")"
+          )
+          write_dacl(
+              paths["file"], "D:AI(A;;FA;;;BA)(A;;FR;;;" + user_sid + ")"
+          )
+      else:
+          relative = CONTAINER + "\\acl-inheritance-" + uuid.uuid4().hex
+          parent = "HKCU:\\" + relative
+          paths = {
+              "parent": parent, "key": parent + "\\child \u96ea ' [literal]"
+          }
+          state = {
+              "paths": paths, "container_created": False,
+              "parent_created": False, "key_created": False,
+          }
+          save(state)
+          create_registry_key(CONTAINER, state, "container_created")
+          create_registry_key(relative, state, "parent_created")
+          assert state["parent_created"], "Refusing an existing fixture key"
+          write_dacl(
+              parent, "D:P(A;CI;KA;;;BA)(A;CI;KA;;;SY)(A;CI;KR;;;WD)"
+              + "(A;CI;KR;;;" + user_sid + ")"
+          )
+          create_registry_key(
+              registry_relative(paths["key"]), state, "key_created"
+          )
+          assert state["key_created"], "Refusing an existing fixture child key"
+          write_dacl(
+              paths["key"], "D:AI(A;CI;KA;;;BA)(A;CI;KR;;;" + user_sid + ")"
+          )
+          for path in paths.values():
+              with open_object(path, winreg.KEY_SET_VALUE) as key:
+                  winreg.SetValueEx(
+                      key, "binary", 0, winreg.REG_BINARY, CONTENT
+                  )
+                  winreg.SetValueEx(
+                      key, "text", 0, winreg.REG_SZ, "Preserve \u96ea"
+                  )
+      state["baseline"] = snapshot(paths)
+      save(state)
+      return state
+
+
+  def cleanup(state):
+      paths = state["paths"]
+      if KIND == "filesystem":
+          for name in ("parent", "directory", "file"):
+              path = paths[name]
+              if os.path.exists(path):
+                  write_dacl(path, "D:P(A;OICI;FA;;;BA)(A;OICI;FA;;;SY)")
+      else:
+          if state["parent_created"]:
+              for name in ("parent", "key"):
+                  if not state[name + "_created"]:
+                      continue
+                  path = paths[name]
+                  try:
+                      write_dacl(path, "D:P(A;CI;KA;;;BA)(A;CI;KA;;;SY)")
+                  except OSError as error:
+                      if error.winerror != 2:
+                          raise
+              for name in ("key", "parent"):
+                  if not state[name + "_created"]:
+                      continue
+                  relative = registry_relative(paths[name])
+                  try:
+                      winreg.DeleteKey(winreg.HKEY_CURRENT_USER, relative)
+                  except OSError as error:
+                      if error.winerror != 2:
+                          raise
+                  state[name + "_created"] = False
+                  save(state)
+                  require_key_absent(relative)
+          if state["container_created"]:
+              try:
+                  with winreg.OpenKey(
+                      winreg.HKEY_CURRENT_USER, CONTAINER
+                  ) as key:
+                      subkeys, values, unused = winreg.QueryInfoKey(key)
+                  if subkeys == 0 and values == 0:
+                      winreg.DeleteKey(winreg.HKEY_CURRENT_USER, CONTAINER)
+                      state["container_created"] = False
+                      save(state)
+                      require_key_absent(CONTAINER)
+              except OSError as error:
+                  if error.winerror != 2:
+                      raise
+
+
+  if OPERATION == "setup":
+      state = setup()
+  elif OPERATION == "cleanup" and not os.path.exists(STATE):
+      print(json.dumps({"cleaned": True}))
+      sys.exit(0)
+  else:
+      with open(STATE) as stream:
+          state = json.load(stream)
+
+  if OPERATION == "cleanup":
+      cleanup(state)
+      print(json.dumps({"cleaned": True}))
+  else:
+      assert OPERATION in ("setup", "observe", "reset"), OPERATION
+      if OPERATION == "reset":
+          for name in ("parent", "directory", "file", "key"):
+              if name in state["paths"]:
+                  path = state["paths"][name]
+                  write_dacl(path, state["baseline"][path]["sddl"])
+      actual = snapshot(state["paths"])
+      for path, expected in state["baseline"].items():
+          for field in ("owner", "group", "attributes", "data", "subkeys"):
+              assert actual[path].get(field) == expected.get(field), (
+                  path, field, expected.get(field), actual[path].get(field)
+              )
+      if OPERATION == "reset":
+          assert actual == state["baseline"], (state["baseline"], actual)
+      if len(sys.argv) > 4:
+          actual = {sys.argv[4]: actual[sys.argv[4]]}
+      strategy = sys.argv[5] if len(sys.argv) > 5 else "none"
+      assert strategy in ("removed", "copied", "none"), strategy
+      if strategy != "none":
+          assert OPERATION == "observe", OPERATION
+          path = sys.argv[4]
+          expected = []
+          for entry in state["baseline"][path]["aces"]:
+              if strategy == "removed" and entry["flags"] & 16:
+                  continue
+              entry = dict(entry, raw=list(entry["raw"]))
+              if strategy == "copied":
+                  entry["flags"] &= ~16
+                  entry["raw"][1] &= ~16
+              expected.append(entry)
+          # Windows can coalesce identical permissions. Compare every ACE byte
+          # without requiring duplicate copies of the same permission.
+          expected_entries = {tuple(entry["raw"]) for entry in expected}
+          actual_entries = {
+              tuple(entry["raw"]) for entry in actual[path]["aces"]
+          }
+          assert actual_entries == expected_entries, (
+              path, strategy, expected, actual[path]["aces"]
+          )
+      print(json.dumps({
+          "kind": KIND, "paths": state["paths"], "snapshot": actual
+      }))

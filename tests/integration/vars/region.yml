@@ -1,0 +1,115 @@
+---
+region_cases:
+  - name: Keep United States location unchanged
+    arguments:
+      location: '244'
+    changed: false
+  - name: Predict Australian location
+    arguments:
+      location: '12'
+    check: true
+    changed: true
+  - name: Set Australian location
+    arguments:
+      location: '12'
+    changed: true
+  - name: Repeat Australian location
+    arguments:
+      location: '12'
+    changed: false
+  - name: Predict United Kingdom regional format
+    arguments:
+      format: en-GB
+    check: true
+    changed: true
+  - name: Set United Kingdom regional format
+    arguments:
+      format: en-GB
+    changed: true
+  - name: Repeat the regional format without case sensitivity
+    arguments:
+      format: EN-gb
+    changed: false
+  - name: Predict copying changed Australian formats to default profiles
+    arguments:
+      format: en-AU
+      copy_settings: true
+    check: true
+    changed: true
+  - name: Preserve the copy failure after changing Australian formats
+    arguments:
+      format: en-AU
+      copy_settings: true
+    changed: false
+    partial_change: true
+    error: >-
+      Unhandled exception while executing module: Exception calling ".ctor"
+      with "2" argument(s): "Failed to load registry hive at
+      C:\Users\Default\NTUSER.DAT (A required privilege is not held by the
+      client, Win32ErrorCode 1314)"
+  - name: Repeat copied settings without another hive load
+    arguments:
+      format: en-AU
+      copy_settings: true
+    changed: false
+  - name: Predict the non-Unicode system locale change
+    arguments:
+      unicode_language: en-GB
+    check: true
+    changed: true
+    restart: true
+  - name: Set the non-Unicode system locale without restarting
+    arguments:
+      unicode_language: en-GB
+    changed: true
+    restart: true
+    pending: &british_defaults
+      'Language\Default': '0809'
+      'Locale\(Default)': '00000809'
+      'CodePage\ACP': '1252'
+      'CodePage\OEMCP': '850'
+      'CodePage\MACCP': '10000'
+  - name: Repeat the active or pending system locale before a restart
+    arguments:
+      unicode_language: en-GB
+    system_repeat: true
+    pending: *british_defaults
+  - name: Preserve null arguments beside an unchanged regional format
+    arguments:
+      format: en-AU
+      location: null
+      unicode_language: null
+    changed: false
+  - name: Reject absent regional settings
+    arguments: {}
+    changed: false
+    error: >-
+      An argument for 'format', 'location' or 'unicode_language' needs to be
+      supplied
+  - name: Reject an invalid GeoID before any write
+    arguments:
+      location: '999999'
+      format: en-US
+    changed: false
+    error: The argument location '999999' does not contain a valid Geo ID
+  - name: Reject an invalid culture before a requested location write
+    arguments:
+      location: '244'
+      format: Legacy-Fixture-Invalid
+    changed: false
+    error: >-
+      The argument format 'Legacy-Fixture-Invalid' does not contain a valid
+      Culture Name
+  - name: Reject an invalid system culture before other writes
+    arguments:
+      format: en-US
+      unicode_language: Legacy-Fixture-Invalid
+    changed: false
+    error: >-
+      The argument unicode_language 'Legacy-Fixture-Invalid' does not contain a
+      valid Culture Name
+  - name: Restore United States user settings through the public interface
+    arguments:
+      location: '244'
+      format: en-US
+    changed: true

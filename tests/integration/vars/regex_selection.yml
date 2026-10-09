@@ -1,0 +1,73 @@
+---
+# SPDX-License-Identifier: GPL-3.0-or-later
+regex_selection_capture: "{{ playbook_dir }}/regex-selection-public.json"
+regex_selection_fixture: >-
+  {{ lookup('ansible.builtin.file',
+  playbook_dir + '/fixtures/regex_selection.py', rstrip=false) }}
+regex_selection_find_cases:
+  - id: letters
+    pattern: "^\\p{L}+[.]txt$"
+    names:
+      - python.txt
+      - É.txt
+      - Ϳ.txt
+      - ࢳ.txt
+      - upperΙ.txt
+      - lowerι.txt
+      - prosι.txt
+  - { id: marks, pattern: "^\\p{Mn}+[.]txt$", names: [ͅ.txt] }
+  - id: nonletters
+    pattern: "^\\P{L}+[.]txt$"
+    names: [ͅ.txt, 1.txt, 😀.txt]
+  - id: cased
+    pattern: "^\\p{Lu}+[.]txt$"
+    names:
+      - python.txt
+      - É.txt
+      - Ϳ.txt
+      - upperΙ.txt
+      - lowerι.txt
+      - prosι.txt
+  - id: uppercase-sensitive
+    pattern: "^\\p{Lu}+[.]txt$"
+    sensitive: true
+    names: [É.txt, Ϳ.txt]
+  - { id: other-letters, pattern: "^\\p{Lo}+[.]txt$", names: [ࢳ.txt] }
+  - id: class-union
+    pattern: "^[\\p{L}\\p{Mn}]+[.]txt$"
+    names:
+      - python.txt
+      - É.txt
+      - Ϳ.txt
+      - ࢳ.txt
+      - ͅ.txt
+      - upperΙ.txt
+      - lowerι.txt
+      - prosι.txt
+  - id: negated-class
+    pattern: "^[^\\p{L}]+[.]txt$"
+    names: [ͅ.txt, 1.txt, 😀.txt]
+  - id: surrogate-units
+    pattern: "^\\p{Cs}{2}[.]txt$"
+    names: [😀.txt]
+regex_selection_wait_cases:
+  - id: mark-present
+    file: mark.txt
+    pattern: "^\\p{Mn}$"
+    state: present
+  - id: iota-not-mark
+    file: iota.txt
+    pattern: "^\\p{Mn}$"
+    state: absent
+  - id: pros-not-mark
+    file: pros.txt
+    pattern: "^\\p{M}$"
+    state: absent
+  - id: mark-not-letter
+    file: mark.txt
+    pattern: "^\\p{L}$"
+    state: absent
+  - id: surrogate-units
+    file: astral.txt
+    pattern: "^\\p{Cs}{2}$"
+    state: present

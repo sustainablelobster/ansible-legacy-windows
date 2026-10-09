@@ -1,0 +1,178 @@
+---
+- name: Select complete public request without overriding absent uninstall paths
+  ansible.builtin.set_fact:
+    package_request: >-
+      {{ {'provider': package_case.provider | default('registry'),
+      'product_id': package_registry_product_id,
+      'state': package_case.state | default('present')} |
+      combine(
+        {'path': package_registry_installer,
+        'arguments': package_registry_arguments +
+        [package_case.operation | default('install'), package_case.hive,
+        package_case.branch, package_case.uninstall_property |
+        default('UninstallString')]}
+        if package_case.state | default('present') | lower == 'present'
+        else {}) |
+      combine({'expected_return_code': package_case.expected_return_code}
+      if package_case.expected_return_code is defined else {}) |
+      combine({'checksum_algorithm': package_case.checksum_algorithm}
+      if package_case.checksum_algorithm is defined else {}) |
+      combine({'path': package_registry_installer,
+      'arguments': package_registry_arguments + ['remove', package_case.hive,
+      package_case.branch, package_case.uninstall_property |
+      default('UninstallString')] + package_case.uninstall_arguments}
+      if package_case.override | default(false) else {}) |
+      combine(package_case.binding | default({})) }}
+
+- name: Reset exact owned prerequisites before native operation
+  sustainablelobster.legacy_windows.win_command:
+    argv: ['{{ ansible_python_interpreter }}', '-',
+           '{{ package_workspace.path }}', prepare,
+           '{{ package_case.initial | default("absent") }}',
+           '{{ package_case.hive }}', '{{ package_case.branch }}',
+           '{{ package_case.uninstall_property | default("UninstallString") }}',
+           '{{ {"form": package_case.uninstall_form | default("quoted"),
+           "operation": package_case.uninstall_operation | default("remove"),
+           "arguments": package_case.uninstall_arguments | default([])} |
+           to_json }}']
+    stdin: '{{ package_registry_program }}'
+  register: package_before
+  changed_when: false
+  no_log: true
+
+- name: Capture native registry package public behavior
+  block:
+    - name: Execute the native public package request  # noqa: args[module]
+      sustainablelobster.legacy_windows.win_package: '{{ package_request }}'
+      environment:
+        PYTHONHOME: '{{ package_registry_python_home }}'
+        LegacyWindowsPackageRoot: '{{ package_workspace.path }}'
+      register: package_native
+      check_mode: '{{ package_case.check | default(false) }}'
+  rescue:
+    - name: Retain complete native failure
+      ansible.builtin.debug:
+        msg: Native registry package failure retained.
+
+- name: Independently capture native file and registry effects
+  sustainablelobster.legacy_windows.win_command:
+    argv: ['{{ ansible_python_interpreter }}', '-',
+           '{{ package_workspace.path }}', observe]
+    stdin: '{{ package_registry_program }}'
+  register: package_after_native
+  changed_when: false
+  no_log: true
+
+- name: Verify repeat removal without resetting the successful operation
+  when:
+    - package_case.repeat | default(false)
+    - not package_native.failed | default(false)
+  sustainablelobster.legacy_windows.win_package: '{{ package_request }}'
+  environment:
+    PYTHONHOME: '{{ package_registry_python_home }}'
+    LegacyWindowsPackageRoot: '{{ package_workspace.path }}'
+  register: package_native_repeat
+
+- name: Independently capture effects after repeat removal
+  when:
+    - package_case.repeat | default(false)
+    - not package_native.failed | default(false)
+  sustainablelobster.legacy_windows.win_command:
+    argv: ['{{ ansible_python_interpreter }}', '-',
+           '{{ package_workspace.path }}', observe]
+    stdin: '{{ package_registry_program }}'
+  register: package_after_native_repeat
+  changed_when: false
+  no_log: true
+
+- name: Reset the same owned prerequisites before original operation
+  when: package_compare | bool
+  sustainablelobster.legacy_windows.win_command:
+    argv: ['{{ ansible_python_interpreter }}', '-',
+           '{{ package_workspace.path }}', prepare,
+           '{{ package_case.initial | default("absent") }}',
+           '{{ package_case.hive }}', '{{ package_case.branch }}',
+           '{{ package_case.uninstall_property | default("UninstallString") }}',
+           '{{ {"form": package_case.uninstall_form | default("quoted"),
+           "operation": package_case.uninstall_operation | default("remove"),
+           "arguments": package_case.uninstall_arguments | default([])} |
+           to_json }}']
+    stdin: '{{ package_registry_program }}'
+  register: package_before_original
+  changed_when: false
+  no_log: true
+
+- name: Capture unchanged released registry package behavior
+  when: package_compare | bool
+  block:
+    - name: Execute the untouched released package request
+      ansible.windows.win_package: '{{ package_request }}'
+      environment:
+        PYTHONHOME: '{{ package_registry_python_home }}'
+        LegacyWindowsPackageRoot: '{{ package_workspace.path }}'
+      register: package_original
+      check_mode: '{{ package_case.check | default(false) }}'
+      vars:
+        ansible_shell_type: cmd
+        ansible_remote_tmp: '{{ package_workspace.path }}'
+  rescue:
+    - name: Retain complete original failure
+      ansible.builtin.debug:
+        msg: Original registry package failure retained.
+
+- name: Independently capture original file and registry effects
+  when: package_compare | bool
+  sustainablelobster.legacy_windows.win_command:
+    argv: ['{{ ansible_python_interpreter }}', '-',
+           '{{ package_workspace.path }}', observe]
+    stdin: '{{ package_registry_program }}'
+  register: package_after_original
+  changed_when: false
+  no_log: true
+
+- name: Append every raw public field before validation
+  ansible.builtin.set_fact:
+    package_results: >-
+      {{ package_results + [{'name': package_case.name,
+      'request': package_request, 'expected': package_case,
+      'native': package_native, 'original': package_original | default(none),
+      'before': package_before,
+      'before_original': package_before_original | default(none),
+      'after_native': package_after_native,
+      'native_repeat': package_native_repeat | default(none),
+      'after_native_repeat': package_after_native_repeat | default(none),
+      'after_original': package_after_original | default(none),
+      'validated': false}] }}
+
+- name: Persist the raw running capture before validating it
+  ansible.builtin.copy:
+    content: >-
+      {{ {'results': package_results, 'journal': package_journal,
+      'setup': package_setup} | to_nice_json }}
+    dest: '{{ package_capture.path }}'
+    mode: '0600'
+  delegate_to: localhost
+  vars: &controller
+    ansible_connection: local
+    ansible_shell_type: sh
+    ansible_python_interpreter: '{{ ansible_playbook_python }}'
+  changed_when: false
+  no_log: true
+
+- name: Validate complete public results file effects and operation clocks
+  ansible.builtin.command:
+    argv:
+      - '{{ ansible_playbook_python }}'
+      - '{{ playbook_dir }}/files/package_registry_compare.py'
+      - '{{ package_capture.path }}'
+      - '{{ package_compare | bool | ternary("paired", "native") }}'
+      - --running
+  delegate_to: localhost
+  vars: *controller
+  changed_when: false
+
+- name: Mark only fully validated raw evidence
+  ansible.builtin.set_fact:
+    package_results: >-
+      {{ package_results[:-1] +
+      [package_results[-1] | combine({'validated': true})] }}

@@ -1,0 +1,623 @@
+---
+firewall_registry_path: >-
+  SYSTEM\CurrentControlSet\Services\SharedAccess\Parameters\FirewallPolicy
+firewall_wmi_source: >-
+  {{ lookup('file', playbook_dir +
+  '/../../plugins/module_utils/legacy_windows_wmi.py') }}
+firewall_program: |
+  {{ firewall_wmi_source }}
+  {{ firewall_fixture }}
+firewall_fixture: |
+  # SPDX-License-Identifier: GPL-3.0-or-later
+  # Authorized firewall-policy fixture; retain its journal until exact recovery.
+  import binascii
+  import contextlib
+  import copy
+  import ctypes
+  import hashlib
+  import json
+  import os
+  import subprocess
+  import sys
+  import uuid
+  import winreg
+
+  workspace = os.path.abspath(sys.argv[1])
+  operation = sys.argv[2]
+  journal_path = os.path.join(workspace, 'firewall-recovery.json')
+  policy_path = os.path.join(workspace, 'firewall-original.wfw')
+  base = (r'SYSTEM\CurrentControlSet\Services\SharedAccess\Parameters'
+          r'\FirewallPolicy')
+  paths = (base, r'SOFTWARE\Policies\Microsoft\WindowsFirewall')
+  profile_keys = {'Domain': 'DomainProfile', 'Private': 'StandardProfile',
+                  'Public': 'PublicProfile'}
+
+  class Luid(ctypes.Structure):
+      _fields_ = [('low', ctypes.c_uint32), ('high', ctypes.c_int32)]
+
+  class Privilege(ctypes.Structure):
+      _fields_ = [('luid', Luid), ('attributes', ctypes.c_uint32)]
+
+  class Privileges(ctypes.Structure):
+      _fields_ = [('count', ctypes.c_uint32), ('entries', Privilege * 3)]
+
+  @contextlib.contextmanager
+  def security_privileges():
+      security = ctypes.WinDLL('advapi32', use_last_error=True)
+      kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+      kernel.GetCurrentProcess.argtypes = []
+      kernel.GetCurrentProcess.restype = ctypes.c_void_p
+      kernel.CloseHandle.argtypes = [ctypes.c_void_p]
+      kernel.CloseHandle.restype = ctypes.c_int
+      security.OpenProcessToken.argtypes = [ctypes.c_void_p, ctypes.c_uint32,
+                                           ctypes.POINTER(ctypes.c_void_p)]
+      security.OpenProcessToken.restype = ctypes.c_int
+      security.LookupPrivilegeValueW.argtypes = [ctypes.c_wchar_p,
+          ctypes.c_wchar_p, ctypes.POINTER(Luid)]
+      security.LookupPrivilegeValueW.restype = ctypes.c_int
+      security.AdjustTokenPrivileges.argtypes = [ctypes.c_void_p, ctypes.c_int,
+          ctypes.POINTER(Privileges), ctypes.c_uint32,
+          ctypes.POINTER(Privileges), ctypes.POINTER(ctypes.c_uint32)]
+      security.AdjustTokenPrivileges.restype = ctypes.c_int
+      requested, previous = Privileges(3), Privileges()
+      size, token = ctypes.c_uint32(), ctypes.c_void_p()
+      for index, name in enumerate(('SeRestorePrivilege', 'SeBackupPrivilege',
+                                    'SeSecurityPrivilege')):
+          entry = requested.entries[index]
+          if not security.LookupPrivilegeValueW(None, name,
+                                                  ctypes.byref(entry.luid)):
+              raise ctypes.WinError(ctypes.get_last_error())
+          entry.attributes = 2
+      if not security.OpenProcessToken(kernel.GetCurrentProcess(), 0x28,
+                                        ctypes.byref(token)):
+          raise ctypes.WinError(ctypes.get_last_error())
+      try:
+          ctypes.set_last_error(0)
+          if not security.AdjustTokenPrivileges(token, False,
+              ctypes.byref(requested), ctypes.sizeof(previous),
+              ctypes.byref(previous), ctypes.byref(size)):
+              raise ctypes.WinError(ctypes.get_last_error())
+          error = ctypes.get_last_error()
+          try:
+              if error:
+                  raise ctypes.WinError(error)
+              yield security
+          finally:
+              if not security.AdjustTokenPrivileges(token, False,
+                  ctypes.byref(previous), 0, None, None):
+                  raise ctypes.WinError(ctypes.get_last_error())
+      finally:
+          kernel.CloseHandle(token)
+
+  def registry_security(key):
+      library = ctypes.WinDLL('advapi32', use_last_error=True)
+      library.RegGetKeySecurity.argtypes = [ctypes.c_void_p, ctypes.c_uint32,
+          ctypes.c_void_p, ctypes.POINTER(ctypes.c_uint32)]
+      library.RegGetKeySecurity.restype = ctypes.c_int32
+      size = ctypes.c_uint32()
+      status = library.RegGetKeySecurity(int(key), 15, None,
+                                          ctypes.byref(size))
+      if status not in (0, 122):
+          raise ctypes.WinError(status)
+      buffer = ctypes.create_string_buffer(size.value)
+      status = library.RegGetKeySecurity(int(key), 15, buffer,
+                                          ctypes.byref(size))
+      if status:
+          raise ctypes.WinError(status)
+      return binascii.hexlify(buffer.raw[:size.value]).decode('ascii')
+
+  def registry(path):
+      try:
+          key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, path, 0,
+                               winreg.KEY_READ | 0x01000000)
+      except FileNotFoundError:
+          return None
+      with key:
+          result = {'values': {}, 'children': {},
+                    'security': registry_security(key)}
+          children, values, _modified = winreg.QueryInfoKey(key)
+          for index in range(values):
+              name, value, kind = winreg.EnumValue(key, index)
+              if isinstance(value, bytes):
+                  value = {'hex': binascii.hexlify(value).decode('ascii')}
+              result['values'][name] = [value, kind]
+          for index in range(children):
+              name = winreg.EnumKey(key, index)
+              result['children'][name] = registry(path + '\\' + name)
+          return result
+
+  class Guid(ctypes.Structure):
+      _fields_ = [('parts', ctypes.c_uint32 * 4)]
+
+  def method(interface, slot, result, arguments):
+      table = ctypes.cast(interface,
+          ctypes.POINTER(ctypes.POINTER(ctypes.c_void_p)))[0]
+      prototype = ctypes.WINFUNCTYPE(result, ctypes.c_void_p, *arguments)
+      return prototype(table[slot])
+
+  def check(status):
+      if status & 0x80000000:
+          raise OSError('Firewall COM HRESULT 0x{0:08X}'.format(
+              status & 0xffffffff))
+
+  def release(interface):
+      if interface:
+          method(interface, 2, ctypes.c_uint32, [])(interface)
+
+  def com_profiles(classic_domain=None, policy2_domain=None):
+      ole = ctypes.WinDLL('ole32')
+      ole.CoInitializeEx.argtypes = [ctypes.c_void_p, ctypes.c_uint32]
+      ole.CoInitializeEx.restype = ctypes.c_int32
+      ole.CoUninitialize.argtypes = []
+      ole.CoUninitialize.restype = None
+      ole.CoCreateInstance.argtypes = [ctypes.POINTER(Guid), ctypes.c_void_p,
+          ctypes.c_uint32, ctypes.POINTER(Guid),
+          ctypes.POINTER(ctypes.c_void_p)]
+      ole.CoCreateInstance.restype = ctypes.c_int32
+      initialized = ole.CoInitializeEx(None, 0)
+      owned = initialized & 0xffffffff != 0x80010106
+      if owned:
+          check(initialized)
+      policy = ctypes.c_void_p()
+      try:
+          clsid = Guid.from_buffer_copy(uuid.UUID(
+              'e2b3c97f-6ae1-41ac-817a-f6f92166d7dd').bytes_le)
+          iid = Guid.from_buffer_copy(uuid.UUID(
+              '98325047-c671-4174-8d81-defcd3f03186').bytes_le)
+          status = ole.CoCreateInstance(ctypes.byref(clsid), None, 1,
+              ctypes.byref(iid), ctypes.byref(policy))
+          if status & 0xffffffff == 0x80040154:
+              if policy2_domain is not None:
+                  raise ValueError('The three-profile facility is unavailable')
+              return legacy_profiles(ole, classic_domain)
+          check(status)
+          if classic_domain is not None:
+              raise ValueError('Fixture writes only a genuine classic '
+                               'Domain profile')
+          if policy2_domain is not None:
+              settings = {'enabled': (9, ctypes.c_int16, (-1, 0)),
+                          'inbound': (24, ctypes.c_int32, (0, 1)),
+                          'outbound': (26, ctypes.c_int32, (0, 1))}
+              for name, value in policy2_domain.items():
+                  if name not in settings or value not in settings[name][2]:
+                      raise ValueError('Invalid native Domain setting')
+                  slot, value_type, _choices = settings[name]
+                  check(method(policy, slot, ctypes.c_int32,
+                      [ctypes.c_int32, value_type])(policy, 1, value))
+          current = ctypes.c_int32()
+          check(method(policy, 7, ctypes.c_int32,
+              [ctypes.POINTER(ctypes.c_int32)])(policy, ctypes.byref(current)))
+          result = {'current': current.value, 'profiles': {}}
+          for name, profile in (('Domain', 1), ('Private', 2), ('Public', 4)):
+              row = {}
+              for key, slot, value_type in (('enabled', 8, ctypes.c_int16),
+                  ('inbound', 23, ctypes.c_int32),
+                  ('outbound', 25, ctypes.c_int32)):
+                  value = value_type()
+                  check(method(policy, slot, ctypes.c_int32, [ctypes.c_int32,
+                      ctypes.POINTER(value_type)])(policy, profile,
+                      ctypes.byref(value)))
+                  row[key] = value.value
+              result['profiles'][name] = row
+          return result
+      finally:
+          release(policy)
+          if owned:
+              ole.CoUninitialize()
+
+  def legacy_profiles(ole, domain_enabled=None):
+      manager, policy = ctypes.c_void_p(), ctypes.c_void_p()
+      try:
+          clsid = Guid.from_buffer_copy(uuid.UUID(
+              '304ce942-6e39-40d8-943a-b913c40c9cd4').bytes_le)
+          iid = Guid.from_buffer_copy(uuid.UUID(
+              'f7898af5-cac4-4632-a2ec-da06e5111af2').bytes_le)
+          check(ole.CoCreateInstance(ctypes.byref(clsid), None, 1,
+              ctypes.byref(iid), ctypes.byref(manager)))
+          check(method(manager, 7, ctypes.c_int32,
+              [ctypes.POINTER(ctypes.c_void_p)])(manager, ctypes.byref(policy)))
+          current = ctypes.c_int32()
+          check(method(manager, 8, ctypes.c_int32,
+              [ctypes.POINTER(ctypes.c_int32)])(manager, ctypes.byref(current)))
+          result = {'current_legacy': current.value, 'profiles': {}}
+          for name, profile_type in (('Domain', 0), ('Standard', 1)):
+              profile = ctypes.c_void_p()
+              try:
+                  check(method(policy, 8, ctypes.c_int32, [ctypes.c_int32,
+                      ctypes.POINTER(ctypes.c_void_p)])(policy, profile_type,
+                      ctypes.byref(profile)))
+                  if name == 'Domain' and domain_enabled is not None:
+                      check(method(profile, 9, ctypes.c_int32,
+                          [ctypes.c_int16])(profile,
+                          -1 if domain_enabled else 0))
+                  enabled = ctypes.c_int16()
+                  check(method(profile, 8, ctypes.c_int32,
+                      [ctypes.POINTER(ctypes.c_int16)])(profile,
+                      ctypes.byref(enabled)))
+                  result['profiles'][name] = {'enabled': enabled.value}
+              finally:
+                  release(profile)
+          return result
+      finally:
+          release(policy)
+          release(manager)
+
+  def netsh(arguments, modern=True):
+      tool = os.path.join(os.environ['SystemRoot'], 'System32', 'netsh.exe')
+      command = [tool, 'advfirewall' if modern else 'firewall'] + arguments
+      with subprocess.Popen(command, stdout=subprocess.PIPE,
+                             stderr=subprocess.PIPE) as process:
+          stdout, stderr = process.communicate()
+          return {'rc': process.returncode, 'stdout': stdout.decode('mbcs'),
+                  'stderr': stderr.decode('mbcs')}
+
+  def snapshot():
+      with WmiConnection(r'ROOT\CIMV2') as connection:
+          services = connection.query(
+              "SELECT * FROM Win32_Service WHERE Name='SharedAccess' "
+              "OR Name='MpsSvc' OR Name='BFE'",
+              ['Name', 'State', 'StartMode', 'Started', 'ProcessId',
+               'StartName'])
+          network = connection.query(
+              'SELECT * FROM Win32_NetworkAdapterConfiguration '
+              'WHERE IPEnabled=TRUE',
+              ['Index', 'MACAddress', 'IPAddress', 'IPSubnet',
+               'DefaultIPGateway', 'DNSServerSearchOrder', 'DHCPEnabled'])
+      configured = None
+      try:
+          with WmiConnection(r'ROOT\StandardCimv2') as connection:
+              configured = connection.query(
+                  'SELECT * FROM MSFT_NetFirewallProfile', [
+                  'Name', 'Enabled', 'DefaultInboundAction',
+                  'DefaultOutboundAction', 'AllowInboundRules',
+                  'AllowLocalFirewallRules', 'AllowLocalIPsecRules',
+                  'AllowUserApps', 'AllowUserPorts',
+                  'AllowUnicastResponseToMulticast', 'NotifyOnListen',
+                  'EnableStealthModeForIPsec', 'LogFileName',
+                  'LogMaxSizeKilobytes', 'LogAllowed', 'LogBlocked',
+                  'LogIgnored', 'DisabledInterfaceAliases', 'InstanceID'])
+      except OSError as error:
+          if getattr(error, 'hresult', None) not in (0x8004100e, 0x80041010):
+              raise
+      native = com_profiles()
+      modern = configured is not None or 'current' in native
+      return {'registry': {path: registry(path) for path in paths},
+          'services': sorted(services, key=lambda item: item['Name']),
+          'network': sorted(network, key=lambda item: item['Index']),
+          'configured': configured, 'native': native,
+          'effective': netsh(['show', 'allprofiles'] if modern else
+                             ['show', 'config', 'verbose=enable'], modern)}
+
+  def journal():
+      with open(journal_path, encoding='utf-8') as stream:
+          record = json.load(stream)
+      if record['workspace'] != workspace or record['policy'] != policy_path:
+          raise ValueError('Journal does not own this workspace '
+                           'and policy backup')
+      if record['digest'] is not None:
+          with open(policy_path, 'rb') as stream:
+              digest = hashlib.sha256(stream.read()).hexdigest()
+          if digest != record['digest']:
+              raise ValueError('Firewall policy backup changed')
+      return record
+
+  def setup():
+      if os.path.exists(journal_path) or os.path.exists(policy_path):
+          raise ValueError('Existing recovery data must not be overwritten')
+      before = snapshot()
+      policy2 = (before['configured'] is None and
+                 set(('Domain', 'Private', 'Public')) <=
+                 set(before['native']['profiles']))
+      supported = before['configured'] is not None or policy2
+      if (policy2 and 'DomainProfile' not in
+              before['registry'][base]['children']):
+          raise ValueError('Policy2 fixture requires its existing Domain key')
+      if supported and before['native']['current'] != 4:
+          raise ValueError('Fixture requires inactive Domain/Private '
+                           'and active Public')
+      if 'current_legacy' in before['native']:
+          if before['native']['current_legacy'] != 1:
+              raise ValueError('Classic fixture requires inactive Domain '
+                               'and active Standard')
+      digest = None
+      if before['configured'] is not None:
+          exported = netsh(['export', policy_path])
+          if exported['rc']:
+              raise OSError('Firewall export failed: ' + exported['stdout'])
+          with open(policy_path, 'rb') as stream:
+              digest = hashlib.sha256(stream.read()).hexdigest()
+      record = {'workspace': workspace, 'policy': policy_path,
+                'digest': digest, 'before': before}
+      with open(journal_path, 'x', encoding='utf-8') as stream:
+          json.dump(record, stream, sort_keys=True)
+          stream.flush()
+          os.fsync(stream.fileno())
+      if journal() != record or snapshot() != before:
+          raise ValueError('Firewall snapshot changed before first mutation')
+      return {'journaled': True, 'supported': supported,
+              'digest': digest, 'snapshot': before}
+
+  def empty_tree(node):
+      return not node['values'] and all(empty_tree(child)
+          for child in node['children'].values())
+
+  def delete_empty(path):
+      node = registry(path)
+      if node is None or not empty_tree(node):
+          raise ValueError('Recovery target is not a newly created '
+                           'empty container')
+      for name in node['children']:
+          delete_empty(path + '\\' + name)
+      winreg.DeleteKey(winreg.HKEY_LOCAL_MACHINE, path)
+
+  def restore_rule_security(encoded):
+      library = ctypes.WinDLL('advapi32', use_last_error=True)
+      library.RegCreateKeyExW.argtypes = [ctypes.c_void_p, ctypes.c_wchar_p,
+          ctypes.c_uint32, ctypes.c_wchar_p, ctypes.c_uint32, ctypes.c_uint32,
+          ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p),
+          ctypes.POINTER(ctypes.c_uint32)]
+      library.RegCreateKeyExW.restype = ctypes.c_int32
+      library.RegCloseKey.argtypes = [ctypes.c_void_p]
+      library.RegCloseKey.restype = ctypes.c_int32
+      library.SetSecurityInfo.argtypes = [ctypes.c_void_p, ctypes.c_int,
+          ctypes.c_uint32, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p,
+          ctypes.c_void_p]
+      library.SetSecurityInfo.restype = ctypes.c_uint32
+      for suffix in ('Owner', 'Group'):
+          function = getattr(library, 'GetSecurityDescriptor' + suffix)
+          function.argtypes = [ctypes.c_void_p,
+              ctypes.POINTER(ctypes.c_void_p), ctypes.POINTER(ctypes.c_int)]
+          function.restype = ctypes.c_int
+      for suffix in ('Dacl', 'Sacl'):
+          function = getattr(library, 'GetSecurityDescriptor' + suffix)
+          function.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_int),
+              ctypes.POINTER(ctypes.c_void_p), ctypes.POINTER(ctypes.c_int)]
+          function.restype = ctypes.c_int
+      handle, disposition = ctypes.c_void_p(), ctypes.c_uint32()
+      status = library.RegCreateKeyExW(int(winreg.HKEY_LOCAL_MACHINE),
+          base + '\\FirewallRules', 0, None, 4, 0, None,
+          ctypes.byref(handle), ctypes.byref(disposition))
+      if status:
+          raise ctypes.WinError(status)
+      try:
+          if disposition.value != 2:
+              raise ValueError('Recovery security target was not '
+                               'already present')
+          descriptor = ctypes.create_string_buffer(binascii.unhexlify(encoded))
+          owner, group, dacl, sacl = (ctypes.c_void_p() for _index in range(4))
+          defaulted, present = ctypes.c_int(), ctypes.c_int()
+          descriptors = ((library.GetSecurityDescriptorOwner, owner),
+                         (library.GetSecurityDescriptorGroup, group))
+          for function, pointer in descriptors:
+              if not function(descriptor, ctypes.byref(pointer),
+                              ctypes.byref(defaulted)):
+                  raise ctypes.WinError(ctypes.get_last_error())
+          if not library.GetSecurityDescriptorDacl(descriptor,
+              ctypes.byref(present), ctypes.byref(dacl),
+              ctypes.byref(defaulted)):
+              raise ctypes.WinError(ctypes.get_last_error())
+          if not present.value or not dacl.value:
+              raise ValueError('Journal security requires a non-null DACL')
+          if not library.GetSecurityDescriptorSacl(descriptor,
+              ctypes.byref(present), ctypes.byref(sacl),
+              ctypes.byref(defaulted)):
+              raise ctypes.WinError(ctypes.get_last_error())
+          flags = 7 | (8 if present.value else 0)
+          status = library.SetSecurityInfo(handle, 4, flags,
+                                            owner, group, dacl, sacl)
+          if status:
+              raise ctypes.WinError(status)
+      finally:
+          library.RegCloseKey(handle)
+
+  def repair_import(original, current):
+      predicted = copy.deepcopy(current)
+      extra, logs = [], []
+      for profile in profile_keys.values():
+          before = original['registry'][base]['children'][profile]
+          after = predicted['registry'][base]['children'][profile]
+          for name in ('AuthorizedApplications', 'GloballyOpenPorts'):
+              if name not in before['children'] and name in after['children']:
+                  if not empty_tree(after['children'][name]):
+                      raise ValueError('An added registry container '
+                                       'is not empty')
+                  del after['children'][name]
+                  extra.append(base + '\\' + profile + '\\' + name)
+          prior = before['children']['Logging']['values']['LogFilePath']
+          actual = after['children']['Logging']['values']['LogFilePath']
+          if prior != actual:
+              if prior[0] != actual[0] or prior[1] != 2 or actual[1] != 1:
+                  raise ValueError('Unexpected logging value change')
+              after['children']['Logging']['values']['LogFilePath'] = prior
+              logs.append((base + '\\' + profile + '\\Logging', prior))
+      rules = original['registry'][base]['children']['FirewallRules']
+      predicted_rules = predicted['registry'][base]['children']['FirewallRules']
+      if predicted_rules['children']:
+          raise ValueError('FirewallRules security recovery requires '
+                           'a childless key')
+      predicted_rules['security'] = rules['security']
+      if predicted != original:
+          raise ValueError('Recovery found changes outside measured '
+                           'import effects')
+      for path in extra:
+          delete_empty(path)
+      for path, (value, kind) in logs:
+          with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, path, 0,
+                               winreg.KEY_SET_VALUE) as key:
+              winreg.SetValueEx(key, 'LogFilePath', 0, kind, value)
+              winreg.FlushKey(key)
+      actual_rules = current['registry'][base]['children']['FirewallRules']
+      actual_security = actual_rules['security']
+      if actual_security != rules['security']:
+          restore_rule_security(rules['security'])
+      return {'removed_empty_keys': extra,
+              'restored_value_types': [path for path, _value in logs]}
+
+  def seed(name, property_name, value):
+      record = journal()
+      if 'current_legacy' in record['before']['native']:
+          if ((name, property_name) != ('Domain', 'Enabled') or
+                  value not in (0, 1)):
+              raise ValueError('Only the inactive classic Domain state '
+                               'can be seeded')
+          com_profiles(bool(value))
+          return snapshot()
+      if record['before']['configured'] is None:
+          if ((name, property_name) != ('Domain', 'Enabled') or
+                  value not in (0, 1)):
+              raise ValueError('Only the inactive native Domain state '
+                               'can be seeded')
+          com_profiles(policy2_domain={'enabled': -1 if value else 0})
+          return snapshot()
+      if name not in ('Domain', 'Private') or property_name not in (
+          'Enabled', 'DefaultInboundAction', 'DefaultOutboundAction'):
+          raise ValueError('Only inactive journaled profile enums '
+                           'can be seeded')
+      with WmiConnection(r'ROOT\StandardCimv2') as connection:
+          rows = connection.query(
+              "SELECT * FROM MSFT_NetFirewallProfile WHERE Name='" + name + "'",
+              ['__PATH'])
+          connection.set_integer_property(rows[0]['__PATH'],
+                                          property_name, value)
+      return snapshot()
+
+  def cleanup():
+      if not os.path.exists(journal_path):
+          return {'restored': True, 'journal_absent': True}
+      record = journal()
+      original, current = record['before'], snapshot()
+      if 'current_legacy' in original['native']:
+          desired = original['native']['profiles']['Domain']['enabled']
+          if current['native']['profiles']['Domain']['enabled'] != desired:
+              com_profiles(desired != 0)
+              current = snapshot()
+          # Native setters can materialize an originally absent scalar. Restore
+          # only that owned value, after rejecting every unrelated difference.
+          predicted = copy.deepcopy(current)
+          original_domain = original['registry'][base]['children'].get(
+              'DomainProfile')
+          current_domain = current['registry'][base]['children'].get(
+              'DomainProfile')
+          if original_domain is None:
+              if current_domain is not None:
+                  if (current_domain['children'] or
+                      set(current_domain['values']) != {'EnableFirewall'}):
+                      raise ValueError('New Domain key contains changes '
+                                       'outside the owned enabled scalar')
+                  del predicted['registry'][base]['children']['DomainProfile']
+          else:
+              previous = original_domain['values']
+              actual = predicted['registry'][base]['children'][
+                  'DomainProfile']['values']
+              if 'EnableFirewall' in previous:
+                  actual['EnableFirewall'] = previous['EnableFirewall']
+              else:
+                  actual.pop('EnableFirewall', None)
+          if predicted != original:
+              raise ValueError('Classic recovery found changes outside '
+                               'the owned Domain enabled scalar')
+          if current != original:
+              if original_domain is None:
+                  winreg.DeleteKey(winreg.HKEY_LOCAL_MACHINE,
+                                   base + '\\DomainProfile')
+              else:
+                  with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,
+                      base + '\\DomainProfile', 0,
+                      winreg.KEY_SET_VALUE) as key:
+                      if 'EnableFirewall' in previous:
+                          value, kind = previous['EnableFirewall']
+                          winreg.SetValueEx(key, 'EnableFirewall', 0,
+                                           kind, value)
+                      else:
+                          winreg.DeleteValue(key, 'EnableFirewall')
+                      winreg.FlushKey(key)
+              current = snapshot()
+      if (original['configured'] is None and
+              'Domain' in original['native']['profiles'] and
+              'current' in original['native']):
+          com_profiles(policy2_domain=original['native']['profiles']['Domain'])
+          current = snapshot()
+          original_domain = original['registry'][base]['children'].get(
+              'DomainProfile')
+          if original_domain is None:
+              raise ValueError('Policy2 recovery requires its journaled '
+                               'Domain registry key')
+          names = ('EnableFirewall', 'DefaultInboundAction',
+                   'DefaultOutboundAction')
+          predicted = copy.deepcopy(current)
+          actual = predicted['registry'][base]['children'][
+              'DomainProfile']['values']
+          previous = original_domain['values']
+          for name in names:
+              if name in previous:
+                  actual[name] = previous[name]
+              else:
+                  actual.pop(name, None)
+          if predicted != original:
+              raise ValueError('Policy2 recovery found changes outside '
+                               'the owned Domain scalars')
+          with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,
+              base + '\\DomainProfile', 0, winreg.KEY_SET_VALUE) as key:
+              observed = current['registry'][base]['children'][
+                  'DomainProfile']['values']
+              for name in names:
+                  if name in previous:
+                      if observed.get(name) != previous[name]:
+                          value, kind = previous[name]
+                          winreg.SetValueEx(key, name, 0, kind, value)
+                  elif name in observed:
+                      winreg.DeleteValue(key, name)
+              winreg.FlushKey(key)
+          current = snapshot()
+      if original['configured'] is not None:
+          # Restore tested enums natively first, avoiding global import effects.
+          with WmiConnection(r'ROOT\StandardCimv2') as connection:
+              rows = connection.query('SELECT * FROM MSFT_NetFirewallProfile',
+                  ['Name', 'Enabled', 'DefaultInboundAction',
+                   'DefaultOutboundAction', '__PATH'])
+              for row in rows:
+                  before = next(item for item in original['configured']
+                                if item['Name'] == row['Name'])
+                  for name in ('Enabled', 'DefaultInboundAction',
+                               'DefaultOutboundAction'):
+                      if row[name] != before[name]:
+                          connection.set_integer_property(row['__PATH'], name,
+                                                          before[name])
+          current = snapshot()
+      imported, repairs = None, None
+      if current != original:
+          if record['digest'] is None:
+              raise ValueError('Unsupported-host policy changed unexpectedly')
+          imported = netsh(['import', policy_path])
+          if imported['rc']:
+              return {'restored': False, 'import': imported,
+                      'after': snapshot()}
+          current = snapshot()
+          if current != original:
+              repairs = repair_import(original, current)
+              current = snapshot()
+      if current != original:
+          return {'restored': False, 'original': original, 'after': current,
+                  'import': imported, 'repairs': repairs}
+      if record['digest'] is not None:
+          os.remove(policy_path)
+      os.remove(journal_path)
+      return {'restored': True, 'after': current, 'import': imported,
+              'repairs': repairs}
+
+  def main():
+      assert sys.version_info[:3] == (3, 4, 4)
+      with security_privileges():
+          if operation == 'setup':
+              return setup()
+          if operation == 'cleanup':
+              return cleanup()
+          journal()
+          if operation == 'observe':
+              return snapshot()
+          if operation == 'seed':
+              return seed(sys.argv[3], sys.argv[4], int(sys.argv[5]))
+          raise ValueError('Unknown firewall fixture operation')
+
+  if __name__ == '__main__':
+      print(json.dumps(main(), sort_keys=True))

@@ -1,0 +1,24 @@
+---
+package_children_controller_x86: >-
+  {{ playbook_dir }}/../../tmp/codex/artifacts/package-children-x86
+package_children_program: |
+  import base64
+  import sys
+  import types
+  {% for name in package_registry_helper_names %}
+  helper = types.ModuleType('{{ name }}')
+  sys.modules[helper.__name__] = helper
+  source = '{{ lookup("file",
+      playbook_dir + "/../../plugins/module_utils/" + name + ".py")
+      | b64encode }}'
+  exec(compile(base64.b64decode(source), helper.__name__ + '.py', 'exec'),
+       helper.__dict__)
+  {% endfor %}
+  base = types.ModuleType('package_registry_fixture')
+  sys.modules[base.__name__] = base
+  source = '{{ package_registry_fixture_source | b64encode }}'
+  exec(compile(base64.b64decode(source), 'registry_fixture.py', 'exec'),
+       base.__dict__)
+  source = '{{ lookup("file",
+      playbook_dir + "/fixtures/package_children_fixture.py") | b64encode }}'
+  exec(compile(base64.b64decode(source), 'package_children_fixture.py', 'exec'))

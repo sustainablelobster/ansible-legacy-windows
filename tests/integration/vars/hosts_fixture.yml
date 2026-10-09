@@ -1,0 +1,254 @@
+---
+hosts_fixture: |
+  # Copyright 2026 Joe Lustri
+  # SPDX-License-Identifier: GPL-3.0-or-later
+  """Back up the real hosts file and verify its exact restoration."""
+
+  import base64
+  import ctypes
+  import hashlib
+  import ipaddress
+  import json
+  import os
+  import sys
+
+  assert sys.version_info[:3] == (3, 4, 4)
+  WORKSPACE, OPERATION = sys.argv[1:3]
+  HOSTS = os.path.join(os.environ["SystemRoot"], "System32", "drivers",
+                       "etc", "hosts")
+  BACKUP = os.path.join(WORKSPACE, "hosts-original.bin")
+  JOURNAL = os.path.join(WORKSPACE, "hosts-recovery.json")
+  CONTENT = (
+      b"# legacy-windows hosts fixture\r\n"
+      b"  # untouched comment\r\n"
+      b"192.0.2.10   alpha.invalid old.invalid keep.invalid"
+      b"   # alpha comment\r\n"
+      b"2001:db8::10 alpha.invalid six.invalid # other family\r\n"
+      b"192.0.2.20 beta.invalid shared.invalid # beta comment\r\n"
+      b"192.0.2.30 moving.invalid carry.invalid\r\n"
+      b"192.0.2.40 CASE.invalid MiXeD.invalid # spelling\r\n"
+      b"unrecognized-fixture-line\r\n"
+      b"\r\n# last comment without terminator"
+  )
+  INVALID_LINE = b"malformed fixture.invalid not-an-address\r\n"
+  KERNEL = ctypes.WinDLL("kernel32", use_last_error=True)
+  SECURITY = ctypes.WinDLL("advapi32", use_last_error=True)
+  POINTER, DWORD = ctypes.c_void_p, ctypes.c_uint32
+
+
+  class FileTime(ctypes.Structure):
+      _fields_ = [("low", DWORD), ("high", DWORD)]
+
+
+  def bind(library, name, result, arguments):
+      function = getattr(library, name)
+      function.restype, function.argtypes = result, arguments
+      return function
+
+
+  create_file = bind(KERNEL, "CreateFileW", POINTER,
+                     [ctypes.c_wchar_p, DWORD, DWORD, POINTER, DWORD,
+                      DWORD, POINTER])
+  close_handle = bind(KERNEL, "CloseHandle", ctypes.c_int, [POINTER])
+  read_file = bind(KERNEL, "ReadFile", ctypes.c_int,
+                   [POINTER, POINTER, DWORD, POINTER, POINTER])
+  get_times = bind(KERNEL, "GetFileTime", ctypes.c_int, [POINTER] * 4)
+  set_times = bind(KERNEL, "SetFileTime", ctypes.c_int, [POINTER] * 4)
+  get_attributes = bind(KERNEL, "GetFileAttributesW", DWORD,
+                        [ctypes.c_wchar_p])
+  set_attributes = bind(KERNEL, "SetFileAttributesW", ctypes.c_int,
+                        [ctypes.c_wchar_p, DWORD])
+  get_security = bind(SECURITY, "GetFileSecurityW", ctypes.c_int,
+                      [ctypes.c_wchar_p, DWORD, POINTER, DWORD, POINTER])
+  set_security = bind(SECURITY, "SetFileSecurityW", ctypes.c_int,
+                      [ctypes.c_wchar_p, DWORD, POINTER])
+  get_control = bind(SECURITY, "GetSecurityDescriptorControl", ctypes.c_int,
+                     [POINTER] * 3)
+
+
+  def require(result):
+      if not result:
+          raise ctypes.WinError(ctypes.get_last_error())
+
+
+  def encoded(data):
+      return base64.b64encode(data).decode("ascii")
+
+
+  def security_descriptor():
+      size = DWORD()
+      if not get_security(HOSTS, 7, None, 0, ctypes.byref(size)):
+          if ctypes.get_last_error() != 122:
+              raise ctypes.WinError(ctypes.get_last_error())
+      buffer = ctypes.create_string_buffer(size.value)
+      require(get_security(HOSTS, 7, buffer, len(buffer), ctypes.byref(size)))
+      return encoded(buffer.raw[:size.value])
+
+
+  def observe():
+      handle = create_file(HOSTS, 0x80000100, 7, None, 3, 0, None)
+      if handle == POINTER(-1).value:
+          raise ctypes.WinError(ctypes.get_last_error())
+      try:
+          # The documented all-ones sentinel prevents this handle's reads from
+          # scheduling a last-access update, including on Windows XP.
+          unchanged = FileTime(0xffffffff, 0xffffffff)
+          require(set_times(handle, None, ctypes.byref(unchanged), None))
+          times = [FileTime(), FileTime(), FileTime()]
+          require(get_times(handle, *[ctypes.byref(value) for value in times]))
+          chunks = []
+          buffer, count = ctypes.create_string_buffer(65536), DWORD()
+          while True:
+              require(read_file(handle, buffer, len(buffer),
+                                ctypes.byref(count), None))
+              if not count.value:
+                  break
+              chunks.append(buffer.raw[:count.value])
+          attributes = get_attributes(HOSTS)
+          if attributes == 0xffffffff:
+              raise ctypes.WinError(ctypes.get_last_error())
+          return b"".join(chunks), {
+              "created": (times[0].high << 32) | times[0].low,
+              "accessed": (times[1].high << 32) | times[1].low,
+              "written": (times[2].high << 32) | times[2].low,
+              "attributes": attributes, "security": security_descriptor(),
+          }
+      finally:
+          require(close_handle(handle))
+
+
+  def save_journal(state, mode):
+      with open(JOURNAL, mode) as stream:
+          json.dump(state, stream)
+          stream.flush()
+          os.fsync(stream.fileno())
+
+
+  def read_journal():
+      with open(JOURNAL) as stream:
+          state = json.load(stream)
+      assert state["path"] == HOSTS, "Recovery journal identifies another file"
+      return state
+
+
+  def backup():
+      assert not os.path.exists(JOURNAL), "Recovery journal already exists"
+      original, metadata = observe()
+      with open(BACKUP, "xb") as stream:
+          stream.write(original)
+          stream.flush()
+          os.fsync(stream.fileno())
+      with open(BACKUP, "rb") as stream:
+          assert stream.read() == original, "Backup byte verification failed"
+      state = {
+          "path": HOSTS, "metadata": metadata,
+          "sha256": hashlib.sha256(original).hexdigest(),
+          "size": len(original), "restored": False,
+          "fixture_attributes": (metadata["attributes"] & ~0x81) | 0x20,
+      }
+      save_journal(state, "x")
+      assert read_journal() == state, "Recovery journal verification failed"
+      return state
+
+
+  def write_contents(data, attributes):
+      require(set_attributes(HOSTS, (attributes & ~0x81) or 0x80))
+      with open(HOSTS, "wb") as stream:
+          stream.write(data)
+          stream.flush()
+          os.fsync(stream.fileno())
+      require(set_attributes(HOSTS, attributes))
+
+
+  def restore_metadata(metadata):
+      if security_descriptor() != metadata["security"]:
+          descriptor = ctypes.create_string_buffer(
+              base64.b64decode(metadata["security"])
+          )
+          control, revision = ctypes.c_uint16(), DWORD()
+          require(get_control(descriptor, ctypes.byref(control),
+                              ctypes.byref(revision)))
+          flags = 7 | (0x80000000 if control.value & 0x1000 else 0x20000000)
+          require(set_security(HOSTS, flags, descriptor))
+      require(set_attributes(HOSTS, metadata["attributes"]))
+      handle = create_file(HOSTS, 0x100, 7, None, 3, 0, None)
+      if handle == POINTER(-1).value:
+          raise ctypes.WinError(ctypes.get_last_error())
+      try:
+          times = [FileTime(metadata[name] & 0xffffffff, metadata[name] >> 32)
+                   for name in ("created", "accessed", "written")]
+          require(set_times(handle, *[ctypes.byref(value) for value in times]))
+      finally:
+          require(close_handle(handle))
+
+
+  def cleanup(state):
+      with open(BACKUP, "rb") as stream:
+          original = stream.read()
+      assert len(original) == state["size"], "Backup length changed"
+      assert hashlib.sha256(original).hexdigest() == state["sha256"], (
+          "Backup digest changed; refusing to overwrite hosts"
+      )
+      write_contents(original, state["metadata"]["attributes"])
+      restore_metadata(state["metadata"])
+      actual, metadata = observe()
+      assert actual == original, "Restored hosts bytes differ from backup"
+      assert metadata == state["metadata"], (
+          "Restored metadata differs", state["metadata"], metadata
+      )
+      state["restored"] = True
+      save_journal(state, "w")
+
+
+  def entries(data):
+      result = []
+      # Token assertions use ASCII fixture names; base64 retains every byte,
+      # including comments used to probe the provider's output encoding.
+      for line in data.decode("latin-1").splitlines():
+          parts = line.split("#", 1)[0].split()
+          if len(parts) < 2:
+              continue
+          try:
+              ipaddress.ip_address(parts[0])
+          except ValueError:
+              continue
+          result.append({
+              "ip_address": parts[0], "canonical_name": parts[1],
+              "aliases": parts[2:],
+          })
+      return result
+
+
+  assert OPERATION in (
+      "setup", "observe", "cleanup", "insert_invalid", "remove_invalid"
+  ), OPERATION
+  if OPERATION == "cleanup" and not os.path.exists(JOURNAL):
+      print(json.dumps({"restored": True, "backup_created": False}))
+      sys.exit(0)
+  if OPERATION == "setup":
+      state = backup()
+      write_contents(CONTENT, state["fixture_attributes"])
+  else:
+      state = read_journal()
+  if OPERATION in ("insert_invalid", "remove_invalid"):
+      assert not state["restored"], "The original hosts file is restored"
+      data, metadata = observe()
+      if OPERATION == "insert_invalid":
+          assert INVALID_LINE not in data, "Malformed fixture already exists"
+          data = INVALID_LINE + data
+      else:
+          assert data.startswith(INVALID_LINE), "Malformed fixture is absent"
+          data = data[len(INVALID_LINE):]
+      write_contents(data, state["fixture_attributes"])
+  if OPERATION == "cleanup":
+      cleanup(state)
+      print(json.dumps({"restored": True, "backup_created": True}))
+  else:
+      data, metadata = observe()
+      for name in ("created", "security"):
+          assert metadata[name] == state["metadata"][name], name
+      assert metadata["attributes"] == state["fixture_attributes"]
+      print(json.dumps({
+          "path": HOSTS, "bytes": encoded(data), "entries": entries(data),
+          "metadata": metadata,
+      }))

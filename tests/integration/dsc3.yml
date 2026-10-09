@@ -1,0 +1,153 @@
+---
+- name: Verify DSC v3 through a portable engine and recover owned state
+  hosts: legacy_windows
+  gather_facts: false
+  vars_files:
+    - vars/dsc3.yml
+    - vars/dsc3_fixture.yml
+  tasks:
+    - name: Require actual Python 3.4.4 and observe original task staging
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import glob,json,os,sys,tempfile;
+        assert sys.version_info[:3] == (3,4,4);
+        print(json.dumps(sorted(glob.glob(os.path.join(tempfile.gettempdir(),
+        'ansible-tmp-*')))))""
+      register: dsc3_staging_before
+      changed_when: false
+
+    - name: Allocate private evidence capture before target writes
+      ansible.builtin.tempfile:
+        state: file
+        path: "{{ playbook_dir }}/../../tmp"
+        prefix: "dsc3-{{ inventory_hostname }}-"
+        suffix: .json
+      register: dsc3_capture
+      delegate_to: localhost
+
+    - name: Exercise actual engine with journaled recovery
+      block:
+        - name: Allocate uniquely owned portable engine workspace
+          sustainablelobster.legacy_windows.win_tempfile: # noqa: args[module]
+            state: directory
+            prefix: legacy-windows-dsc-
+          register: dsc3_workspace
+
+        - name: Stage pinned official archive without a global installation
+          sustainablelobster.legacy_windows.win_copy: # noqa: args[module]
+            src: "{{ dsc3_archive }}"
+            dest: "{{ dsc3_workspace.path }}\\dsc.zip"
+
+        - name: Verify engine archive and journal protected original state
+          sustainablelobster.legacy_windows.win_command: # noqa: args[module]
+            argv:
+              - "{{ ansible_python_interpreter }}"
+              - "-"
+              - "{{ dsc3_workspace.path }}"
+              - setup
+            stdin: "{{ dsc3_fixture }}"
+          register: dsc3_setup
+          changed_when: true
+          no_log: true
+
+        - name: Select independently observed engine and registry paths
+          ansible.builtin.set_fact:
+            dsc3_engine: "{{ (dsc3_setup.stdout | from_json).engine }}"
+            dsc3_key_path: "{{ (dsc3_setup.stdout | from_json).key_path }}"
+            dsc3_path_env: "{{ (dsc3_setup.stdout | from_json).path_env }}"
+
+        - name: Exercise declared public requests and optional source comparison
+          ansible.builtin.include_tasks: tasks/dsc3_case.yml
+          loop: >-
+            {{ dsc3_cases[dsc3_case_start | int:] |
+               product(['native', 'original'] if dsc3_compare else ['native']) |
+               list }}
+          loop_control:
+            loop_var: dsc3_case_phase
+            label: "{{ dsc3_case_phase[0].name }} / {{ dsc3_case_phase[1] }}"
+          vars:
+            dsc3_case: "{{ dsc3_case_phase[0] }}"
+            dsc3_phase: "{{ dsc3_case_phase[1] }}"
+      always:
+        - name: Recover journal-owned key and verify engine and config bytes
+          sustainablelobster.legacy_windows.win_command: # noqa: args[module]
+            argv:
+              - "{{ ansible_python_interpreter }}"
+              - "-"
+              - "{{ dsc3_workspace.path }}"
+              - cleanup
+            stdin: "{{ dsc3_fixture }}"
+          register: dsc3_recovery
+          changed_when: true
+          failed_when: false
+          no_log: true
+          when: dsc3_workspace.path is defined
+
+        - name: Save complete raw requests and recovery before asserting cleanup
+          ansible.builtin.copy:
+            content: >-
+              {{ {'setup': dsc3_setup | default({}),
+                  'workspace': dsc3_workspace.path | default(none),
+                  'records': dsc3_results | default([]),
+                  'interrupted_result': dsc3_case_result | default({}),
+                  'recovery': dsc3_recovery | default({}),
+                  'staging_before': dsc3_staging_before} | to_nice_json }}
+            dest: "{{ dsc3_capture.path }}"
+            mode: "0600"
+          delegate_to: localhost
+
+        - name: Require literal protected key recovery
+          ansible.builtin.assert:
+            that:
+              - dsc3_recovery.rc == 0
+              - (dsc3_recovery.stdout | from_json).restored
+              - (dsc3_recovery.stdout | from_json).original_keys ==
+                (dsc3_recovery.stdout | from_json).final_keys
+          when: dsc3_workspace.path is defined
+
+        - name: Remove only the verified owned workspace
+          sustainablelobster.legacy_windows.win_file: # noqa: args[module]
+            path: "{{ dsc3_workspace.path }}"
+            state: absent
+          when: dsc3_workspace.path is defined
+
+        - name: Observe owned workspace absence and final task staging
+          ansible.builtin.raw: >-
+            cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+            "import glob,json,os,sys,tempfile;
+            assert not os.path.exists(sys.argv[1]);
+            print(json.dumps(sorted(glob.glob(os.path.join(tempfile.gettempdir(),
+            'ansible-tmp-*')))))" "{{ dsc3_workspace.path }}""
+          register: dsc3_staging_after
+          changed_when: false
+          when: dsc3_workspace.path is defined
+
+        - name: Require exact global task staging recovery
+          ansible.builtin.assert:
+            that:
+              - (dsc3_staging_before.stdout | from_json) ==
+                (dsc3_staging_after.stdout | from_json)
+          when: dsc3_workspace.path is defined
+
+        - name: Retain full verified final cleanup record
+          ansible.builtin.copy:
+            content: >-
+              {{ {'setup': dsc3_setup | default({}),
+                  'workspace': dsc3_workspace.path | default(none),
+                  'records': dsc3_results | default([]),
+                  'recovery': dsc3_recovery | default({}),
+                  'staging_before': dsc3_staging_before,
+                  'staging_after': dsc3_staging_after | default({}),
+                  'workspace_removed': true} | to_nice_json }}
+            dest: "{{ dsc3_capture.path }}"
+            mode: "0600"
+          delegate_to: localhost
+
+    - name: Compare complete public results and operation-bounded clocks
+      ansible.builtin.command:
+        argv: >-
+          {{ [ansible_playbook_python,
+              playbook_dir + '/../../scripts/verify_dsc3_capture.py',
+              dsc3_capture.path] + (['--paired'] if dsc3_compare else []) }}
+      delegate_to: localhost
+      changed_when: false

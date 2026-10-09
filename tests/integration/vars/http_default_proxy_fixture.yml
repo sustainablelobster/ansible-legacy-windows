@@ -1,0 +1,195 @@
+---
+http_default_proxy_program: |
+  # Copyright 2026 Joe Lustri
+  # SPDX-License-Identifier: GPL-3.0-or-later
+  # Independent native observation and exact LAN-setting recovery only.
+  import base64, ctypes, json, os, sys, tempfile, winreg
+  assert sys.version_info[:3] == (3, 4, 4)
+  workspace, operation = os.path.abspath(sys.argv[1]), sys.argv[2]
+  assert os.path.basename(workspace).startswith('legacy-windows-http-proxy-')
+  dword, pointer = ctypes.c_uint32, ctypes.c_void_p
+  kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+  kernel.GetLongPathNameW.argtypes = [ctypes.c_wchar_p, ctypes.c_wchar_p, dword]
+  kernel.GetLongPathNameW.restype = dword
+  kernel.GlobalFree.argtypes, kernel.GlobalFree.restype = [pointer], pointer
+
+  def canonical(path):
+      size = kernel.GetLongPathNameW(path, None, 0)
+      assert size
+      result = ctypes.create_unicode_buffer(size)
+      assert 0 < kernel.GetLongPathNameW(path, result, size) < size
+      return os.path.normcase(result.value)
+
+  assert canonical(os.path.dirname(workspace)) == canonical(
+      tempfile.gettempdir())
+  journal_path = os.path.join(workspace, 'proxy.json')
+  path = r'Software\Microsoft\Windows\CurrentVersion\Internet Settings'
+  controlled = {
+      '': ('ProxyEnable', 'ProxyServer', 'ProxyOverride', 'AutoConfigURL',
+           'AutoDetect'),
+      'Connections': ('DefaultConnectionSettings', 'SavedLegacySettings'),
+  }
+  try:
+      policy = (r'Software\Policies\Microsoft\Windows\CurrentVersion' +
+                r'\Internet Settings')
+      with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,
+          policy) as key:
+          assert winreg.QueryValueEx(key, 'ProxySettingsPerUser')[0] != 0
+  except FileNotFoundError:
+      pass
+
+  class Value(ctypes.Union):
+      _fields_ = [('number', dword), ('text', pointer), ('filetime', dword * 2)]
+
+  class Option(ctypes.Structure):
+      _fields_ = [('option', dword), ('value', Value)]
+
+  class Options(ctypes.Structure):
+      _fields_ = [('size', dword), ('connection', ctypes.c_wchar_p),
+          ('count', dword), ('error', dword),
+          ('options', ctypes.POINTER(Option))]
+
+  class IEConfig(ctypes.Structure):
+      _fields_ = [('auto_detect', ctypes.c_int32), ('auto_config_url', pointer),
+                  ('proxy', pointer), ('bypass', pointer)]
+
+  wininet = ctypes.WinDLL('wininet', use_last_error=True)
+  wininet.InternetQueryOptionW.argtypes = [pointer, dword, pointer, pointer]
+  wininet.InternetQueryOptionW.restype = ctypes.c_int32
+  wininet.InternetSetOptionW.argtypes = [pointer, dword, pointer, dword]
+  wininet.InternetSetOptionW.restype = ctypes.c_int32
+  winhttp = ctypes.WinDLL('winhttp', use_last_error=True)
+  winhttp.WinHttpGetIEProxyConfigForCurrentUser.argtypes = [pointer]
+  winhttp.WinHttpGetIEProxyConfigForCurrentUser.restype = ctypes.c_int32
+
+  def require(result):
+      if not result:
+          raise ctypes.WinError(ctypes.get_last_error())
+
+  def option_list():
+      values = (Option * 4)()
+      for value, number in zip(values, (1, 2, 3, 4)):
+          value.option = number
+      return Options(ctypes.sizeof(Options), None, 4, 0, values), values
+
+  def read_connection():
+      listing, values = option_list()
+      size = dword(ctypes.sizeof(listing))
+      try:
+          require(wininet.InternetQueryOptionW(
+              None, 75, ctypes.byref(listing), ctypes.byref(size)))
+          result = {'flags': values[0].value.number}
+          result.update({name: ctypes.wstring_at(value.value.text)
+              if value.value.text else None for name, value in zip(
+                  ('proxy', 'bypass', 'auto_config_url'), values[1:])})
+          return result
+      finally:
+          for value in values[1:]:
+              if value.value.text:
+                  kernel.GlobalFree(value.value.text)
+
+  def read_ie():
+      configuration = IEConfig()
+      try:
+          require(winhttp.WinHttpGetIEProxyConfigForCurrentUser(
+              ctypes.byref(configuration)))
+          result = {'auto_detect': bool(configuration.auto_detect)}
+          result.update({name: ctypes.wstring_at(getattr(configuration, name))
+              if getattr(configuration, name) else None
+              for name in ('proxy', 'bypass', 'auto_config_url')})
+          return result
+      finally:
+          for name in ('proxy', 'bypass', 'auto_config_url'):
+              if getattr(configuration, name):
+                  kernel.GlobalFree(getattr(configuration, name))
+
+  def encoded(value):
+      return {'bytes': base64.b64encode(value).decode('ascii')}
+
+  def registry():
+      result = {}
+      for suffix in controlled:
+          try:
+              key = winreg.OpenKey(winreg.HKEY_CURRENT_USER,
+                  path + ('\\' + suffix if suffix else ''))
+          except FileNotFoundError:
+              result[suffix] = None
+              continue
+          with key:
+              values = {}
+              for index in range(winreg.QueryInfoKey(key)[1]):
+                  name, data, kind = winreg.EnumValue(key, index)
+                  values[name] = [encoded(data) if isinstance(data, bytes)
+                                  else data, kind]
+              result[suffix] = values
+      return result
+
+  def snapshot():
+      return {'connection': read_connection(), 'ie': read_ie(),
+              'registry': registry()}
+
+  def restore(previous):
+      original = previous['connection']
+      if read_connection() != original:
+          listing, values = option_list()
+          values[0].value.number = original['flags']
+          texts = [ctypes.create_unicode_buffer(original[name])
+              if original[name] is not None else None
+              for name in ('proxy', 'bypass', 'auto_config_url')]
+          for value, text in zip(values[1:], texts):
+              value.value.text = ctypes.cast(text, pointer)
+          require(wininet.InternetSetOptionW(
+              None, 75, ctypes.byref(listing), listing.size))
+      # Refresh first: older WinINet rewrites its connection counters here.
+      require(wininet.InternetSetOptionW(None, 39, None, 0))
+      require(wininet.InternetSetOptionW(None, 37, None, 0))
+      current = registry()
+      for suffix, names in controlled.items():
+          original_values = previous['registry'][suffix] or {}
+          changed_values = current[suffix] or {}
+          if original_values == changed_values:
+              continue
+          with winreg.OpenKey(winreg.HKEY_CURRENT_USER,
+              path + ('\\' + suffix if suffix else ''), 0,
+              winreg.KEY_SET_VALUE) as key:
+              for name in names:
+                  if original_values.get(name) == changed_values.get(name):
+                      continue
+                  if name not in original_values:
+                      winreg.DeleteValue(key, name)
+                  else:
+                      data, kind = original_values[name]
+                      if isinstance(data, dict):
+                          data = base64.b64decode(data['bytes'])
+                      winreg.SetValueEx(key, name, 0, kind, data)
+          if previous['registry'][suffix] is None:
+              with winreg.OpenKey(winreg.HKEY_CURRENT_USER,
+                  path + ('\\' + suffix if suffix else '')) as key:
+                  assert winreg.QueryInfoKey(key)[:2] == (0, 0)
+              winreg.DeleteKey(winreg.HKEY_CURRENT_USER,
+                  path + ('\\' + suffix if suffix else ''))
+      assert snapshot() == previous, 'Original LAN/IE proxy settings differ'
+
+  if operation == 'setup':
+      assert not os.listdir(workspace)
+      record = {'workspace': workspace, 'before': snapshot()}
+      with open(journal_path, 'x', encoding='utf-8') as stream:
+          json.dump(record, stream)
+          stream.flush()
+          os.fsync(stream.fileno())
+      result = {'journaled': True, 'before': record['before']}
+  elif operation == 'observe':
+      result = snapshot()
+  elif operation == 'cleanup' and not os.path.exists(journal_path):
+      assert not os.listdir(workspace)
+      result = {'restored': True, 'journal_absent': True}
+  elif operation == 'cleanup':
+      with open(journal_path, encoding='utf-8') as stream:
+          record = json.load(stream)
+      assert record['workspace'] == workspace
+      restore(record['before'])
+      assert set(os.listdir(workspace)) == {'proxy.json'}
+      result = {'restored': True}
+  else:
+      raise ValueError('Unknown proxy fixture operation')
+  print(json.dumps(result, sort_keys=True))

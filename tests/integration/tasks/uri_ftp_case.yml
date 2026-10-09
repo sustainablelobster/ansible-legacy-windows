@@ -1,0 +1,73 @@
+---
+# SPDX-License-Identifier: GPL-3.0-or-later
+- name: Bind one public FTP URI request
+  ansible.builtin.set_fact:
+    uri_ftp_params: >-
+      {{ {'url': get_url_ftp_setup_data.ftp + '/payload.bin',
+          'url_method': 'RETR', 'use_proxy': false, 'url_timeout': 10} |
+         combine(get_url_case.params | default({})) }}
+    uri_ftp_observations: {}
+
+- name: Capture source then native on identical owned file baselines
+  ansible.builtin.include_tasks: uri_ftp_request.yml
+  loop: [original, native]
+  loop_control:
+    loop_var: uri_ftp_implementation
+
+- name: Retain all raw public protocol and protected-file observations
+  ansible.builtin.set_fact:
+    get_url_results: >-
+      {{ get_url_results + [{'name': get_url_case.name,
+          'case': get_url_case, 'params': uri_ftp_params,
+          'observations': uri_ftp_observations, 'validated': false}] }}
+
+- name: Persist raw case before any assertion
+  ansible.builtin.copy:
+    content: '{{ {"results": get_url_results} | to_nice_json }}'
+    dest: '{{ get_url_capture.path }}'
+    mode: '0600'
+  delegate_to: localhost
+  vars:
+    ansible_connection: local
+    ansible_shell_type: sh
+    ansible_python_interpreter: '{{ ansible_playbook_python }}'
+  changed_when: false
+  no_log: true
+
+- name: Require complete typed public and portable file parity
+  when: uri_ftp_validate | bool
+  vars:
+    native: '{{ uri_ftp_observations.native.result }}'
+    original: '{{ uri_ftp_observations.original.result }}'
+    native_public: >-
+      {{ native | dict2items |
+         rejectattr('key', 'in', ['invocation', 'exception']) |
+         list | items2dict }}
+    original_public: >-
+      {{ original | dict2items |
+         rejectattr('key', 'in', ['invocation', 'exception']) |
+         list | items2dict }}
+  ansible.builtin.assert:
+    that:
+      - native.changed == (get_url_case.changed | default(false))
+      - (native is failed) == (get_url_case.failed | default(false))
+      - native.elapsed is number and original.elapsed is number
+      - native.elapsed >= 0 and native.elapsed < 120
+      - original.elapsed >= 0 and original.elapsed < 120
+      - (native.elapsed | type_debug) == (original.elapsed | type_debug)
+      - >-
+        (native_public | combine({'elapsed': 0}) | to_json(sort_keys=true)) ==
+        (original_public | combine({'elapsed': 0}) | to_json(sort_keys=true))
+      - >-
+        uri_ftp_observations.native.after.portable_output ==
+        uri_ftp_observations.original.after.portable_output
+      - >-
+        uri_ftp_observations.native.wire.protected ==
+        uri_ftp_observations.original.wire.protected
+
+- name: Mark complete parity only after its gates
+  when: uri_ftp_validate | bool
+  ansible.builtin.set_fact:
+    get_url_results: >-
+      {{ get_url_results[:-1] + [get_url_results[-1] |
+         combine({'validated': true})] }}

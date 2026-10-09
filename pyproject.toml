@@ -7,6 +7,7 @@ line_length = 88
 
 [tool.pylint.main]
 load-plugins = ["pylint.extensions.docparams"]
+source-roots = ["."]
 
 [tool.pylint.basic]
 no-docstring-rgx = "^_|^test_"
@@ -20,6 +21,7 @@ default-docstring-type = "sphinx"
 
 [tool.mypy]
 strict = true
+explicit_package_bases = true
 pretty = true
 show_error_codes = true
 warn_unreachable = true
@@ -27,6 +29,7 @@ warn_unreachable = true
 [tool.pytest.ini_options]
 addopts = ["--strict-config", "--strict-markers"]
 testpaths = ["tests/unit"]
+pythonpath = ["."]
 
 [tool.codespell]
 check-filenames = true

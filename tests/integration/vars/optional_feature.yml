@@ -1,0 +1,134 @@
+---
+optional_feature_cases:
+  - name: Reject missing names before native access
+    params: {state: present}
+    changed: false
+    failed: true
+    message: 'missing required arguments: name'
+    validated_arguments: false
+  - name: Reject invalid state before native access
+    params: {name: TelnetClient, state: invalid}
+    changed: false
+    failed: true
+    message: 'value of state must be one of:'
+    validated_arguments: false
+  - name: Select no features with an empty list
+    params: {name: []}
+    changed: false
+  - name: Preserve an explicit null feature list
+    params: {name: null}
+    changed: false
+  - name: Preserve explicit null state without servicing
+    params: {name: TelnetClient, state: null}
+    changed: false
+  - name: Reject an unknown feature
+    params: {name: LegacyWindowsOptionalMissing_12345}
+    changed: false
+    failed: true
+    message: "Failed to find feature 'LegacyWindowsOptionalMissing_12345'"
+  - name: Precheck a later missing feature before any change
+    params: {name: [TelnetClient, LegacyWindowsOptionalMissing_12345]}
+    changed: false
+    failed: true
+    message: "Failed to find feature 'LegacyWindowsOptionalMissing_12345'"
+  - name: Predict enabling the default present state
+    params: {name: TelnetClient}
+    check: true
+    changed: true
+  - name: Check a missing source before predicted enabling
+    params:
+      name: TelnetClient
+      source: '{{ optional_feature_names.missing_source }}'
+    check: true
+    changed: false
+    failed: true
+    message: Path could not be found
+  - name: Accept a literal source file in check mode
+    params:
+      name: TelnetClient
+      source: '{{ optional_feature_names.source_file }}'
+    check: true
+    changed: true
+  - name: Enable staged Telnet with a null parent option and source path
+    params:
+      name: TelnetClient
+      include_parent: null
+      source: '{{ optional_feature_names.source }}'
+    changed: true
+    expected: {TelnetClient: Enabled}
+  - name: Repeat mixed-case present state and ignore an unnecessary bad source
+    params:
+      name: telnetclient
+      state: PRESENT
+      source: '{{ optional_feature_names.missing_source }}'
+    changed: false
+  - name: Enable staged TFTP with the explicit parent option
+    params: {name: TFTP, include_parent: true}
+    changed: true
+    expected: {TFTP: Enabled}
+  - name: Repeat an ordered duplicate request while already enabled
+    params: {name: 'TFTP,TelnetClient,TFTP', state: present}
+    changed: false
+  - name: Predict removing both features
+    params: &remove
+      name: [TFTP, TelnetClient]
+      state: absent
+      include_parent: true
+      source: '{{ optional_feature_names.missing_source }}'
+    check: true
+    changed: true
+  - name: Remove both features and ignore source and parent options
+    params: *remove
+    changed: true
+    expected: {TelnetClient: Disabled, TFTP: Disabled}
+  - name: Repeat both absent features
+    params: *remove
+    changed: false
+  - name: Enable both features in one ordered duplicate batch
+    params: &duplicate
+      name: [TFTP, TelnetClient, TFTP]
+      source: '{{ optional_feature_names.source }}'
+    changed: true
+    expected: {TelnetClient: Enabled, TFTP: Enabled}
+  - name: Repeat the enabled duplicate batch
+    params: *duplicate
+    changed: false
+  - name: Reject a later missing name even when a preceding feature is enabled
+    params:
+      name: [TFTP, LegacyWindowsOptionalMissing_12345]
+      state: absent
+    changed: false
+    failed: true
+    message: "Failed to find feature 'LegacyWindowsOptionalMissing_12345'"
+  - name: Predict disabling Telnet only
+    params: {name: TelnetClient, state: absent}
+    check: true
+    changed: true
+  - name: Disable Telnet only
+    params: {name: TelnetClient, state: absent}
+    changed: true
+    expected: {TelnetClient: Disabled}
+  - name: Repeat disabled Telnet
+    params: {name: TelnetClient, state: absent}
+    changed: false
+  - name: Leave installed TFTP unchanged
+    params: {name: TFTP}
+    changed: false
+
+optional_feature_unsupported_cases:
+  - name: Reject unavailable online optional-feature servicing
+    params: {name: TelnetClient}
+    changed: false
+    failed: true
+    message: does not support the Enable-WindowsOptionalFeature
+  - name: Require servicing availability even with an empty list
+    params: {name: []}
+    changed: false
+    failed: true
+    message: does not support the Enable-WindowsOptionalFeature
+  - name: Require servicing availability in check mode
+    params: {name: TelnetClient, state: absent}
+    check: true
+    changed: false
+    failed: true
+    message: does not support the Enable-WindowsOptionalFeature

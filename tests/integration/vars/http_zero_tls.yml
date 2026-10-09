@@ -1,0 +1,69 @@
+---
+get_url_tls: true
+http_zero_cases:
+  - name: URI HTTPS ready zero without validation
+    module: uri
+    path: /payload.bin
+    tls_boundary: ready
+    params:
+      url: '{{ get_url_setup_data.https }}/payload.bin'
+      validate_certs: false
+  - name: GetURL HTTPS ready zero without validation
+    module: get_url
+    path: /payload.bin
+    tls_boundary: ready
+    params:
+      url: '{{ get_url_setup_data.https }}/payload.bin'
+      validate_certs: false
+  - name: Package HTTPS ready zero metadata preview without validation
+    module: package
+    path: /payload.bin
+    tls_boundary: ready
+    check: true
+    params:
+      path: '{{ get_url_setup_data.https }}/payload.bin'
+      validate_certs: false
+  - name: URI HTTPS delayed response zero without validation
+    module: uri
+    path: /delay/0.75
+    tls_boundary: response
+    params:
+      url: '{{ get_url_setup_data.https }}/delay/0.75'
+      validate_certs: false
+  - name: GetURL HTTPS delayed response zero without validation
+    module: get_url
+    path: /delay/0.75
+    tls_boundary: response
+    params:
+      url: '{{ get_url_setup_data.https }}/delay/0.75'
+      validate_certs: false
+  - name: Package HTTPS delayed zero metadata preview without validation
+    module: package
+    path: /delay/0.75
+    tls_boundary: response
+    check: true
+    params:
+      path: '{{ get_url_setup_data.https }}/delay/0.75'
+      validate_certs: false
+  - name: URI HTTPS untrusted certificate zero
+    module: uri
+    path: /payload.bin
+    tls_boundary: validation
+    params:
+      url: '{{ get_url_setup_data.https }}/payload.bin'
+      validate_certs: true
+  - name: GetURL HTTPS untrusted certificate zero
+    module: get_url
+    path: /payload.bin
+    tls_boundary: validation
+    params:
+      url: '{{ get_url_setup_data.https }}/payload.bin'
+      validate_certs: true
+  - name: Package HTTPS untrusted certificate zero metadata preview
+    module: package
+    path: /payload.bin
+    tls_boundary: validation
+    check: true
+    params:
+      path: '{{ get_url_setup_data.https }}/payload.bin'
+      validate_certs: true

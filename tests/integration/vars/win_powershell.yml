@@ -1,0 +1,220 @@
+---
+powershell_compare: false
+powershell_program: >-
+  {{ lookup('file',
+     (powershell_source_root | default(playbook_dir + '/../..')) +
+     '/tests/integration/fixtures/win_powershell.py') }}
+powershell_cases:
+  - name: Structured Unicode and null output
+    params:
+      script: |
+        $Ansible.Changed=$false
+        $Ansible.Result=@{text='résultat λ';number=3;null=$null}
+        'hello λ';42;$null;,@('inner',7)
+  - name: Direct host and console output
+    params:
+      # Preserve the measured literal script instead of changing its positions.
+      # yamllint disable rule:line-length
+      script: |
+        $Ansible.Changed=$false
+        Write-Host 'host λ' -NoNewline;Write-Host ' tail'
+        [Console]::WriteLine('console λ');[Console]::Error.WriteLine('console error λ')
+        'pipeline'
+      # yamllint enable rule:line-length
+  - name: Warning verbose and debug streams
+    params:
+      # Preserve the measured literal script instead of changing its positions.
+      # yamllint disable rule:line-length
+      script: |
+        $Ansible.Changed=$false
+        $VerbosePreference=$DebugPreference='Continue'
+        Write-Warning 'warning λ';Write-Verbose 'verbose λ';Write-Debug 'debug λ'
+        'pipeline'
+      # yamllint enable rule:line-length
+  - name: Nonterminating error preserves subsequent output
+    params:
+      script: "$Ansible.Changed=$false;Write-Error 'error λ';'continues'"
+  - name: Terminating error preserves preceding output
+    failed: true
+    params:
+      script: "$Ansible.Changed=$false;'before';throw 'throw λ';'after'"
+  - name: Stop error policy fails the pipeline
+    failed: true
+    params:
+      error_action: stop
+      script: "$Ansible.Changed=$false;'before';Write-Error 'stop λ';'after'"
+  - name: Silent error policy omits the error record
+    params:
+      error_action: silently_continue
+      script: "$Ansible.Changed=$false;Write-Error 'silent λ';'continues'"
+  - name: Check mode skips a script without ShouldProcess
+    check: true
+    changed: true
+    params: { script: "throw 'must not execute'" }
+  - name: Check mode executes ShouldProcess without writing
+    check: true
+    changed: true
+    script_output: true
+    params:
+      # Preserve the measured literal script instead of changing its positions.
+      # yamllint disable rule:line-length
+      script: |
+        [CmdletBinding(SupportsShouldProcess)]param([string]$OutputPath)
+        if($PSCmdlet.ShouldProcess($OutputPath,'write owned output')) {
+          [IO.File]::WriteAllText($OutputPath,'owned λ',(New-Object Text.UTF8Encoding $false))
+        }
+        $Ansible.Result=@{check=$Ansible.CheckMode}
+      # yamllint enable rule:line-length
+  - name: ShouldProcess writes only the owned output
+    changed: true
+    script_output: true
+    output: "owned λ"
+    params:
+      # Preserve the measured literal script instead of changing its positions.
+      # yamllint disable rule:line-length
+      script: |
+        [CmdletBinding(SupportsShouldProcess)]param([string]$OutputPath)
+        if($PSCmdlet.ShouldProcess($OutputPath,'write owned output')) {
+          [IO.File]::WriteAllText($OutputPath,'owned λ',(New-Object Text.UTF8Encoding $false))
+        }
+        $Ansible.Result=@{check=$Ansible.CheckMode}
+      # yamllint enable rule:line-length
+  - name: Caller reports idempotence for existing output
+    seed: "owned λ"
+    output: "owned λ"
+    script_output: true
+    params:
+      script: |
+        param([string]$OutputPath)
+        $Ansible.Changed=([IO.File]::ReadAllText($OutputPath) -ne 'owned λ')
+  - name: Caller sets a structured failure
+    failed: true
+    params:
+      script: "$Ansible.Changed=$false;$Ansible.Failed=$true;\
+        $Ansible.Result=@{reason='caller
+        λ'}"
+  - name: Typed parameters retain dictionary array decimal and switch
+    params:
+      parameters:
+        Text: "typed λ"
+        Number: 7
+        Flag: true
+        Items: [one, two]
+        Mapping: { key: value }
+        Decimal: 2.5
+      # Preserve the measured literal script instead of changing its positions.
+      # yamllint disable rule:line-length
+      script: |
+        param([string]$Text,[int]$Number,[switch]$Flag,[object[]]$Items,[hashtable]$Mapping,[decimal]$Decimal)
+        $Ansible.Changed=$false
+        $Ansible.Result=@{Text=$Text;Number=$Number;Flag=$Flag;Items=$Items;Mapping=$Mapping;Decimal=$Decimal}
+      # yamllint enable rule:line-length
+  - name: Enum type DateTime and DateTimeOffset serialization
+    params:
+      # Preserve the measured literal script instead of changing its positions.
+      # yamllint disable rule:line-length
+      script: |
+        $Ansible.Changed=$false
+        [IO.FileAttributes]::ReadOnly;[string];[DateTime]::Parse('2000-01-02T03:04:05Z').ToUniversalTime()
+        [DateTimeOffset]::Parse('2000-01-02T03:04:05+03:00')
+      # yamllint enable rule:line-length
+  - name: Depth zero preserves scalar properties and stringifies children
+    params:
+      depth: 0
+      script: "$Ansible.Changed=$false;\
+        $Ansible.Result=@{child=@{grandchild='λ'};number=7};,@(@{value='λ'})"
+  - name: Caller selects SecureString and credential output values
+    params:
+      sensitive_parameters:
+        - { name: Token, value: fixture-secret-token }
+        - name: Credential
+          username: fixture-user
+          password: fixture-secret-password
+      # Preserve the measured literal script instead of changing its positions.
+      # yamllint disable rule:line-length
+      script: |
+        param([Security.SecureString]$Token,[Management.Automation.PSCredential]$Credential)
+        $Ansible.Changed=$false
+        $plain=[Net.NetworkCredential]::new('',$Token).Password
+        $Ansible.Result=@{token=$plain;credential=$Credential.GetNetworkCredential().Password;user=$Credential.UserName}
+        Write-Host "prefix $plain suffix"
+      # yamllint enable rule:line-length
+  - name: Diff mappings are returned in diff mode
+    diff: true
+    params:
+      script: "$Ansible.Changed=$false;\
+        $Ansible.Diff=@{before='old λ';after='new λ'}"
+  - name: Diff mappings are omitted outside diff mode
+    params:
+      script: "$Ansible.Changed=$false;\
+        $Ansible.Diff=@{before='old λ';after='new λ'}"
+  - name: Existing creates guard skips the script
+    seed: predecessor
+    output: predecessor
+    creates: true
+    params: { script: "throw 'must not execute'" }
+  - name: Missing removes guard skips the script
+    removes: true
+    params: { script: "throw 'must not execute'" }
+  - name: Remote BOM-less UTF8 script keeps original path metadata
+    remote: true
+    params: { remote_src: true, parameters: { Text: "parameter λ" } }
+  - name: Controller UTF8 script is loaded by the public action
+    local: true
+    params: { parameters: { Text: "local parameter λ" } }
+  - name: Provider chdir selects the owned directory
+    chdir: true
+    params:
+      script: "$Ansible.Changed=$false;$Ansible.Result=(Get-Location).Path"
+  - name: User scripts see original TEMP and TMP
+    params:
+      script: "$Ansible.Changed=$false;\
+        $Ansible.Result=@{temp=$env:TEMP;tmp=$env:TMP}"
+  - name: Missing remote script returns structured failure
+    failed: true
+    missing_remote: true
+    params: { remote_src: true }
+  - name: Missing script and path fails argument binding
+    failed: true
+    params: {}
+  - name: Conflicting remote script and inline script fails binding
+    failed: true
+    remote: true
+    params: { remote_src: true, script: "1" }
+  - name: Missing sensitive name fails nested binding
+    failed: true
+    params: { script: "1", sensitive_parameters: [{}]}
+  - name: Missing credential password fails required together
+    failed: true
+    params:
+      script: "1"
+      sensitive_parameters:
+        - { name: Credential, username: fixture-user }
+  - name: Unsupported sensitive parameter field fails early
+    failed: true
+    params:
+      script: "1"
+      sensitive_parameters: [{ name: Token, extra: value }]
+  - name: Malformed depth returns the released Int32 diagnostic
+    failed: true
+    params: { script: "1", depth: invalid-fixture-value }
+  - name: Boolean depth is not an integer
+    failed: true
+    params: { script: "1", depth: true }
+  - name: Fractional depth is not truncated
+    failed: true
+    params: { script: "1", depth: 2.5 }
+  - name: Overflow depth is rejected as Int64
+    failed: true
+    params: { script: "1", depth: 2147483648 }
+  - name: Module scratch and readonly script outputs are removed
+    params:
+      # Preserve the measured literal script instead of changing its positions.
+      # yamllint disable rule:line-length
+      script: |
+        $Ansible.Changed=$false
+        $file=Join-Path $Ansible.Tmpdir 'owned-readonly.txt'
+        [IO.File]::WriteAllText($file,'owned λ')
+        (Get-Item -LiteralPath $file).IsReadOnly=$true
+        $Ansible.Result=@{exists=(Test-Path -LiteralPath $Ansible.Tmpdir);isolated=($env:TEMP -ne $Ansible.Tmpdir)}
+      # yamllint enable rule:line-length

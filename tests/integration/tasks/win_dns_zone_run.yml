@@ -1,0 +1,79 @@
+---
+- name: Reset only the journal-owned zone
+  sustainablelobster.legacy_windows.win_command:
+    argv:
+      - '{{ ansible_python_interpreter }}'
+      - '-'
+      - '{{ dns_zone_workspace.path }}'
+      - reset_zone
+    stdin: '{{ dns_zone_fixture_program }}'
+  changed_when: false
+  no_log: true
+
+- name: Recreate the identical prerequisite zone where required
+  sustainablelobster.legacy_windows.win_command:
+    argv:
+      - '{{ ansible_python_interpreter }}'
+      - '-'
+      - '{{ dns_zone_workspace.path }}'
+      - seed_zone
+      - '{{ dns_zone_case.seed }}'
+      - '{{ dns_zone_master_server | default("127.0.0.1") }}'
+    stdin: '{{ dns_zone_fixture_program }}'
+  when: dns_zone_case.seed is defined
+  changed_when: false
+  no_log: true
+
+- name: Exercise the public native interface
+  sustainablelobster.legacy_windows.win_dns_zone:
+    name: '{{ dns_zone_owned_name }}'
+    type: '{{ dns_zone_case.args.type | default(omit) }}'
+    state: '{{ dns_zone_case.args.state | default(omit) }}'
+    replication: '{{ dns_zone_case.args.replication | default(omit) }}'
+    dynamic_update: '{{ dns_zone_case.args.dynamic_update | default(omit) }}'
+    forwarder_timeout: '{{ dns_zone_case.args.forwarder_timeout | default(omit)
+      }}'
+    dns_servers: '{{ dns_zone_case.args.dns_servers | default(omit) }}'
+    directory_partition: >-
+      {{ dns_zone_case.args.directory_partition | default(omit) }}
+  check_mode: '{{ dns_zone_case.check | default(false) }}'
+  diff: true
+  when: dns_zone_implementation == 'native'
+  register: dns_zone_native_result
+  ignore_errors: true
+  no_log: true
+
+- name: Exercise the untouched released public interface
+  ansible.windows.win_dns_zone:
+    name: '{{ dns_zone_owned_name }}'
+    type: '{{ dns_zone_case.args.type | default(omit) }}'
+    state: '{{ dns_zone_case.args.state | default(omit) }}'
+    replication: '{{ dns_zone_case.args.replication | default(omit) }}'
+    dynamic_update: '{{ dns_zone_case.args.dynamic_update | default(omit) }}'
+    forwarder_timeout: '{{ dns_zone_case.args.forwarder_timeout | default(omit)
+      }}'
+    dns_servers: '{{ dns_zone_case.args.dns_servers | default(omit) }}'
+    directory_partition: >-
+      {{ dns_zone_case.args.directory_partition | default(omit) }}
+  check_mode: '{{ dns_zone_case.check | default(false) }}'
+  diff: true
+  when: dns_zone_implementation == 'released'
+  register: dns_zone_released_result
+  ignore_errors: true
+  no_log: true
+
+- name: Preserve raw result and only remove controller invocation or
+    exception wrapper for comparison
+  ansible.builtin.set_fact:
+    dns_zone_case_results: >-
+      {{ dns_zone_case_results | default({}) | combine({dns_zone_implementation:
+      ((dns_zone_native_result if dns_zone_implementation == 'native'
+      else dns_zone_released_result)
+      | dict2items | rejectattr('key', 'in', ['invocation', 'exception']) |
+      items2dict)}) }}
+    dns_zone_raw_results: >-
+      {{ dns_zone_raw_results + [{'case': dns_zone_case,
+      'implementation': dns_zone_implementation,
+      'result': dns_zone_native_result if dns_zone_implementation == 'native'
+      else dns_zone_released_result}] }}
+  no_log: true

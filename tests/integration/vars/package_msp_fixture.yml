@@ -1,0 +1,30 @@
+---
+package_msp_helper_names:
+  - legacy_windows_module
+  - legacy_windows_text
+  - legacy_windows_process
+  - legacy_windows_account
+  - legacy_windows_group
+  - legacy_windows_owner
+  - legacy_windows_link
+  - legacy_windows_acl_inheritance
+  - legacy_windows_acl
+  - legacy_windows_package_msi
+  - legacy_windows_wmi
+  - legacy_windows_service
+package_msp_program: |
+  import base64
+  import sys
+  import types
+  {% for name in package_msp_helper_names %}
+  helper=types.ModuleType('{{ name }}')
+  sys.modules[helper.__name__]=helper
+  source='{{ lookup("file",
+      playbook_dir + "/../../plugins/module_utils/" + name + ".py")
+      | b64encode }}'
+  exec(compile(base64.b64decode(source),helper.__name__+'.py','exec'),helper.__dict__)
+  {% endfor %}
+  source='{{ lookup("file",
+      playbook_dir + "/fixtures/package_msp_fixture.py") | b64encode }}'
+  PATCH_FILENAME={{ package_msp_patch_filename | to_json }}
+  exec(compile(base64.b64decode(source),'package_msp_fixture.py','exec'))

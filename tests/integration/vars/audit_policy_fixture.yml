@@ -1,0 +1,206 @@
+---
+audit_policy_fixture: |
+  # Copyright 2026 Joe Lustri
+  # SPDX-License-Identifier: GPL-3.0-or-later
+  """Journal system audit policy and verify restoration through native APIs."""
+  import ctypes
+  import hashlib
+  import json
+  import os
+  import subprocess
+  import sys
+  import tempfile
+  import uuid
+
+  assert sys.version_info[:3] == (3, 4, 4)
+
+
+  def _existing_long_path(path):
+      function = ctypes.WinDLL('kernel32', use_last_error=True).GetLongPathNameW
+      function.argtypes = [ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_uint32]
+      function.restype = ctypes.c_uint32
+      size = function(os.path.abspath(path), None, 0)
+      if not size:
+          raise ctypes.WinError(ctypes.get_last_error())
+      buffer = ctypes.create_unicode_buffer(size)
+      length = function(os.path.abspath(path), buffer, size)
+      if not 0 < length < size:
+          raise ctypes.WinError(ctypes.get_last_error())
+      return os.path.normcase(buffer.value)
+
+
+  WORKSPACE, OPERATION = sys.argv[1:3]
+  # win_tempfile expands native short names; Python's Temp path can retain them.
+  WORKSPACE = _existing_long_path(WORKSPACE)
+  assert os.path.basename(WORKSPACE).startswith('legacy-windows-audit-policy-')
+  assert os.path.dirname(WORKSPACE) == (
+      _existing_long_path(tempfile.gettempdir()))
+  JOURNAL = os.path.join(WORKSPACE, 'audit-policy-recovery.json')
+  BACKUP = os.path.join(WORKSPACE, 'original-audit-policy.csv')
+  VERIFIED = os.path.join(WORKSPACE, 'restored-audit-policy.csv')
+  AVAILABLE = sys.getwindowsversion().major >= 6
+  SYSTEM = '69979848-797a-11d9-bed3-505054503030'
+  FILE_SYSTEM = '0cce921d-69ae-11d9-bed3-505054503030'
+
+
+  class Guid(ctypes.Structure):
+      _fields_ = [('raw', ctypes.c_ubyte * 16)]
+
+
+  class Policy(ctypes.Structure):
+      _fields_ = [('subcategory', Guid), ('flags', ctypes.c_uint32),
+                 ('category', Guid)]
+
+
+  def snapshot():
+      if not AVAILABLE:
+          return {'available': False, 'policies': []}
+      library = ctypes.WinDLL('advapi32', use_last_error=True)
+      library.AuditEnumerateSubCategories.argtypes = [
+          ctypes.POINTER(Guid), ctypes.c_ubyte,
+          ctypes.POINTER(ctypes.POINTER(Guid)), ctypes.POINTER(ctypes.c_uint32)]
+      library.AuditEnumerateSubCategories.restype = ctypes.c_ubyte
+      library.AuditQuerySystemPolicy.argtypes = [
+          ctypes.POINTER(Guid), ctypes.c_uint32,
+          ctypes.POINTER(ctypes.POINTER(Policy))]
+      library.AuditQuerySystemPolicy.restype = ctypes.c_ubyte
+      library.AuditFree.argtypes = [ctypes.c_void_p]
+      library.AuditFree.restype = None
+      subcategories, policies = ctypes.POINTER(Guid)(), ctypes.POINTER(Policy)()
+      count = ctypes.c_uint32()
+      try:
+          if not library.AuditEnumerateSubCategories(
+                  None, True, ctypes.byref(subcategories), ctypes.byref(count)):
+              raise ctypes.WinError(ctypes.get_last_error())
+          if not library.AuditQuerySystemPolicy(
+                  subcategories, count.value, ctypes.byref(policies)):
+              raise ctypes.WinError(ctypes.get_last_error())
+          rows = [
+              {'subcategory': str(uuid.UUID(
+                   bytes_le=bytes(policies[index].subcategory.raw))),
+               'category': str(uuid.UUID(
+                   bytes_le=bytes(policies[index].category.raw))),
+               'flags': policies[index].flags}
+              for index in range(count.value)]
+          rows.sort(key=lambda row: row['subcategory'])
+          return {'available': True, 'policies': rows}
+      finally:
+          if policies:
+              library.AuditFree(policies)
+          if subcategories:
+              library.AuditFree(subcategories)
+
+
+  def command(arguments):
+      executable = os.path.join(
+          os.environ['SystemRoot'], 'System32', 'auditpol.exe')
+      with subprocess.Popen([executable] + arguments,
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE) as child:
+          stdout, stderr = child.communicate()
+      if child.returncode:
+          raise OSError('auditpol failed ({0}): {1}'.format(
+              child.returncode, stderr.decode('utf-8', errors='replace')))
+      return stdout
+
+
+  def restore_system_policy(state):
+      current, original = snapshot()['policies'], state['policies']
+      assert len(current) == len(original)
+      for before, desired in zip(current, original):
+          assert before['subcategory'] == desired['subcategory']
+          assert before['category'] == desired['category']
+          assert desired['flags'] in (0, 1, 2, 3)
+      for before, desired in zip(current, original):
+          if before == desired:
+              continue
+          # The shipped tool enables its required held privilege; direct native
+          # setters need it enabled even under an authorized SSH admin token.
+          command(['/set', '/subcategory:{' + desired['subcategory'] + '}',
+                   '/success:' + (
+                       'enable' if desired['flags'] & 1 else 'disable'),
+                   '/failure:' + (
+                       'enable' if desired['flags'] & 2 else 'disable')])
+
+
+  def save(state):
+      with open(JOURNAL, 'x', encoding='utf-8') as stream:
+          json.dump(state, stream, sort_keys=True)
+          stream.flush()
+          os.fsync(stream.fileno())
+
+
+  def load():
+      with open(JOURNAL, 'r', encoding='utf-8') as stream:
+          state = json.load(stream)
+      assert state['workspace'] == WORKSPACE and state['backup'] == BACKUP
+      with open(BACKUP, 'rb') as stream:
+          assert hashlib.sha256(stream.read()).hexdigest() == (
+              state['backup_sha256'])
+      return state
+
+
+  def setup():
+      assert all(not os.path.exists(path)
+                 for path in (JOURNAL, BACKUP, VERIFIED))
+      initial = snapshot()
+      if not initial['available']:
+          return initial
+      command(['/backup', '/file:' + BACKUP])
+      with open(BACKUP, 'r+b') as stream:
+          backup_hash = hashlib.sha256(stream.read()).hexdigest()
+          stream.flush()
+          os.fsync(stream.fileno())
+      assert snapshot() == initial
+      save({'workspace': WORKSPACE, 'backup': BACKUP,
+            'backup_sha256': backup_hash, 'initial': initial})
+      command(['/set', '/category:System',
+               '/success:disable', '/failure:disable'])
+      command(['/set', '/subcategory:File System',
+               '/success:disable', '/failure:disable'])
+      controlled = snapshot()
+      assert len(initial['policies']) == len(controlled['policies'])
+      for before, after in zip(initial['policies'], controlled['policies']):
+          assert before['subcategory'] == after['subcategory']
+          assert before['category'] == after['category']
+          if (before['category'] == SYSTEM
+                  or before['subcategory'] == FILE_SYSTEM):
+              assert after['flags'] == 0
+          else:
+              assert before == after
+      return controlled
+
+
+  def cleanup():
+      if not os.path.exists(JOURNAL):
+          # The only pre-journal operation is creating this owned backup file.
+          if os.path.exists(BACKUP):
+              os.remove(BACKUP)
+          return {'restored': True}
+      state = load()
+      # Restore only the policy this fixture changes. Importing a whole auditpol
+      # backup also materializes absent global SACL records on Windows 10.
+      restore_system_policy(state['initial'])
+      restored = snapshot()
+      assert restored == state['initial'], (
+          'Complete native audit policy did not restore')
+      if os.path.exists(VERIFIED):
+          os.remove(VERIFIED)
+      command(['/backup', '/file:' + VERIFIED])
+      with open(VERIFIED, 'rb') as stream:
+          assert hashlib.sha256(stream.read()).hexdigest() == (
+              state['backup_sha256'])
+      for path in (VERIFIED, BACKUP, JOURNAL):
+          os.remove(path)
+      return {'restored': True, 'initial': state['initial'], 'final': restored}
+
+
+  if OPERATION == 'setup':
+      RESULT = setup()
+  elif OPERATION == 'observe':
+      RESULT = snapshot()
+  elif OPERATION == 'cleanup':
+      RESULT = cleanup()
+  else:
+      raise ValueError('Unknown audit-policy fixture operation')
+  print(json.dumps(RESULT, sort_keys=True))

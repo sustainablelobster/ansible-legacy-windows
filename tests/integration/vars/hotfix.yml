@@ -1,0 +1,123 @@
+---
+hotfix_compare: false
+hotfix_case_start: 0
+hotfix_case_end: 28
+hotfix_selected_cases: >-
+  {{ hotfix_case_indices |
+  default(range(hotfix_case_start | int, hotfix_case_end | int) | list) |
+  map('extract', hotfix_cases) | list }}
+hotfix_inapplicable_controller_source: >-
+  {{ playbook_dir + '/../../tmp/codex/artifacts/' +
+     'hotfix-inapplicable-windows8-x64.msu' }}
+hotfix_cases:
+  - name: Missing present source
+    params: {}
+    failed: true
+  - name: Missing removal selector
+    params: {state: absent}
+    failed: true
+  - name: Missing source file
+    params: {source: '{{ hotfix_workspace.path }}\missing.msu'}
+    failed: true
+  - name: Directory is not a source file
+    params: {source: '{{ hotfix_workspace.path }}'}
+    failed: true
+  - name: Missing package removal
+    params:
+      state: absent
+      hotfix_identifier: LegacyWindowsMissing~identifier
+  - name: Missing package removal preview
+    params:
+      state: absent
+      hotfix_identifier: LegacyWindowsMissing~identifier
+    check: true
+  - name: Missing KB removal
+    params: {state: absent, hotfix_kb: KB0000000000}
+  - name: Missing KB removal preview
+    params: {state: absent, hotfix_kb: KB0000000000}
+    check: true
+  - name: Case insensitive state and ignored source on removal
+    params:
+      state: ABSENT
+      hotfix_identifier: LegacyWindowsMissing~identifier
+      source: '{{ hotfix_workspace.path }}\missing.msu'
+  - name: Empty removal identifier is absent
+    params: {state: absent, hotfix_identifier: ''}
+  - name: Null identifier falls back to KB
+    params:
+      state: absent
+      hotfix_identifier: null
+      hotfix_kb: KB0000000000
+  - name: Released legacy argument handling ignores unknown options
+    params:
+      state: absent
+      hotfix_identifier: LegacyWindowsMissing~identifier
+      unknown: true
+  - name: Installed package removal preview
+    params:
+      state: absent
+      hotfix_identifier: >-
+        {{ (hotfix_setup.stdout | from_json).selected.name }}
+    check: true
+    changed: true
+  - name: Installed KB removal preview
+    params:
+      state: absent
+      hotfix_kb: '{{ (hotfix_setup.stdout | from_json).selected.kb }}'
+    check: true
+    changed: true
+  - name: Already installed package source
+    params: {source: '{{ (hotfix_setup.stdout | from_json).installed_source }}'}
+  - name: Already installed package source preview
+    params: {source: '{{ (hotfix_setup.stdout | from_json).installed_source }}'}
+    check: true
+  - name: Already installed source validates KB
+    params:
+      source: '{{ (hotfix_setup.stdout | from_json).installed_source }}'
+      hotfix_kb: '{{ (hotfix_setup.stdout | from_json).selected.kb }}'
+  - name: Already installed source validates lowercase identifier
+    params:
+      source: '{{ (hotfix_setup.stdout | from_json).installed_source }}'
+      hotfix_identifier: >-
+        {{ (hotfix_setup.stdout | from_json).selected.name | lower }}
+  - name: Mismatched source KB
+    params:
+      source: '{{ (hotfix_setup.stdout | from_json).installed_source }}'
+      hotfix_kb: KB0000000000
+    failed: true
+  - name: Mismatched source identifier
+    params:
+      source: '{{ (hotfix_setup.stdout | from_json).installed_source }}'
+      hotfix_identifier: OtherIdentifier
+    failed: true
+  - name: Inapplicable official package
+    params: {source: '{{ hotfix_workspace.path }}\inapplicable.msu'}
+    failed: true
+  - name: Inapplicable official package preview
+    params: {source: '{{ hotfix_workspace.path }}\inapplicable.msu'}
+    check: true
+    failed: true
+  - name: Valid cabinet without XML metadata
+    params:
+      source: '{{ (hotfix_setup.stdout | from_json).missing_xml_source }}'
+    failed: true
+  - name: Valid cabinet without XML metadata preview
+    params:
+      source: '{{ (hotfix_setup.stdout | from_json).missing_xml_source }}'
+    check: true
+    failed: true
+  - name: Invalid state fails before provider initialization
+    params: {state: invalid}
+    failed: true
+  - name: Explicit null state fails before provider initialization
+    params: {state: null}
+    failed: true
+  - name: Invalid source path fails before provider initialization
+    params: {source: 'C:\invalid|source.msu'}
+    failed: true
+  - name: Lowercase installed KB removal preview
+    params:
+      state: absent
+      hotfix_kb: '{{ (hotfix_setup.stdout | from_json).selected.kb | lower }}'
+    check: true
+    changed: true

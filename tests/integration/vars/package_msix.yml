@@ -1,0 +1,61 @@
+---
+package_msix_cases:
+  - name: Preview native package installation
+    initial: absent
+    check: true
+    changed: true
+  - {name: Install a signed Appx package, initial: absent, changed: true}
+  - {name: Repeat installed archive request, initial: present, changed: false}
+  - name: Reject present name request without required path
+    initial: present
+    by_name: true
+    provider: auto
+    changed: false
+    failed: true
+  - name: Preview full-name removal
+    initial: present
+    by_full_name: true
+    state: absent
+    check: true
+    changed: true
+  - name: Remove installed package by name
+    initial: present
+    by_name: true
+    state: absent
+    changed: true
+  - name: Repeat missing-name removal
+    initial: absent
+    by_name: true
+    state: absent
+    changed: false
+  - name: Remove installed package by archive identity
+    initial: present
+    state: absent
+    changed: true
+  - name: Reject wrong checksum before deployment
+    initial: absent
+    checksum: wrong
+    changed: false
+    failed: true
+  - name: MSIX ignores executable installer arguments and child waiting
+    initial: absent
+    arguments: ignored
+    wait: true
+    changed: true
+  - name: Return complete unsigned archive deployment failure
+    initial: absent
+    unsigned: true
+    changed: false
+    failed: true
+    deployment_failure: true
+  - name: Return complete forced absent-package removal failure
+    initial: absent
+    by_full_name: true
+    state: absent
+    force: true
+    changed: false
+    failed: true
+    deployment_failure: true
+package_msix_selected_cases: >-
+  {{ package_msix_cases if package_msix_case_indices is not defined else
+  package_msix_case_indices | map('extract', package_msix_cases) | list }}

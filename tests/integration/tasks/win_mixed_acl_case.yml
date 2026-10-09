@@ -1,0 +1,234 @@
+---
+- name: Bind the selected public descriptor request
+  ansible.builtin.set_fact:
+    mixed_acl_native_repeat: null
+    mixed_acl_original: null
+    mixed_acl_original_repeat: null
+    mixed_acl_request: >-
+      {{ {'path':
+      (mixed_acl_setup.stdout | from_json).paths[mixed_acl_case.role],
+      'user': (mixed_acl_setup.stdout | from_json)['unusual_principal'
+      if mixed_acl_case.use_unusual_principal |
+      default(false) else 'principal'],
+      'state': mixed_acl_case.state | default('present')} |
+      combine({'rights': 'QueryValues' if mixed_acl_case.role == 'registry'
+      else 'ReadData', 'type': mixed_acl_case.type | default('allow'),
+      'inherit': 'None'} if mixed_acl_case.module == 'access' else
+      {'rights': ['QueryValues'] if mixed_acl_case.role == 'registry' else
+      ['ReadData'], 'inheritance_flags': ['None'],
+      'audit_flags': ['success']}) }}
+
+- name: Prepare identical mixed descriptor before the native request
+  sustainablelobster.legacy_windows.win_command:
+    argv: ['{{ ansible_python_interpreter }}', '-',
+           '{{ mixed_acl_workspace.path }}', prepare,
+           '{{ mixed_acl_case | to_json }}']
+    stdin: '{{ mixed_acl_program }}'
+  register: mixed_acl_before
+  changed_when: false
+  no_log: true
+
+- name: Independently retain both initial descriptors and inert fixture bytes
+  sustainablelobster.legacy_windows.win_command:
+    argv: ['{{ ansible_python_interpreter }}', '-',
+           '{{ mixed_acl_workspace.path }}', observe]
+    stdin: '{{ mixed_acl_program }}'
+  register: mixed_acl_before_all_native
+  changed_when: false
+  no_log: true
+
+- name: Capture native public descriptor result
+  block:
+    - name: Apply the native access-rule request  # noqa: args[module]
+      when: mixed_acl_case.module == 'access'
+      sustainablelobster.legacy_windows.win_acl: '{{ mixed_acl_request }}'
+      check_mode: '{{ mixed_acl_case.check | default(false) }}'
+      register: mixed_acl_native_access
+
+    - name: Apply the native audit request  # noqa: args[module]
+      when: mixed_acl_case.module == 'audit'
+      sustainablelobster.legacy_windows.win_audit_rule: >-
+        {{ mixed_acl_request }}
+      check_mode: '{{ mixed_acl_case.check | default(false) }}'
+      register: mixed_acl_native_audit
+  rescue:
+    - name: Retain the complete native failure without losing recovery
+      ansible.builtin.debug:
+        msg: Native mixed ACL result retained.
+
+- name: Retain the selected native result
+  ansible.builtin.set_fact:
+    mixed_acl_native: >-
+      {{ mixed_acl_native_access if mixed_acl_case.module == 'access'
+      else mixed_acl_native_audit }}
+
+- name: Independently inspect native stored descriptors
+  sustainablelobster.legacy_windows.win_command:
+    argv: ['{{ ansible_python_interpreter }}', '-',
+           '{{ mixed_acl_workspace.path }}', observe]
+    stdin: '{{ mixed_acl_program }}'
+  register: mixed_acl_after_native
+  changed_when: false
+  no_log: true
+
+- name: Repeat the native request without resetting its descriptor
+  when: not mixed_acl_native.failed | default(false) and
+    not mixed_acl_case.check | default(false)
+  block:
+    - name: Repeat the ordinary access-rule request  # noqa: args[module]
+      when: mixed_acl_case.module == 'access'
+      sustainablelobster.legacy_windows.win_acl: '{{ mixed_acl_request }}'
+      register: mixed_acl_repeat_access
+
+    - name: Repeat the audit-rule request  # noqa: args[module]
+      when: mixed_acl_case.module == 'audit'
+      sustainablelobster.legacy_windows.win_audit_rule: >-
+        {{ mixed_acl_request }}
+      register: mixed_acl_repeat_audit
+  rescue:
+    - name: Retain a complete repeat failure before recovery
+      ansible.builtin.debug:
+        msg: Native repeat result retained.
+
+- name: Retain the unmodified native repeat result
+  when: not mixed_acl_native.failed | default(false) and
+    not mixed_acl_case.check | default(false)
+  ansible.builtin.set_fact:
+    mixed_acl_native_repeat: >-
+      {{ mixed_acl_repeat_access if mixed_acl_case.module == 'access'
+      else mixed_acl_repeat_audit }}
+
+- name: Independently inspect descriptors and fixture bytes after repeat
+  when: not mixed_acl_native.failed | default(false) and
+    not mixed_acl_case.check | default(false)
+  sustainablelobster.legacy_windows.win_command:
+    argv: ['{{ ansible_python_interpreter }}', '-',
+           '{{ mixed_acl_workspace.path }}', observe]
+    stdin: '{{ mixed_acl_program }}'
+  register: mixed_acl_after_repeat
+  changed_when: false
+  no_log: true
+
+- name: Prepare the same mixed descriptor before the released request
+  when: mixed_acl_compare | bool
+  sustainablelobster.legacy_windows.win_command:
+    argv: ['{{ ansible_python_interpreter }}', '-',
+           '{{ mixed_acl_workspace.path }}', prepare,
+           '{{ mixed_acl_case | to_json }}']
+    stdin: '{{ mixed_acl_program }}'
+  register: mixed_acl_before_original
+  changed_when: false
+  no_log: true
+
+- name: Independently retain original starting descriptors and fixture bytes
+  when: mixed_acl_compare | bool
+  sustainablelobster.legacy_windows.win_command:
+    argv: ['{{ ansible_python_interpreter }}', '-',
+           '{{ mixed_acl_workspace.path }}', observe]
+    stdin: '{{ mixed_acl_program }}'
+  register: mixed_acl_before_all_original
+  changed_when: false
+  no_log: true
+
+- name: Capture the untouched released descriptor result
+  when: mixed_acl_compare | bool
+  block:
+    - name: Apply the released access-rule request
+      when: mixed_acl_case.module == 'access'
+      ansible.windows.win_acl: '{{ mixed_acl_request }}'
+      check_mode: '{{ mixed_acl_case.check | default(false) }}'
+      register: mixed_acl_original_access
+      vars: &original
+        ansible_shell_type: cmd
+        ansible_remote_tmp: '{{ mixed_acl_workspace.path }}'
+
+    - name: Apply the released audit-rule request
+      when: mixed_acl_case.module == 'audit'
+      ansible.windows.win_audit_rule: '{{ mixed_acl_request }}'
+      check_mode: '{{ mixed_acl_case.check | default(false) }}'
+      register: mixed_acl_original_audit
+      vars: *original
+  rescue:
+    - name: Retain the complete released failure without losing recovery
+      ansible.builtin.debug:
+        msg: Released mixed ACL result retained.
+
+- name: Retain the selected released result
+  when: mixed_acl_compare | bool
+  ansible.builtin.set_fact:
+    mixed_acl_original: >-
+      {{ mixed_acl_original_access if mixed_acl_case.module == 'access'
+      else mixed_acl_original_audit }}
+
+- name: Independently inspect released stored descriptors
+  when: mixed_acl_compare | bool
+  sustainablelobster.legacy_windows.win_command:
+    argv: ['{{ ansible_python_interpreter }}', '-',
+           '{{ mixed_acl_workspace.path }}', observe]
+    stdin: '{{ mixed_acl_program }}'
+  register: mixed_acl_after_original
+  changed_when: false
+  no_log: true
+
+- name: Repeat the released conditional access request
+  when: mixed_acl_compare | bool and mixed_acl_case.module == 'access' and
+    mixed_acl_case.condition is defined and
+    not mixed_acl_original.failed | default(false) and
+    not mixed_acl_case.check | default(false)
+  ansible.windows.win_acl: '{{ mixed_acl_request }}'
+  register: mixed_acl_original_repeat
+  vars: *original
+
+- name: Read released descriptors after conditional repeat
+  when: mixed_acl_compare | bool and mixed_acl_case.module == 'access' and
+    mixed_acl_case.condition is defined and
+    not mixed_acl_original.failed | default(false) and
+    not mixed_acl_case.check | default(false)
+  sustainablelobster.legacy_windows.win_command:
+    argv: ['{{ ansible_python_interpreter }}', '-',
+           '{{ mixed_acl_workspace.path }}', observe]
+    stdin: '{{ mixed_acl_program }}'
+  register: mixed_acl_after_original_repeat
+  changed_when: false
+  no_log: true
+
+- name: Append unmodified raw public values and descriptors
+  ansible.builtin.set_fact:
+    mixed_acl_results: >-
+      {{ mixed_acl_results + [{'case': mixed_acl_case,
+      'request': mixed_acl_request, 'before_native': mixed_acl_before,
+      'before_all_native': mixed_acl_before_all_native,
+      'native': mixed_acl_native, 'after_native': mixed_acl_after_native,
+      'native_repeat': mixed_acl_native_repeat | default(none),
+      'after_native_repeat': mixed_acl_after_repeat | default(none),
+      'before_original': mixed_acl_before_original | default(none),
+      'before_all_original': mixed_acl_before_all_original | default(none),
+      'original': mixed_acl_original | default(none),
+      'after_original': mixed_acl_after_original | default(none),
+      'original_repeat': mixed_acl_original_repeat | default(none),
+      'after_original_repeat': mixed_acl_after_original_repeat |
+      default(none)}] }}
+
+- name: Persist unmodified raw observations before comparison
+  ansible.builtin.copy:
+    content: '{{ mixed_acl_evidence }}'
+    dest: '{{ mixed_acl_capture.path }}'
+    mode: '0600'
+  delegate_to: localhost
+  vars: &controller
+    ansible_connection: local
+    ansible_shell_type: sh
+    ansible_python_interpreter: '{{ ansible_playbook_python }}'
+  changed_when: false
+
+- name: Verify exact public values raw ACE bytes and repeat behavior
+  ansible.builtin.command:
+    argv:
+      - '{{ ansible_playbook_python }}'
+      - '{{ playbook_dir }}/files/mixed_acl_compare.py'
+      - '{{ mixed_acl_capture.path }}'
+      - '{{ mixed_acl_compare | bool | ternary("paired", "native") }}'
+      - '--running'
+  delegate_to: localhost
+  vars: *controller
+  changed_when: false

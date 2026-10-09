@@ -1,0 +1,27 @@
+---
+# SPDX-License-Identifier: GPL-3.0-or-later
+- name: Enable copied-image launch rejection for the fallback cohort only
+  sustainablelobster.legacy_windows.win_command:
+    argv: ['{{ ansible_python_interpreter }}', '-',
+           '{{ updates_launch_workspace.path }}', enable]
+    stdin: '{{ updates_launch_site_program }}'
+  when: updates_launch_phase == 'fallback'
+- name: Exercise unmodified public search and check mode on the copied runtime
+  sustainablelobster.legacy_windows.win_updates:
+    state: '{{ item.state }}'
+    server_selection: managed_server
+    category_names: ['*']
+    accept_list: ['.*\Z']
+    reject_list: ['.*']
+  check_mode: '{{ item.check }}'
+  environment: '{{ updates_launch_environment }}'
+  vars:
+    ansible_python_interpreter: '{{ updates_launch_interpreter }}'
+  loop: '{{ updates_launch_cases }}'
+  register: updates_launch_cohort
+  failed_when: false
+- name: Retain both complete public result cohorts
+  ansible.builtin.set_fact:
+    updates_launch_results: >-
+      {{ updates_launch_results |
+      combine({updates_launch_phase: updates_launch_cohort}) }}

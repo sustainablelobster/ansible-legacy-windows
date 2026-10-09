@@ -1,0 +1,32 @@
+---
+- name: Exercise the public unavailable-provider boundary
+  block:
+    - name: Request the public native DNS zone interface
+      sustainablelobster.legacy_windows.win_dns_zone: # noqa: args[module]
+        name: "dns-provider-boundary-{{ inventory_hostname }}.invalid"
+        type: primary
+        state: "{{ dns_zone_boundary_case.state }}"
+      check_mode: "{{ dns_zone_boundary_case.check }}"
+      register: dns_zone_boundary_result
+  rescue:
+    - name: Retain the expected missing-provider failure
+      ansible.builtin.set_fact:
+        dns_zone_boundary_failed: true
+
+- name: Retain the complete result before validation
+  ansible.builtin.set_fact:
+    dns_zone_boundary_results: >-
+      {{ dns_zone_boundary_results | default([]) +
+         [{'request': dns_zone_boundary_case,
+           'result': dns_zone_boundary_result}] }}
+
+- name: Require an actionable unavailable-provider failure before zone
+    writes
+  ansible.builtin.assert:
+    that:
+      - dns_zone_boundary_result is failed
+      - not dns_zone_boundary_result.changed
+      - >-
+        'Windows DNS Server zone management provider is unavailable
+        (ROOT\\Microsoft\\Windows\\Dns).' in dns_zone_boundary_result.msg
+      - dns_zone_boundary_result.warnings | default([]) == []

@@ -1,0 +1,293 @@
+---
+- name: Bind one complete public download request
+  ansible.builtin.set_fact:
+    get_url_params: >-
+      {{ {'url': get_url_setup_data.http + '/payload.bin',
+          'dest': get_url_workspace.path + '\output\result.bin',
+          'use_proxy': false} | combine(get_url_case.params | default({})) }}
+    get_url_validated: false
+
+- name: Prepare identical owned destination baseline  # noqa: args[module]
+  sustainablelobster.legacy_windows.win_command:
+    argv: ['{{ ansible_python_interpreter }}', '-',
+           '{{ get_url_workspace.path }}', prepare,
+           '{{ get_url_case | to_json | b64encode }}']
+    stdin: '{{ get_url_program }}'
+  register: get_url_before_native
+  changed_when: false
+  no_log: true
+
+- name: Retain public native success or failure
+  block:
+    - name: Execute public native download  # noqa: args[module]
+      sustainablelobster.legacy_windows.win_get_url: '{{ get_url_params }}'
+      register: get_url_native
+      check_mode: '{{ get_url_case.check | default(false) }}'
+  rescue:
+    - name: Keep complete native failure
+      ansible.builtin.debug:
+        msg: Public native failure retained.
+
+- name: Observe complete native owned file state  # noqa: args[module]
+  sustainablelobster.legacy_windows.win_command:
+    argv: ['{{ ansible_python_interpreter }}', '-',
+           '{{ get_url_workspace.path }}', observe]
+    stdin: '{{ get_url_program }}'
+  register: get_url_after_native
+  changed_when: false
+  no_log: true
+
+- name: Capture untouched source behavior on identical owned baseline
+  when: get_url_compare | default(false) | bool
+  block:
+    - name: Reset identical baseline before original  # noqa: args[module]
+      sustainablelobster.legacy_windows.win_command:
+        argv: ['{{ ansible_python_interpreter }}', '-',
+               '{{ get_url_workspace.path }}', prepare,
+               '{{ get_url_case | to_json | b64encode }}']
+        stdin: '{{ get_url_program }}'
+      register: get_url_before_original
+      changed_when: false
+      no_log: true
+
+    - name: Retain public original success or failure
+      block:
+        - name: Execute untouched source public download
+          ansible.windows.win_get_url: '{{ get_url_params }}'
+          register: get_url_original
+          check_mode: '{{ get_url_case.check | default(false) }}'
+          vars:
+            ansible_shell_type: cmd
+            ansible_remote_tmp: '{{ get_url_workspace.path }}'
+      rescue:
+        - name: Keep complete original failure
+          ansible.builtin.debug:
+            msg: Public original failure retained.
+
+    - name: Observe complete original owned file state  # noqa: args[module]
+      sustainablelobster.legacy_windows.win_command:
+        argv: ['{{ ansible_python_interpreter }}', '-',
+               '{{ get_url_workspace.path }}', observe]
+        stdin: '{{ get_url_program }}'
+      register: get_url_after_original
+      changed_when: false
+      no_log: true
+
+- name: Bind captured original result to this owned legacy fixture
+  when: get_url_reference_capture is defined
+  block:
+    - name: Select exactly one captured original request
+      ansible.builtin.set_fact:
+        get_url_reference_matches: >-
+          {{ get_url_reference.results |
+             selectattr('name', 'equalto', get_url_case.name) | list }}
+      no_log: true
+
+    - name: Require one original reference for this request
+      ansible.builtin.assert:
+        that:
+          - get_url_reference_matches | length == 1
+
+    - name: Retain literal source record and fixture namespace mapping
+      ansible.builtin.set_fact:
+        get_url_reference_record: '{{ get_url_reference_matches[0] }}'
+      no_log: true
+
+    - name: Map only original fixture paths and endpoint
+      vars:
+        source: '{{ get_url_reference_record.reference }}'
+        source_workspace: '{{ (source.workspace | to_json)[1:-1] }}'
+        target_workspace: '{{ (get_url_workspace.path | to_json)[1:-1] }}'
+      ansible.builtin.set_fact:
+        get_url_original: >-
+          {{ get_url_reference_record.original | to_json |
+             replace(source_workspace, target_workspace) |
+             replace(source.file, get_url_setup_data.file) |
+             replace(source.http, get_url_setup_data.http) | from_json }}
+        get_url_before_original: >-
+          {{ get_url_reference_record.before_original }}
+        get_url_after_original: '{{ get_url_reference_record.after_original }}'
+      no_log: true
+
+- name: Retain whole raw public results and file observations before assertions
+  ansible.builtin.set_fact:
+    get_url_record:
+      name: '{{ get_url_case.name }}'
+      params: '{{ get_url_params }}'
+      check: '{{ get_url_case.check | default(false) }}'
+      native: '{{ get_url_native }}'
+      original: '{{ get_url_original | default(none) }}'
+      before_native: '{{ get_url_before_native }}'
+      after_native: '{{ get_url_after_native }}'
+      before_original: '{{ get_url_before_original | default(none) }}'
+      after_original: '{{ get_url_after_original | default(none) }}'
+      reference_record: '{{ get_url_reference_record | default(none) }}'
+      validated: false
+
+- name: Keep unvalidated record if a gate fails
+  ansible.builtin.set_fact:
+    get_url_results: '{{ get_url_results + [get_url_record] }}'
+
+- name: Persist raw evidence before assertions
+  ansible.builtin.copy:
+    content: >-
+      {{ {'results': get_url_results, 'setup': get_url_setup,
+          'workspace': get_url_workspace} | to_nice_json }}
+    dest: '{{ get_url_capture.path }}'
+    mode: '0600'
+  delegate_to: localhost
+  vars: &local
+    ansible_connection: local
+    ansible_shell_type: sh
+    ansible_python_interpreter: '{{ ansible_playbook_python }}'
+  changed_when: false
+  no_log: true
+
+- name: Require complete expected native result and check-mode preservation
+  vars:
+    before: '{{ get_url_before_native.stdout | from_json }}'
+    after: '{{ get_url_after_native.stdout | from_json }}'
+  ansible.builtin.assert:
+    that:
+      - get_url_native.changed == (get_url_case.changed | default(false))
+      - (get_url_native is failed) == (get_url_case.failed | default(false))
+      - >-
+        get_url_case.setter_failure | default(false) or
+        get_url_native.elapsed is number
+      - >-
+        get_url_case.setter_failure | default(false) or
+        get_url_native.elapsed >= 0
+      - >-
+        get_url_case.setter_failure | default(false) or
+        get_url_native.elapsed < 120
+      - >-
+        not get_url_case.setter_failure | default(false) or
+        ['elapsed', 'url', 'dest', 'status_code'] |
+        intersect(get_url_native.keys() | list) == []
+      - >-
+        not get_url_case.setter_failure | default(false) or
+        after.requests == []
+      - >-
+        get_url_case.elapsed is not defined or
+        get_url_native.elapsed == get_url_case.elapsed
+      - >-
+        (not get_url_case.check | default(false) and get_url_native.changed) or
+        before.output == after.output
+      - >-
+        get_url_case.check | default(false) or not get_url_native.changed or
+        after.modified_in_request
+      - >-
+        get_url_case.request_methods is not defined or
+        after.request_methods == get_url_case.request_methods
+      - >-
+        get_url_case.request_path is not defined or
+        after.request_path == get_url_case.request_path
+      - >-
+        get_url_case.expected_headers is not defined or
+        after.request_headers | combine(get_url_case.expected_headers) ==
+        after.request_headers
+      - >-
+        get_url_case.absent_headers | default([]) |
+        intersect(after.request_headers.keys() | list) | length == 0
+      - >-
+        not get_url_case.drop_redirect_auth | default(false) or
+        not after.authorization_after_first
+
+- name: Compare all public fields with explicit elapsed-time variability
+  when: >-
+    get_url_compare | default(false) | bool or
+    get_url_reference_capture is defined
+  vars:
+    timeout_messages:
+      - >-
+        Error downloading '{{ get_url_params.url }}' to
+        '{{ get_url_params.dest }}': The operation has timed out
+      - >-
+        Error downloading '{{ get_url_params.url }}' to
+        '{{ get_url_params.dest }}': The request was aborted:
+        The operation has timed out.
+    native_public: >-
+      {{ get_url_native | dict2items |
+      rejectattr('key', 'in', ['invocation', 'exception']) |
+      list | items2dict }}
+    original_public: >-
+      {{ get_url_original | dict2items |
+      rejectattr('key', 'in', ['invocation', 'exception']) |
+      list | items2dict }}
+    native_files: '{{ get_url_after_native.stdout | from_json }}'
+    original_files: '{{ get_url_after_original.stdout | from_json }}'
+    native_comparable: >-
+      {{ native_public |
+         combine({} if get_url_case.setter_failure | default(false)
+                 else {'elapsed': 0}) |
+         combine({'msg': timeout_messages[0]}
+                 if get_url_case.timeout_error_form | default(false) else {}) }}
+    original_comparable: >-
+      {{ original_public |
+         combine({} if get_url_case.setter_failure | default(false)
+                 else {'elapsed': 0}) |
+         combine({'msg': timeout_messages[0]}
+                 if get_url_case.timeout_error_form | default(false) else {}) }}
+  ansible.builtin.assert:
+    that:
+      - >-
+        get_url_case.setter_failure | default(false) or
+        get_url_original.elapsed is number
+      - >-
+        get_url_case.setter_failure | default(false) or
+        get_url_original.elapsed >= 0
+      - >-
+        get_url_case.setter_failure | default(false) or
+        get_url_original.elapsed < 120
+      - >-
+        not get_url_case.setter_failure | default(false) or
+        ['elapsed', 'url', 'dest', 'status_code'] |
+        intersect(get_url_original.keys() | list) == []
+      - >-
+        not get_url_case.setter_failure | default(false) or
+        original_files.requests == []
+      - >-
+        get_url_case.elapsed is not defined or
+        get_url_original.elapsed == get_url_case.elapsed
+      - >-
+        not get_url_case.no_requests | default(false) or
+        (get_url_native.elapsed == 0 and get_url_original.elapsed == 0)
+      - >-
+        not get_url_case.timeout_error_form | default(false) or
+        (get_url_native.msg in timeout_messages and
+         get_url_original.msg in timeout_messages)
+      - native_comparable == original_comparable
+      - native_files.portable_output == original_files.portable_output
+      - >-
+        not get_url_case.no_requests | default(false) or
+        (native_files.requests == [] and original_files.requests == [])
+      - >-
+        get_url_case.check | default(false) or not get_url_original.changed or
+        original_files.modified_in_request
+      - >-
+        (not get_url_case.check | default(false) and
+        get_url_original.changed) or
+        (get_url_before_original.stdout | from_json).output ==
+        original_files.output
+      - >-
+        get_url_case.request_methods is not defined or
+        original_files.request_methods == get_url_case.request_methods
+      - >-
+        get_url_case.request_path is not defined or
+        original_files.request_path == get_url_case.request_path
+      - >-
+        get_url_case.expected_headers is not defined or
+        original_files.request_headers |
+        combine(get_url_case.expected_headers) == original_files.request_headers
+      - >-
+        get_url_case.absent_headers | default([]) |
+        intersect(original_files.request_headers.keys() | list) | length == 0
+      - >-
+        not get_url_case.drop_redirect_auth | default(false) or
+        not original_files.authorization_after_first
+
+- name: Record successful whole public validation
+  ansible.builtin.set_fact:
+    get_url_results: >-
+      {{ get_url_results[:-1] +
+      [get_url_record | combine({'validated': true})] }}

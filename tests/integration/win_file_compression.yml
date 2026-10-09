@@ -1,0 +1,125 @@
+---
+- name: Verify native NTFS compression on owned files and directories
+  hosts: legacy_windows
+  gather_facts: false
+  vars_files:
+    - vars/compression.yml
+  tasks:
+    - name: Require Python 3.4.4 and record existing task directories
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import glob, json, os, sys, tempfile;
+        assert sys.version_info[:3] == (3, 4, 4);
+        print(json.dumps(sorted(glob.glob(os.path.join(tempfile.gettempdir(),
+        'ansible-tmp-*')))))""
+      register: task_directories_before
+      changed_when: false
+
+    - name: Exercise compression in a temporary workspace
+      block:
+        - name: Allocate an isolated workspace
+          # These native WANT_JSON interfaces are exercised by the assertions.
+          sustainablelobster.legacy_windows.win_tempfile:  # noqa: args[module]
+            state: directory
+            prefix: legacy-windows-compression-
+          register: compression_workspace
+          check_mode: false
+
+        - name: Create hidden Unicode fixtures with compressible binary contents
+          sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - '-'
+              - '{{ compression_tree }}'
+            stdin: '{{ compression_setup }}'
+          changed_when: true
+          check_mode: false
+
+        - name: Exercise parent file and recursive compression behavior
+          ansible.builtin.include_tasks: tasks/win_file_compression_case.yml
+          loop: '{{ compression_cases }}'
+          loop_control:
+            loop_var: compression_case
+            label: '{{ compression_case.name }}'
+
+        - name: Exercise missing-path failure
+          block:
+            - name: Reject a missing target  # noqa: args[module]
+              sustainablelobster.legacy_windows.win_file_compression:
+                path: '{{ compression_tree }}\missing'
+              register: missing_compression
+
+            - name: Reject unexpected success
+              ansible.builtin.fail:
+                msg: A missing compression path unexpectedly succeeded
+          rescue:
+            - name: Check the missing-path result
+              ansible.builtin.assert:
+                that:
+                  - missing_compression is failed
+                  - not missing_compression.changed
+                  - missing_compression.rc == 0
+                  - >-
+                    missing_compression.msg ==
+                    'Path to item, ' + compression_tree +
+                    '\missing, does not exist.'
+
+        - name: Exercise invalid-input failures
+          block:
+            - name: Reject invalid arguments  # noqa: args[module]
+              sustainablelobster.legacy_windows.win_file_compression: >-
+                {{ item }}
+              loop:
+                - {path: '{{ compression_tree }}', state: invalid}
+                - {path: '{{ compression_tree }}', unknown_option: true}
+              register: invalid_compression
+
+            - name: Reject unexpected valid arguments
+              ansible.builtin.fail:
+                msg: Invalid compression arguments unexpectedly succeeded
+          rescue:
+            - name: Require both expected validation failures
+              ansible.builtin.assert:
+                that:
+                  - invalid_compression is failed
+                  - invalid_compression.results | length == 2
+                  - >-
+                    invalid_compression.results |
+                    selectattr('failed', 'equalto', true) | list | length == 2
+
+        - name: Recover after expected failures
+          ansible.builtin.include_tasks: tasks/win_file_compression_case.yml
+          vars:
+            compression_case:
+              name: Confirm the tree is unchanged after failed requests
+              state: absent
+              recurse: true
+              changed: false
+              compressed: []
+      always:
+        - name: Remove only the workspace allocated by this test
+          sustainablelobster.legacy_windows.win_file:  # noqa: args[module]
+            path: '{{ compression_workspace.path }}'
+            state: absent
+          when: compression_workspace.path is defined
+          check_mode: false
+
+        - name: Verify workspace removal and record task directories
+          ansible.builtin.raw: >-
+            cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+            "import glob, json, os, sys, tempfile;
+            assert not os.path.exists(sys.argv[1]);
+            print(json.dumps(sorted(glob.glob(os.path.join(tempfile.gettempdir(),
+            'ansible-tmp-*')))))" "{{ compression_workspace.path }}""
+          when: compression_workspace.path is defined
+          register: task_directories_after
+          changed_when: false
+          check_mode: false
+
+        - name: Require staging cleanup after successful and failed requests
+          ansible.builtin.assert:
+            that:
+              - >-
+                (task_directories_before.stdout | from_json) ==
+                (task_directories_after.stdout | from_json)
+          when: compression_workspace.path is defined

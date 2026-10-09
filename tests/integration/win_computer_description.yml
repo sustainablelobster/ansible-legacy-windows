@@ -1,0 +1,109 @@
+---
+- name: Verify description and registration changes with exact restoration
+  hosts: legacy_windows
+  gather_facts: false
+  vars_files:
+    - vars/computer_description.yml
+    - vars/computer_description_fixture.yml
+  vars:
+    computer_description_wmi_source: >-
+      {{ lookup('ansible.builtin.file', playbook_dir ~
+         '/../../plugins/module_utils/legacy_windows_wmi.py') }}
+    computer_description_script: >-
+      {{ computer_description_wmi_source ~ ('%c' | format(10)) ~
+         computer_description_fixture }}
+  tasks:
+    - name: Require Python 3.4.4 and record existing task directories
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import glob, json, os, sys, tempfile;
+        assert sys.version_info[:3] == (3, 4, 4);
+        print(json.dumps(sorted(glob.glob(os.path.join(tempfile.gettempdir(),
+        'ansible-tmp-*')))))""
+      register: task_directories_before
+      changed_when: false
+
+    - name: Exercise registration and description with a recovery journal
+      block:
+        - name: Allocate the recovery workspace
+          sustainablelobster.legacy_windows.win_tempfile:  # noqa: args[module]
+            state: directory
+            prefix: legacy-windows-description-
+          register: computer_description_workspace
+          check_mode: false
+
+        - name: Back up original values before setting the controlled baseline
+          sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - '-'
+              - '{{ computer_description_workspace.path }}'
+              - setup
+            stdin: '{{ computer_description_script }}'
+          register: computer_description_setup
+          changed_when: true
+          check_mode: false
+
+        - name: Retain the initial native observation
+          ansible.builtin.set_fact:
+            computer_description_initial: >-
+              {{ computer_description_setup.stdout | from_json }}
+            computer_description_previous: >-
+              {{ computer_description_setup.stdout | from_json }}
+
+        - name: Exercise changes repeats check mode clearing and recovery
+          ansible.builtin.include_tasks: tasks/win_computer_description_case.yml
+          loop: '{{ range(computer_description_cases | length) | list }}'
+          loop_control:
+            loop_var: computer_description_case_index
+          vars:
+            computer_description_case: >-
+              {{ computer_description_cases[computer_description_case_index] }}
+      always:
+        - name: Restore original values before removing recovery data
+          when: computer_description_workspace.path is defined
+          block:
+            - name: Restore and verify original values  # noqa: args[module]
+              sustainablelobster.legacy_windows.win_command:
+                argv:
+                  - '{{ ansible_python_interpreter }}'
+                  - '-'
+                  - '{{ computer_description_workspace.path }}'
+                  - cleanup
+                stdin: '{{ computer_description_script }}'
+              register: computer_description_restoration
+              changed_when: true
+              check_mode: false
+
+            - name: Require verified restoration before discarding the journal
+              ansible.builtin.assert:
+                that:
+                  - >-
+                    (computer_description_restoration.stdout |
+                     from_json).restored
+
+            - name: Remove only the verified recovery workspace
+              sustainablelobster.legacy_windows.win_file:  # noqa: args[module]
+                path: '{{ computer_description_workspace.path }}'
+                state: absent
+              check_mode: false
+
+        - name: Verify recovery-workspace and staging cleanup
+          ansible.builtin.raw: >-
+            cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+            "import glob, json, os, sys, tempfile;
+            assert not os.path.exists(sys.argv[1]);
+            print(json.dumps(sorted(glob.glob(os.path.join(tempfile.gettempdir(),
+            'ansible-tmp-*')))))" "{{ computer_description_workspace.path }}""
+          when: computer_description_workspace.path is defined
+          register: task_directories_after
+          changed_when: false
+          check_mode: false
+
+        - name: Require task-directory cleanup
+          ansible.builtin.assert:
+            that:
+              - >-
+                (task_directories_before.stdout | from_json) ==
+                (task_directories_after.stdout | from_json)
+          when: computer_description_workspace.path is defined

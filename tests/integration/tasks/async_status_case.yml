@@ -1,0 +1,132 @@
+---
+- name: Seed an isolated job entry and independently observe complete bytes
+  sustainablelobster.legacy_windows.win_command: # noqa: args[module]
+    argv:
+      - '{{ ansible_python_interpreter }}'
+      - '-'
+      - '{{ async_status_workspace.path }}'
+      - seed
+      - '{{ async_status_case | to_json | b64encode }}'
+    stdin: '{{ async_status_program }}'
+  register: async_status_before_command
+  check_mode: false
+
+- name: Initialize retained job status validation
+  ansible.builtin.set_fact:
+    async_status_validated: false
+
+- name: Capture complete public success or failure
+  vars:
+    async_status_params: >-
+      {{ async_status_case.params | default({"jid": "job"}) }}
+    ansible_async_dir: '{{ async_status_context.cache }}'
+  block:
+    - name: Read or erase through the native public action # noqa: args[module]
+      sustainablelobster.legacy_windows.async_status: >-
+        {{ async_status_params }}
+      register: async_status_native_result
+      check_mode: '{{ async_status_case.check | default(false) }}'
+      when: async_status_engine == 'native'
+
+    - name: Read or erase through the unchanged standard upstream action
+      ansible.builtin.async_status: '{{ async_status_params }}'
+      register: async_status_original_result
+      check_mode: '{{ async_status_case.check | default(false) }}'
+      when: async_status_engine == 'original'
+      vars:
+        ansible_shell_type: cmd
+        ansible_remote_tmp: '{{ async_status_workspace.path }}'
+  rescue:
+    - name: Retain the public failure without altering its result fields
+      ansible.builtin.debug:
+        msg: Public failure retained for validation and whole-result comparison.
+  always:
+    - name: Retain complete public result
+      ansible.builtin.set_fact:
+        async_status_result: >-
+          {{ async_status_native_result if async_status_engine == 'native'
+          else async_status_original_result }}
+
+- name: Independently observe job bytes and protected sibling after the call
+  sustainablelobster.legacy_windows.win_command: # noqa: args[module]
+    argv:
+      - '{{ ansible_python_interpreter }}'
+      - '-'
+      - '{{ async_status_workspace.path }}'
+      - observe
+    stdin: '{{ async_status_program }}'
+  register: async_status_after_command
+  changed_when: false
+  check_mode: false
+
+- name: Save public results and full observations before assertions
+  ansible.builtin.copy:
+    content: >-
+      {{ async_status_capture |
+      combine({'results': async_status_results + [async_status_record]}) |
+      to_nice_json }}
+    dest: '{{ async_status_capture_file.path }}'
+    mode: '0600'
+  vars: &record
+    ansible_connection: local
+    ansible_shell_type: sh
+    ansible_python_interpreter: '{{ ansible_playbook_python }}'
+    async_status_record:
+      engine: '{{ async_status_engine }}'
+      name: '{{ async_status_case.name }}'
+      params: '{{ async_status_case.params | default({"jid": "job"}) }}'
+      check: '{{ async_status_case.check | default(false) }}'
+      validated: '{{ async_status_validated }}'
+      result: '{{ async_status_result }}'
+      before: '{{ async_status_before_command.stdout | from_json }}'
+      after: '{{ async_status_after_command.stdout | from_json }}'
+  delegate_to: localhost
+  changed_when: false
+
+- name: Retain unvalidated observations before assertions
+  ansible.builtin.set_fact:
+    async_status_results: '{{ async_status_results + [async_status_record] }}'
+  vars:
+    <<: *record
+
+- name: Require declared public flags and complete recorded filesystem behavior
+  vars:
+    before: '{{ async_status_before_command.stdout | from_json }}'
+    after: '{{ async_status_after_command.stdout | from_json }}'
+  ansible.builtin.assert:
+    that:
+      - >-
+        async_status_result.changed ==
+        (async_status_case.changed | default(false))
+      - (async_status_result is failed) ==
+        (async_status_case.failed | default(false))
+      - >-
+        async_status_case.finished is not defined or
+        async_status_result.finished == async_status_case.finished
+      - before.sentinel == after.sentinel
+      - >-
+        (after.cache.children | length == 0) if
+        (async_status_case.erased | default(false)) else before == after
+
+- name: Mark validated only after public and independent state assertions
+  ansible.builtin.set_fact:
+    async_status_validated: true
+
+- name: Retain the validated whole record
+  ansible.builtin.set_fact:
+    async_status_results: >-
+      {{ async_status_results[:-1] + [async_status_record] }}
+  vars:
+    <<: *record
+
+- name: Persist validated evidence immediately
+  ansible.builtin.copy:
+    content: '{{ async_status_capture | to_nice_json }}'
+    dest: '{{ async_status_capture_file.path }}'
+    mode: '0600'
+  delegate_to: localhost
+  vars:
+    ansible_connection: local
+    ansible_shell_type: sh
+    ansible_python_interpreter: '{{ ansible_playbook_python }}'
+  changed_when: false

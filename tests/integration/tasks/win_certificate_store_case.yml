@@ -1,0 +1,248 @@
+---
+- name: Initialize one certificate-store observation
+  ansible.builtin.set_fact:
+    certificate_store_before: {}
+    certificate_store_after: {}
+    certificate_store_result:
+    certificate_store_validated: false
+
+- name: Capture independent certificate state and complete public results
+  vars:
+    certificate_store_request: >-
+      {{ {'store_name': certificate_store_names.machine_store
+      if (certificate_store_case.params.store_location |
+      default('CurrentUser') |
+      string | lower) == 'localmachine' else certificate_store_names.store,
+      'store_location': 'CurrentUser'} |
+      combine(certificate_store_case.params) }}
+    certificate_store_row:
+      name: '{{ certificate_store_case.name }}'
+      engine: '{{ certificate_store_engine }}'
+      params: '{{ certificate_store_request }}'
+      check: '{{ certificate_store_case.check | default(false) }}'
+      result: '{{ certificate_store_result }}'
+      validated: '{{ certificate_store_validated }}'
+      before_command: '{{ certificate_store_before }}'
+      after_command: '{{ certificate_store_after }}'
+      before: >-
+        {{ (certificate_store_before.stdout | from_json)
+        if certificate_store_before.rc | default(1) == 0 else none }}
+      after: >-
+        {{ (certificate_store_after.stdout | from_json)
+        if certificate_store_after.rc | default(1) == 0 else none }}
+    certificate_store_pending: >-
+      {{ certificate_store_results + [certificate_store_row] }}
+  block:
+    - name: Prepare only the tracked owned export destination
+      sustainablelobster.legacy_windows.win_command: # noqa: args[module]
+        argv:
+          - '{{ ansible_python_interpreter }}'
+          - '-'
+          - '{{ certificate_store_workspace.path }}'
+          - '{{ certificate_store_case.prepare }}'
+        stdin: '{{ certificate_store_program }}'
+      when: certificate_store_case.prepare is defined
+      check_mode: false
+
+    - name: Read independent certificates keys registry and file state before
+      sustainablelobster.legacy_windows.win_command: # noqa: args[module]
+        argv:
+          - '{{ ansible_python_interpreter }}'
+          - '-'
+          - '{{ certificate_store_workspace.path }}'
+          - observe
+        stdin: '{{ certificate_store_program }}'
+      register: certificate_store_before
+      changed_when: false
+      check_mode: false
+
+    - name: Retain public failures as complete dictionaries
+      block:
+        - name: Execute native certificate-store request # noqa: args[module]
+          sustainablelobster.legacy_windows.win_certificate_store: >-
+            {{ certificate_store_request }}
+          register: certificate_store_native_result
+          check_mode: '{{ certificate_store_case.check | default(false) }}'
+          when: certificate_store_engine == 'native'
+
+        - name: Execute unchanged pinned original certificate-store request
+          ansible.windows.win_certificate_store: >-
+            {{ certificate_store_request }}
+          register: certificate_store_original_result
+          check_mode: '{{ certificate_store_case.check | default(false) }}'
+          when: certificate_store_engine == 'original'
+          vars:
+            ansible_shell_type: cmd
+            ansible_remote_tmp: '{{ certificate_store_workspace.path }}'
+      rescue:
+        - name: Keep the failed public call for comparison and recovery
+          ansible.builtin.debug:
+            msg: Expected or unexpected failure retained without field removal.
+      always:
+        - name: Retain every public result field
+          ansible.builtin.set_fact:
+            certificate_store_result: >-
+              {{ certificate_store_native_result
+              if certificate_store_engine == 'native'
+              else certificate_store_original_result }}
+
+    - name: Read independent certificates keys registry and file state after
+      sustainablelobster.legacy_windows.win_command: # noqa: args[module]
+        argv:
+          - '{{ ansible_python_interpreter }}'
+          - '-'
+          - '{{ certificate_store_workspace.path }}'
+          - observe
+        stdin: '{{ certificate_store_program }}'
+      register: certificate_store_after
+      changed_when: false
+      check_mode: false
+
+    - name: Save raw observations before asserting behavior
+      ansible.builtin.copy:
+        content: >-
+          {{ certificate_store_capture |
+          combine({'results': certificate_store_pending}) | to_nice_json }}
+        dest: '{{ certificate_store_capture_file.path }}'
+        mode: '0600'
+      delegate_to: localhost
+      vars: &local
+        ansible_connection: local
+        ansible_shell_type: sh
+        ansible_python_interpreter: '{{ ansible_playbook_python }}'
+      changed_when: false
+
+    - name: Verify public failure change and initialized fields
+      ansible.builtin.assert:
+        that:
+          - certificate_store_result.changed == certificate_store_case.changed
+          - (certificate_store_result is failed) ==
+            (certificate_store_case.failed | default(false))
+          - ('thumbprints' in certificate_store_result) ==
+            (certificate_store_case.initialized | default(true))
+          - >-
+            certificate_store_case.message | default('') in
+            certificate_store_result.msg | default('')
+
+    - name: Verify selected thumbprints against owned certificate identities
+      vars:
+        expected: >-
+          {{ certificate_store_case.thumbprints | map('extract',
+          certificate_store_names.thumbprints) | list }}
+      ansible.builtin.assert:
+        that: [certificate_store_result.thumbprints | sort == expected | sort]
+      when: certificate_store_case.thumbprints is defined
+
+    - name: Verify check-mode and unchanged state at the declared native scopes
+      vars:
+        before: '{{ certificate_store_before.stdout | from_json }}'
+        after: '{{ certificate_store_after.stdout | from_json }}'
+        readonly: >-
+          {{ (certificate_store_case.check | default(false)) or
+          not certificate_store_case.changed }}
+      ansible.builtin.assert:
+        that:
+          - >-
+            not readonly or before.stores == after.stores and
+            before.service_registry == after.service_registry
+          - >-
+            certificate_store_case.keys_may_change | default(false) or
+            before['keys'] == after['keys']
+          - >-
+            not readonly or
+            certificate_store_case.files_may_change | default(false) or
+            before.files == after.files
+
+    - name: Verify selected stores from independent DER and provider metadata
+      vars:
+        after: '{{ certificate_store_after.stdout | from_json }}'
+        expected_roles: '{{ certificate_store_case[item + "_roles"] }}'
+        expected: >-
+          {{ expected_roles | map('extract',
+          certificate_store_names.thumbprints) | list }}
+        selected: >-
+          {{ after.stores.service_physical if item == 'service'
+          else after.stores[item] }}
+      ansible.builtin.assert:
+        that:
+          - selected | map(attribute='thumbprint') |
+            sort == expected | sort
+      loop: [user, machine, service]
+      when: certificate_store_case[item + '_roles'] is defined
+
+    - name: Verify whether the owned stored certificate has a key association
+      vars:
+        after: '{{ certificate_store_after.stdout | from_json }}'
+        expected: '{{ certificate_store_case[item + "_private"] }}'
+        selected_thumbprint: >-
+          {{ certificate_store_names.thumbprints.primary if item == 'user'
+          else certificate_store_names.thumbprints.secondary }}
+        selected: >-
+          {{ after.stores[item] | selectattr('thumbprint', 'equalto',
+          selected_thumbprint) | first }}
+      ansible.builtin.assert:
+        that: [(selected.provider is not none) == expected]
+      loop: [user, machine]
+      when: certificate_store_case[item + '_private'] is defined
+
+    - name: Verify exact DER export hash
+      vars:
+        after: '{{ certificate_store_after.stdout | from_json }}'
+      ansible.builtin.assert:
+        that:
+          - after.files[certificate_store_case.der_file] ==
+            after.files.primary_der
+      when: certificate_store_case.der_file is defined
+
+    - name: Verify export destination presence and partial deletion
+      vars:
+        files: '{{ (certificate_store_after.stdout | from_json).files }}'
+      ansible.builtin.assert:
+        that:
+          - >-
+            certificate_store_case.present_file is not defined or
+            files[certificate_store_case.present_file] is not none
+          - >-
+            certificate_store_case.absent_file is not defined or
+            files[certificate_store_case.absent_file] is none
+
+    - name: Verify all nine owned service-store registrations
+      vars:
+        registry: >-
+          {{ (certificate_store_after.stdout | from_json).service_registry }}
+      ansible.builtin.assert:
+        that:
+          - registry.children.SystemCertificates.children.keys() |
+            sort == ['AuthRoot', 'CA', 'ClientAuthIssuer', 'Disallowed',
+            'My', 'Root', 'Trust', 'TrustedPeople', 'TrustedPublisher'] | sort
+      when: certificate_store_case.service_stores | default(false)
+
+    - name: Verify complete PKCS12 result fields without rewriting them
+      ansible.builtin.assert:
+        that:
+          - >-
+            certificate_store_case.key_exported is not defined or
+            certificate_store_result.key_exported ==
+            certificate_store_case.key_exported
+          - >-
+            certificate_store_case.key_exportable is not defined or
+            certificate_store_result.key_exportable ==
+            certificate_store_case.key_exportable
+
+    - name: Mark the complete certificate-store case validated
+      ansible.builtin.set_fact:
+        certificate_store_validated: true
+  always:
+    - name: Retain failed assertions and their public request
+      ansible.builtin.set_fact:
+        certificate_store_results: >-
+          {{ certificate_store_results + [certificate_store_row] }}
+
+    - name: Save complete private certificate evidence
+      ansible.builtin.copy:
+        content: '{{ certificate_store_capture | to_nice_json }}'
+        dest: '{{ certificate_store_capture_file.path }}'
+        mode: '0600'
+      delegate_to: localhost
+      vars: *local
+      changed_when: false

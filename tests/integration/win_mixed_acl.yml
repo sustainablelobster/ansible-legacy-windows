@@ -1,0 +1,218 @@
+---
+- name: Verify owned mixed security descriptors and exact recovery
+  hosts: legacy_windows
+  gather_facts: false
+  vars_files:
+    - vars/mixed_acl.yml
+  vars:
+    mixed_acl_program: >-
+      {{ lookup('file', playbook_dir + '/fixtures/mixed_acl.py') }}
+    mixed_acl_evidence: >-
+      {{ {'results': mixed_acl_results,
+      'setup': mixed_acl_setup | default(none),
+      'restore': mixed_acl_restore | default(none),
+      'readback': mixed_acl_readback | default(none),
+      'cleanup': mixed_acl_cleanup | default(none),
+      'absence': mixed_acl_absence | default(none),
+      'staging_before': mixed_acl_staging_before,
+      'staging_after': mixed_acl_staging_after | default(none),
+      'workspace_absent': mixed_acl_workspace_absent | default(false),
+      'latest_prepare': mixed_acl_before | default(none),
+      'latest_native': mixed_acl_native | default(none),
+      'latest_original': mixed_acl_original | default(none)} | to_nice_json }}
+  tasks:
+    - name: Require Python 3.4.4 and capture original staging
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import glob,json,os,sys,tempfile;
+        assert sys.version_info[:3]==(3,4,4);
+        print(json.dumps(sorted(glob.glob(os.path.join(
+        tempfile.gettempdir(),'ansible-tmp-*')))))""
+      register: mixed_acl_staging_before
+      changed_when: false
+
+    - name: Allocate private evidence before changing target state
+      ansible.builtin.tempfile:
+        state: file
+        path: '{{ playbook_dir }}/../../tmp/codex/evidence'
+        prefix: 'mixed-acl-{{ inventory_hostname }}-'
+        suffix: .json
+      register: mixed_acl_capture
+      delegate_to: localhost
+      vars: &controller
+        ansible_connection: local
+        ansible_shell_type: sh
+        ansible_python_interpreter: '{{ ansible_playbook_python }}'
+      changed_when: false
+
+    - name: Initialize raw observations
+      ansible.builtin.set_fact:
+        mixed_acl_results: []
+
+    - name: Exercise only uniquely owned descriptor fixtures
+      block:
+        - name: Allocate the owned workspace  # noqa: args[module]
+          sustainablelobster.legacy_windows.win_tempfile:
+            state: directory
+            prefix: legacy-windows-mixed-acl-
+          register: mixed_acl_workspace
+
+        - name: Journal original descriptors before preparing mixed entries
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}', '-',
+                   '{{ mixed_acl_workspace.path }}', setup]
+            stdin: '{{ mixed_acl_program }}'
+          register: mixed_acl_setup
+          changed_when: false
+          no_log: true
+
+        - name: Exercise public descriptor requests and retain every result
+          ansible.builtin.include_tasks: tasks/win_mixed_acl_case.yml
+          loop: '{{ mixed_acl_selected_cases }}'
+          loop_control:
+            loop_var: mixed_acl_case
+            label: '{{ mixed_acl_case.name }}'
+      always:
+        - name: Persist raw observations before recovery assertions
+          ansible.builtin.copy: &capture
+            content: '{{ mixed_acl_evidence }}'
+            dest: '{{ mixed_acl_capture.path }}'
+            mode: '0600'
+          delegate_to: localhost
+          vars: *controller
+          changed_when: false
+
+        - name: Restore every journaled descriptor without deleting objects
+          when: mixed_acl_workspace.path is defined
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}', '-',
+                   '{{ mixed_acl_workspace.path }}', restore]
+            stdin: '{{ mixed_acl_program }}'
+          register: mixed_acl_restore
+          changed_when: false
+          failed_when: false
+
+        - name: Preserve complete restoration result before assertions
+          ansible.builtin.copy: *capture
+          delegate_to: localhost
+          vars: *controller
+          changed_when: false
+
+        - name: Require exact baseline descriptor restoration
+          ansible.builtin.assert:
+            that:
+              - mixed_acl_restore.rc == 0
+              - (mixed_acl_restore.stdout | from_json).snapshots ==
+                (mixed_acl_setup.stdout | from_json).baseline
+
+        - name: Independently read restored descriptors and inert fixture bytes
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}', '-',
+                   '{{ mixed_acl_workspace.path }}', observe]
+            stdin: '{{ mixed_acl_program }}'
+          register: mixed_acl_readback
+          changed_when: false
+          failed_when: false
+
+        - name: Preserve independent readback before assertions
+          ansible.builtin.copy: *capture
+          delegate_to: localhost
+          vars: *controller
+          changed_when: false
+
+        - name: Require independent byte-for-byte baseline descriptors
+          ansible.builtin.assert:
+            that:
+              - mixed_acl_readback.rc == 0
+              - (mixed_acl_readback.stdout | from_json) ==
+                (mixed_acl_setup.stdout | from_json).baseline
+
+        - name: Delete only descriptor-verified owned objects and journal
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}', '-',
+                   '{{ mixed_acl_workspace.path }}', cleanup]
+            stdin: '{{ mixed_acl_program }}'
+          register: mixed_acl_cleanup
+          changed_when: false
+          failed_when: false
+
+        - name: Preserve complete deletion result before assertions
+          ansible.builtin.copy: *capture
+          delegate_to: localhost
+          vars: *controller
+          changed_when: false
+
+        - name: Require exact descriptor recovery and owned resource absence
+          ansible.builtin.assert:
+            that:
+              - mixed_acl_cleanup.rc == 0
+              - (mixed_acl_cleanup.stdout | from_json).restored
+              - (mixed_acl_cleanup.stdout | from_json).journal_absent
+
+        - name: Independently prove owned file key and journal absence
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}', '-',
+                   '{{ mixed_acl_workspace.path }}', absence,
+                   '{{ (mixed_acl_setup.stdout | from_json).suffix }}']
+            stdin: '{{ mixed_acl_program }}'
+          register: mixed_acl_absence
+          changed_when: false
+          failed_when: false
+
+        - name: Preserve complete absence proof before assertions
+          ansible.builtin.copy: *capture
+          delegate_to: localhost
+          vars: *controller
+          changed_when: false
+
+        - name: Require exact owned resource absence
+          ansible.builtin.assert:
+            that:
+              - mixed_acl_absence.rc == 0
+              - (mixed_acl_absence.stdout | from_json).file_absent
+              - (mixed_acl_absence.stdout | from_json).registry_absent
+              - (mixed_acl_absence.stdout | from_json).journal_absent
+              - (mixed_acl_absence.stdout | from_json).workspace_empty
+
+        - name: Remove only the verified empty workspace  # noqa: args[module]
+          sustainablelobster.legacy_windows.win_file:
+            path: '{{ mixed_acl_workspace.path }}'
+            state: absent
+
+        - name: Independently verify workspace absence and unchanged staging
+          ansible.builtin.raw: >-
+            cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+            "import glob,json,os,sys,tempfile;
+            assert not os.path.exists(sys.argv[1]);
+            print(json.dumps(sorted(glob.glob(os.path.join(
+            tempfile.gettempdir(),'ansible-tmp-*')))))"
+            "{{ mixed_acl_workspace.path }}""
+          register: mixed_acl_staging_after
+          changed_when: false
+
+        - name: Require exact global staging recovery
+          ansible.builtin.assert:
+            that:
+              - (mixed_acl_staging_before.stdout | from_json) ==
+                (mixed_acl_staging_after.stdout | from_json)
+
+        - name: Record independently verified workspace absence
+          ansible.builtin.set_fact:
+            mixed_acl_workspace_absent: true
+
+        - name: Preserve complete observations and recovery evidence
+          ansible.builtin.copy: *capture
+          delegate_to: localhost
+          vars: *controller
+          changed_when: false
+
+        - name: Verify complete public behavior and exact recovery evidence
+          ansible.builtin.command:
+            argv:
+              - '{{ ansible_playbook_python }}'
+              - '{{ playbook_dir }}/files/mixed_acl_compare.py'
+              - '{{ mixed_acl_capture.path }}'
+              - '{{ mixed_acl_compare | bool | ternary("paired", "native") }}'
+          delegate_to: localhost
+          vars: *controller
+          changed_when: false

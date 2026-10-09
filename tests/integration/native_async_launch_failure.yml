@@ -1,0 +1,149 @@
+---
+# SPDX-License-Identifier: GPL-3.0-or-later
+- name: Verify parsed failed async launch preserves cleanup ownership
+  hosts: legacy_windows
+  gather_facts: false
+  vars:
+    native_async_failure_keepfiles: >-
+      {{ lookup('ansible.builtin.config', 'DEFAULT_KEEP_REMOTE_FILES') }}
+  tasks:
+    - name: Require actual Python and record original global staging
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import glob,json,os,sys,tempfile;
+        assert sys.version_info[:3]==(3,4,4);
+        print(json.dumps(sorted(glob.glob(os.path.join(
+        tempfile.gettempdir(),'ansible-tmp-*')))))""
+      register: native_async_failure_staging_before
+      changed_when: false
+
+    # Python's python_executable keyword is not a raw executable option.
+    # Preserve the executed snapshot program instead of renaming its fields.
+    - name: >-  # noqa no-free-form[raw] # Python keyword
+        Allocate exactly owned workspace and protected sentinel
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import hashlib,json,os,sys,tempfile;
+        path=tempfile.mkdtemp(prefix='legacy-windows-native-async-launch-failure-');
+        os.mkdir(os.path.join(path,'staging'));os.mkdir(os.path.join(path,'cache'));
+        stream=open(os.path.join(path,'sentinel.bin'),'wb');
+        stream.write(b'protected launch failure sentinel');stream.close();
+        print(json.dumps(dict(workspace=path,
+        sentinel=hashlib.sha256(open(os.path.join(path,'sentinel.bin'),'rb').read()).hexdigest(),
+        python_executable=hashlib.sha256(open(sys.executable,'rb').read()).hexdigest())))""
+      register: native_async_failure_setup
+      changed_when: false
+
+    - name: Allocate private controller evidence
+      ansible.builtin.tempfile:
+        path: '{{ playbook_dir }}/../../tmp'
+        prefix: 'native-async-launch-failure-{{ inventory_hostname }}-'
+        suffix: .json
+      register: native_async_failure_capture
+      delegate_to: localhost
+      vars: &local
+        ansible_connection: local
+        ansible_shell_type: sh
+        ansible_python_interpreter: '{{ ansible_playbook_python }}'
+      changed_when: false
+
+    - name: Exercise one failed public launch with exact owned recovery
+      vars:
+        workspace: >-
+          {{ (native_async_failure_setup.stdout | from_json).workspace }}
+      block:
+        - name: Retain a parsed startup failure before any watchdog starts
+          block:
+            - name: Request an invalid native startup deadline
+              sustainablelobster.legacy_windows.win_ping:
+                data: must-not-run
+              async: 30
+              poll: 0
+              vars:
+                ansible_win_async_startup_timeout: 0
+                ansible_remote_tmp: '{{ workspace }}\staging'
+                ansible_async_dir: '{{ workspace }}\cache'
+              register: native_async_failure_launch
+          rescue:
+            - name: Keep the literal parsed failed launcher result
+              ansible.builtin.debug:
+                msg: Expected startup failure retained.
+
+        # Python's python_executable keyword is not a raw executable option.
+        # Preserve the executed snapshot program rather than rename its fields.
+        - name: >-  # noqa no-free-form[raw] # Python keyword
+            Observe owned staging and protected bytes before recovery
+          ansible.builtin.raw: >-
+            cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+            "import hashlib,json,os,sys;path=sys.argv[1];
+            print(json.dumps(dict(staging=sorted(os.listdir(os.path.join(path,'staging'))),
+            cache=sorted(os.listdir(os.path.join(path,'cache'))),
+            sentinel=hashlib.sha256(open(os.path.join(path,'sentinel.bin'),'rb').read()).hexdigest(),
+            python_executable=hashlib.sha256(open(sys.executable,'rb').read()).hexdigest())))"
+            "{{ workspace }}""
+          register: native_async_failure_observed
+          changed_when: false
+
+        - name: Require actual failed result and exact preservation policy
+          vars:
+            original: '{{ native_async_failure_setup.stdout | from_json }}'
+            observed: '{{ native_async_failure_observed.stdout | from_json }}'
+          ansible.builtin.assert:
+            that:
+              - native_async_failure_launch.failed
+              - not native_async_failure_launch.changed
+              - >-
+                native_async_failure_launch.msg ==
+                'failed to launch async task: Async execution and startup ' ~
+                'deadlines must be positive'
+              - observed.cache == []
+              - observed.sentinel == original.sentinel
+              - observed.python_executable == original.python_executable
+              - >-
+                observed.staging | length ==
+                (1 if native_async_failure_keepfiles else 0)
+              - >-
+                not native_async_failure_keepfiles or
+                observed.staging[0] is match('^ansible-tmp-')
+      always:
+        - name: Delete only the owned workspace after recording observations
+          ansible.builtin.raw: >-
+            cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+            "import glob,json,os,shutil,sys,tempfile;path=sys.argv[1];
+            assert os.path.basename(path).startswith(
+            'legacy-windows-native-async-launch-failure-');
+            assert open(os.path.join(path,'sentinel.bin'),'rb').read()==
+            b'protected launch failure sentinel';
+            shutil.rmtree(path);assert not os.path.exists(path);
+            print(json.dumps(sorted(glob.glob(os.path.join(
+            tempfile.gettempdir(),'ansible-tmp-*')))))"
+            "{{ workspace }}""
+          register: native_async_failure_staging_after
+          changed_when: false
+
+        - name: Persist failed result and complete owned cleanup observations
+          ansible.builtin.copy:
+            content: >-
+              {{ {'setup': native_async_failure_setup,
+              'launch': native_async_failure_launch | default(none),
+              'observation': native_async_failure_observed | default(none),
+              'keep_files': native_async_failure_keepfiles,
+              'staging_before': native_async_failure_staging_before,
+              'staging_after': native_async_failure_staging_after} |
+              to_nice_json }}
+            dest: '{{ native_async_failure_capture.path }}'
+            mode: '0600'
+          delegate_to: localhost
+          vars: *local
+          changed_when: false
+
+        - name: Require original global staging and workspace absence
+          ansible.builtin.assert:
+            that:
+              - native_async_failure_staging_after.rc == 0
+              - >-
+                (native_async_failure_staging_before.stdout | from_json) ==
+                (native_async_failure_staging_after.stdout | from_json)
+
+        - name: Close the owner-scoped standard SSH connection
+          ansible.builtin.meta: reset_connection

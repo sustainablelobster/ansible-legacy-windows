@@ -1,0 +1,146 @@
+---
+# The ordinary sequence deliberately selects unrestricted listing, which does
+# not require the newer access-based enumeration capability on Windows XP.
+share_cases:
+  - name: Predict a missing share without creating it
+    parameters: {description: Predicted, full: BA}
+    check: true
+    changed: true
+  - name: Create the owned share
+    parameters: {}
+    changed: true
+    expected_access: []
+  - name: Repeat the owned share
+    parameters: {}
+    changed: false
+    expected_access: []
+  - name: Predict a description change
+    parameters: {description: Owned description}
+    check: true
+    changed: true
+  - name: Set the owned description
+    parameters: {description: Owned description}
+    changed: true
+  - name: Ignore a case-only description change
+    parameters: {description: owned DESCRIPTION}
+    changed: false
+  - name: Set caching to Programs
+    parameters: {description: Owned description, caching_mode: Programs}
+    changed: true
+  - name: Repeat Programs caching
+    parameters: {description: Owned description, caching_mode: Programs}
+    changed: false
+  - name: Predict encryption on a capable host without writing
+    parameters:
+      description: Owned description
+      caching_mode: Programs
+      encrypt: true
+    requires_encryption: true
+    check: true
+    changed: true
+  - name: Enable encryption on a capable host
+    parameters:
+      description: Owned description
+      caching_mode: Programs
+      encrypt: true
+    requires_encryption: true
+    changed: true
+  - name: Repeat encrypted share properties
+    parameters:
+      description: Owned description
+      caching_mode: Programs
+      encrypt: true
+    requires_encryption: true
+    changed: false
+  - name: Predict clearing encryption on a capable host
+    parameters: {description: Owned description, caching_mode: Programs}
+    requires_encryption: true
+    check: true
+    changed: true
+  - name: Clear encryption on a capable host
+    parameters: {description: Owned description, caching_mode: Programs}
+    requires_encryption: true
+    changed: true
+  - name: Predict complete share permissions
+    parameters:
+      description: Owned description
+      caching_mode: Programs
+      full: BA
+      read: S-1-5-32-545
+      deny: BG
+    check: true
+    changed: true
+  - name: Set complete share permissions
+    parameters:
+      description: Owned description
+      caching_mode: Programs
+      full: BA
+      read: S-1-5-32-545
+      deny: BG
+    changed: true
+    expected_access:
+      - {type: 1, flags: 0, mask: 2032127, sid: S-1-5-32-546}
+      - {type: 0, flags: 0, mask: 1179817, sid: S-1-5-32-545}
+      - {type: 0, flags: 0, mask: 2032127, sid: S-1-5-32-544}
+  - name: Repeat complete share permissions
+    parameters:
+      description: Owned description
+      caching_mode: Programs
+      full: BA
+      read: S-1-5-32-545
+      deny: BG
+    changed: false
+  - name: Append change access without removing existing access
+    parameters:
+      description: Owned description
+      caching_mode: Programs
+      change: BG
+      rule_action: add
+    changed: true
+  - name: Repeat appended change access
+    parameters:
+      description: Owned description
+      caching_mode: Programs
+      change: BG
+      rule_action: add
+    changed: false
+  - name: Clear description caching and permissions to defaults
+    parameters: {}
+    changed: true
+    expected_access: []
+  - name: Predict a replacement path without changing the original share
+    parameters: {}
+    other_path: true
+    check: true
+    changed: true
+  - name: Replace the owned share path
+    parameters: {}
+    other_path: true
+    changed: true
+  - name: Repeat the replacement path
+    parameters: {}
+    other_path: true
+    changed: false
+  - name: Reject an invalid caching mode without writing
+    parameters: {caching_mode: Invalid}
+    changed: false
+    error: >-
+      Get-AnsibleParam: Argument caching_mode needs to be one of
+      BranchCache,Documents,Manual,None,Programs,Unknown but was Invalid.
+  - name: Recover after validation failure
+    parameters: {description: Recovered}
+    other_path: true
+    changed: true
+  - name: Predict removal without deleting the share or its directory
+    parameters: {state: absent}
+    other_path: true
+    check: true
+    changed: true
+  - name: Remove the owned share
+    parameters: {state: absent}
+    changed: true
+    absent: true
+  - name: Repeat removal without a share
+    parameters: {state: absent}
+    changed: false
+    absent: true

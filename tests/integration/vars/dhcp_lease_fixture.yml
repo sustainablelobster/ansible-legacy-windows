@@ -1,0 +1,241 @@
+---
+dhcp_lease_wmi_source: >-
+  {{ lookup('file', playbook_dir +
+     '/../../plugins/module_utils/legacy_windows_wmi.py') }}
+dhcp_lease_fixture: |
+  # Copyright 2026 Joe Lustri
+  # SPDX-License-Identifier: GPL-3.0-or-later
+  """Observe and recover only a journal-owned inactive DHCP scope."""
+
+  import json
+  import os
+  import socket
+  import sys
+  import types
+  import uuid
+
+  assert sys.version_info[:3] == (3, 4, 4)
+  WORKSPACE, OPERATION = sys.argv[1:3]
+  JOURNAL = os.path.join(WORKSPACE, "dhcp-lease-recovery.json")
+  helper = types.ModuleType("dhcp_fixture_wmi")
+  SOURCE = {{ dhcp_lease_wmi_source | to_json }}
+  exec(compile(SOURCE, "fixture-wmi.py", "exec"), helper.__dict__)
+  NAMESPACE = r"ROOT\Microsoft\Windows\DHCP"
+  NETWORK_FIELDS = [
+      "Index", "SettingID", "DHCPEnabled", "DHCPServer", "IPAddress",
+      "IPSubnet", "DefaultIPGateway", "DNSServerSearchOrder", "DNSDomain",
+      "DNSDomainSuffixSearchOrder",
+  ]
+  SERVICE_FIELDS = ["Name", "StartMode", "PathName", "StartName"]
+  TARGETS = (25, 26, 27)
+
+
+  def call(connection, kind, method, inputs=None):
+      result = connection.call_method(
+          "PS_DhcpServerv4" + kind, method, ["ReturnValue", "cmdletOutput"],
+          inputs or {}, allow_empty=True)
+      if result.get("ReturnValue"):
+          raise RuntimeError("DHCP returned " + str(result["ReturnValue"]))
+      output = result.get("cmdletOutput")
+      return output if isinstance(output, list) else [output] if output else []
+
+
+  def snapshot():
+      with helper.WmiConnection() as connection:
+          network = connection.query(
+              "SELECT * FROM Win32_NetworkAdapterConfiguration", NETWORK_FIELDS)
+          services = connection.query(
+              "SELECT * FROM Win32_Service", SERVICE_FIELDS)
+      with helper.WmiConnection(NAMESPACE) as connection:
+          scopes = call(connection, "Scope", "Get")
+          rows = {}
+          for scope in scopes:
+              identifier = scope["ScopeId"]
+              rows[identifier] = {
+                  "leases": call(connection, "Lease", "GetByScopeId",
+                                 {"ScopeId": identifier, "AllLeases": True}),
+                  "reservations": call(
+                      connection, "Reservation", "GetByScopeId",
+                      {"ScopeId": identifier}),
+              }
+          return {"network": network, "services": services, "scopes": scopes,
+                  "bindings": call(connection, "Binding", "Get"),
+                  "records": rows}
+
+
+  def write_journal(journal):
+      with open(JOURNAL, "w", encoding="utf-8") as stream:
+          json.dump(journal, stream, sort_keys=True)
+          stream.flush()
+          os.fsync(stream.fileno())
+      with open(JOURNAL, encoding="utf-8") as stream:
+          assert json.load(stream) == journal
+
+
+  def load_journal():
+      with open(JOURNAL, encoding="utf-8") as stream:
+          journal = json.load(stream)
+      assert journal["workspace"] == WORKSPACE
+      assert journal["scope"] in ("192.0.2.0", "198.51.100.0", "203.0.113.0")
+      assert journal["name"].startswith("legacy-windows-dhcp-")
+      return journal
+
+
+  def address(journal, suffix):
+      return journal["scope"].rsplit(".", 1)[0] + "." + str(suffix)
+
+
+  def protected(observation, journal):
+      result = dict(observation)
+      result["scopes"] = [row for row in observation["scopes"]
+                           if row["ScopeId"] != journal["scope"]]
+      result["records"] = {
+          key: value for key, value in observation["records"].items()
+          if key != journal["scope"]}
+      return result
+
+
+  def verify_owned(observation, journal):
+      scopes = [row for row in observation["scopes"]
+                if row["ScopeId"] == journal["scope"]]
+      assert len(scopes) == 1 and scopes[0]["Name"] == journal["name"]
+      assert scopes[0]["State"] == "Inactive"
+      assert protected(observation, journal) == journal["original"]
+
+
+  def verify_owned_records(observation, journal):
+      targets = [address(journal, suffix) for suffix in TARGETS]
+      for kind in ("leases", "reservations"):
+          for row in observation["records"][journal["scope"]][kind]:
+              if row["IPAddress"] in targets:
+                  if row["ClientId"].lower().startswith("02-00-00-00-00-"):
+                      continue
+                  # Remove-Lease retains an Expired row with an IP-derived ID.
+                  predecessors = [
+                      item for item in journal.get("owned_leases", [])
+                      if item["IPAddress"] == row["IPAddress"]]
+                  assert kind == "leases" and len(predecessors) == 1
+                  previous = predecessors[0]
+                  address_bytes = bytearray(socket.inet_aton(row["IPAddress"]))
+                  expected = "-".join("{0:02x}".format(part)
+                                      for part in reversed(address_bytes))
+                  assert row["AddressState"] == "Expired"
+                  assert row["ClientId"].lower() == expected + "-00-00-00-00-00"
+                  dynamic = ("AddressState", "ClientId", "DnsRegistration")
+                  old_fields = {key: value for key, value in previous.items()
+                                if key not in dynamic}
+                  new_fields = {key: value for key, value in row.items()
+                                if key not in dynamic}
+                  assert old_fields == new_fields
+              else:
+                  assert row["IPAddress"] == address(journal, 254)
+                  assert row["ClientId"].lower() == "02-ff-ff-ff-ff-fe"
+
+
+  def setup():
+      assert not os.path.exists(JOURNAL)
+      original = snapshot()
+      existing = {row["ScopeId"] for row in original["scopes"]}
+      scope = next(item for item in ("192.0.2.0", "198.51.100.0", "203.0.113.0")
+                   if item not in existing)
+      journal = {"workspace": WORKSPACE, "scope": scope,
+                 "name": "legacy-windows-dhcp-" + uuid.uuid4().hex,
+                 "original": original}
+      write_journal(journal)
+      with helper.WmiConnection(NAMESPACE) as connection:
+          create_scope(connection, journal)
+      initial = snapshot()
+      verify_owned(initial, journal)
+      journal["initial"] = initial
+      write_journal(journal)
+      return {"scope": scope, "ip": address(journal, 25), "initial": initial}
+
+
+  def observe(journal):
+      current = snapshot()
+      verify_owned(current, journal)
+      verify_owned_records(current, journal)
+      original_records = journal["initial"]["records"][journal["scope"]]
+      current_records = current["records"][journal["scope"]]
+      for kind in ("leases", "reservations"):
+          originals = [row for row in original_records[kind]
+                       if row["IPAddress"] == address(journal, 254)]
+          now = [row for row in current_records[kind]
+                 if row["IPAddress"] == address(journal, 254)]
+          assert originals == now
+      return current
+
+
+  def reset(journal):
+      observe(journal)
+      seed = json.loads(sys.argv[3])
+      with helper.WmiConnection(NAMESPACE) as connection:
+          # Expired tombstones retain prior metadata, so rebuild our fixture.
+          call(connection, "Scope", "Remove", {
+              "ScopeId": [journal["scope"]], "Force": True})
+          journal["owned_leases"] = []
+          write_journal(journal)
+          create_scope(connection, journal)
+          if seed:
+              kind = seed["kind"]
+              values = {
+                  "ScopeId": journal["scope"],
+                  "IPAddress": address(journal, 25),
+                  "ClientId": "02-00-00-00-00-25",
+                  "Description": "original description", "PassThru": True}
+              if kind == "Reservation":
+                  values["Name"] = "original.invalid"
+              else:
+                  values.update(
+                      HostName="original.invalid", AddressState="Active",
+                      LeaseExpiryTime="20990101000000.000000+000")
+              call(connection, kind, "Add", values)
+      current = observe(journal)
+      remember_leases(current, journal)
+      return current
+
+
+  def create_scope(connection, journal):
+      call(connection, "Scope", "Add", {
+          "Name": journal["name"], "StartRange": address(journal, 10),
+          "EndRange": address(journal, 254), "SubnetMask": "255.255.255.0",
+          "State": "Inactive", "PassThru": True})
+      call(connection, "Reservation", "Add", {
+          "ScopeId": journal["scope"], "IPAddress": address(journal, 254),
+          "ClientId": "02-ff-ff-ff-ff-fe", "Name": "protected.invalid",
+          "Description": "protected owned sibling", "PassThru": True})
+
+
+  def remember_leases(observation, journal):
+      rows = observation["records"][journal["scope"]]["leases"]
+      selected = [row for row in rows
+                  if row["ClientId"].lower().startswith("02-00-00-00-00-")]
+      journal["owned_leases"] = selected
+      write_journal(journal)
+
+
+  def cleanup(journal):
+      current = snapshot()
+      scopes = [row for row in current["scopes"]
+                if row["ScopeId"] == journal["scope"]]
+      assert protected(current, journal) == journal["original"]
+      if scopes:
+          verify_owned(current, journal)
+          verify_owned_records(current, journal)
+          with helper.WmiConnection(NAMESPACE) as connection:
+              call(connection, "Scope", "Remove", {
+                  "ScopeId": [journal["scope"]], "Force": True})
+      restored = snapshot()
+      assert restored == journal["original"]
+      os.remove(JOURNAL)
+      return {"restored": True, "original": journal["original"],
+              "final": restored}
+
+
+  if OPERATION == "setup":
+      RESPONSE = setup()
+  else:
+      STATE = load_journal()
+      OPERATIONS = {"observe": observe, "reset": reset, "cleanup": cleanup}
+      RESPONSE = OPERATIONS[OPERATION](STATE)
+  print(json.dumps(RESPONSE, sort_keys=True))

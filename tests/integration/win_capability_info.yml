@@ -1,0 +1,185 @@
+---
+- name: Verify capability information without servicing changes
+  hosts: legacy_windows
+  gather_facts: false
+  vars_files:
+    - vars/capability_info.yml
+    - vars/capability_info_fixture.yml
+  tasks:
+    - name: Require Python 3.4.4 and record task staging
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import glob, json, os, sys, tempfile;
+        assert sys.version_info[:3] == (3, 4, 4);
+        print(json.dumps(sorted(glob.glob(os.path.join(tempfile.gettempdir(),
+        'ansible-tmp-*')))))""
+      register: capability_info_staging_before
+      changed_when: false
+
+    - name: Read original complete servicing service information
+      sustainablelobster.legacy_windows.win_service_info:  # noqa: args[module]
+        name: TrustedInstaller
+      register: capability_info_original_service
+
+    - name: Allocate private controller capture
+      ansible.builtin.tempfile:
+        state: file
+        path: '{{ playbook_dir }}/../../tmp'
+        prefix: 'capability-info-{{ inventory_hostname }}-'
+        suffix: .json
+      register: capability_info_capture
+      delegate_to: localhost
+      changed_when: false
+      vars: &capability_info_local
+        ansible_connection: local
+        ansible_shell_type: sh
+        ansible_python_interpreter: '{{ ansible_playbook_python }}'
+
+    - name: Initialize complete public evidence
+      ansible.builtin.set_fact:
+        capability_info_results: []
+      no_log: true
+
+    - name: Exercise public metadata with a durable recovery journal
+      block:
+        - name: Allocate unique owned workspace
+          sustainablelobster.legacy_windows.win_tempfile:  # noqa: args[module]
+            state: directory
+            prefix: legacy-windows-capability-info-
+          register: capability_info_workspace
+
+        - name: Journal service state before reading the capability catalogue
+          sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+            argv: ['{{ ansible_python_interpreter }}', '-',
+                   '{{ capability_info_workspace.path }}', setup]
+            stdin: '{{ capability_info_program }}'
+          register: capability_info_setup
+          changed_when: false
+          no_log: true
+
+        - name: Exercise every declared case on capability targets
+          when: (capability_info_setup.stdout | from_json).supported
+          ansible.builtin.include_tasks: tasks/win_capability_info_case.yml
+          loop: '{{ capability_info_cases }}'
+          loop_control:
+            loop_var: capability_info_case
+            label: '{{ capability_info_case.name }}'
+
+        - name: Exercise unavailable capability metadata on legacy targets
+          when: not (capability_info_setup.stdout | from_json).supported
+          block:
+            - name: Request missing provider  # noqa: args[module]
+              sustainablelobster.legacy_windows.win_capability_info:
+                name: OpenSSH.*
+              register: capability_info_legacy_result
+
+            - name: Reject unexpected success without the capability provider
+              ansible.builtin.fail:
+                msg: Capability metadata unexpectedly succeeded
+          rescue:
+            - name: Require missing-provider rejection without changes
+              ansible.builtin.assert:
+                that:
+                  - capability_info_legacy_result is failed
+                  - not capability_info_legacy_result.changed
+                  - >-
+                    'Windows capability metadata API is unavailable'
+                    in capability_info_legacy_result.msg
+      always:
+        - name: Retain public capture before attempting recovery
+          ansible.builtin.copy:
+            content: >-
+              {{ {'results': capability_info_results,
+                  'legacy_result':
+                    capability_info_legacy_result | default(none),
+                  'workspace': capability_info_workspace | default(none),
+                  'setup': capability_info_setup | default(none),
+                  'original_service': capability_info_original_service}
+                 | to_nice_json }}
+            dest: '{{ capability_info_capture.path }}'
+            mode: '0600'
+          delegate_to: localhost
+          changed_when: false
+          no_log: true
+          vars: *capability_info_local
+
+        - name: Verify full capability state and restore servicing service
+          when: capability_info_workspace.path is defined
+          sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+            argv: ['{{ ansible_python_interpreter }}', '-',
+                   '{{ capability_info_workspace.path }}', cleanup]
+            stdin: '{{ capability_info_program }}'
+          register: capability_info_restoration
+          changed_when: false
+          no_log: true
+
+        # This is a normal native service read using the collection's interface.
+        - name: Verify original service interface  # noqa: args[module]
+          sustainablelobster.legacy_windows.win_service_info:
+            name: TrustedInstaller
+          register: capability_info_final_service
+
+        - name: Require exact recovery before deleting any journal
+          ansible.builtin.assert:
+            that:
+              - (capability_info_restoration.stdout | from_json).restored
+              - >-
+                capability_info_original_service.services ==
+                capability_info_final_service.services
+          no_log: true
+
+        - name: Finalize verified recovery journal
+          sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+            argv: ['{{ ansible_python_interpreter }}', '-',
+                   '{{ capability_info_workspace.path }}', finalize]
+            stdin: '{{ capability_info_program }}'
+          changed_when: false
+          no_log: true
+
+        - name: Remove only the fully verified owned workspace
+          sustainablelobster.legacy_windows.win_file:  # noqa: args[module]
+            path: '{{ capability_info_workspace.path }}'
+            state: absent
+
+        - name: Retain full public and recovery evidence
+          ansible.builtin.copy:
+            content: >-
+              {{ {'results': capability_info_results,
+                  'legacy_result':
+                    capability_info_legacy_result | default(none),
+                  'workspace': capability_info_workspace,
+                  'setup': capability_info_setup,
+                  'original_service': capability_info_original_service,
+                  'final_service': capability_info_final_service,
+                  'restoration': capability_info_restoration} | to_nice_json }}
+            dest: '{{ capability_info_capture.path }}'
+            mode: '0600'
+          delegate_to: localhost
+          changed_when: false
+          no_log: true
+          vars: *capability_info_local
+
+        - name: Require workspace absence and unchanged task staging
+          ansible.builtin.raw: >-
+            cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+            "import glob, json, os, sys, tempfile;
+            assert not os.path.exists(sys.argv[1]);
+            print(json.dumps(sorted(glob.glob(os.path.join(tempfile.gettempdir(),
+            'ansible-tmp-*')))))" "{{ capability_info_workspace.path }}""
+          register: capability_info_staging_after
+          changed_when: false
+
+        - name: Require every declared case and exact staging recovery
+          ansible.builtin.assert:
+            that:
+              - >-
+                (capability_info_staging_before.stdout | from_json) ==
+                (capability_info_staging_after.stdout | from_json)
+              - >-
+                not (capability_info_setup.stdout | from_json).supported or
+                capability_info_results | length ==
+                capability_info_cases | length
+              - >-
+                capability_info_results |
+                selectattr('validated', 'equalto', true)
+                | list | length == capability_info_results | length

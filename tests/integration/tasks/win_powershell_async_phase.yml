@@ -1,0 +1,192 @@
+---
+# SPDX-License-Identifier: GPL-3.0-or-later
+- name: Bind one phase's journal-owned markers and original script options
+  ansible.builtin.set_fact:
+    powershell_async_params: >-
+      {{ powershell_async_case.params |
+      combine({'script': powershell_async_header ~
+        powershell_async_case.params.script}
+        if powershell_async_case.params.script is defined else {}) |
+      combine({'path': playbook_dir + '/fixtures/win_powershell_async.ps1'}
+        if powershell_async_case.local | default(false) else {}) |
+      combine({'path': powershell_async_workspace.path ~
+        '/resources/remote-script.ps1'}
+        if powershell_async_case.remote | default(false) else {}) |
+      combine({'parameters': powershell_async_case.params.parameters |
+        default({}) |
+        combine({'MarkerPath': powershell_async_workspace.path ~
+          '/owned-jobs/' ~
+          powershell_async_index ~ '-' ~ powershell_async_phase ~ '.pid',
+          'ReleasePath': powershell_async_workspace.path ~ '/owned-jobs/' ~
+          powershell_async_index ~ '-' ~
+          powershell_async_phase ~ '.release'})}) }}
+
+- name: Record the exact phase input effects and UTC boundary
+  sustainablelobster.legacy_windows.win_command:
+    argv: ['{{ ansible_python_interpreter }}', '-',
+           '{{ powershell_async_workspace.path }}', prepare]
+    stdin: '{{ powershell_async_program }}'
+  register: powershell_async_before
+  changed_when: false
+  no_log: true
+
+- name: Launch the public native script through accepted async staging
+  when: powershell_async_phase == 'native'
+  sustainablelobster.legacy_windows.win_powershell: >-
+    {{ powershell_async_params }}
+  async: 120
+  poll: 0
+  vars: &native_cache
+    ansible_remote_tmp: '{{ powershell_async_workspace.path }}\staging'
+    ansible_async_dir: '{{ powershell_async_workspace.path }}\native-cache'
+  register: powershell_async_native_launch
+  no_log: true
+
+- name: Launch the unchanged released script and controller action
+  when: powershell_async_phase == 'original'
+  ansible.windows.win_powershell: '{{ powershell_async_params }}'
+  async: 120
+  poll: 0
+  vars: &source_cache
+    ansible_remote_tmp: '{{ powershell_async_workspace.path }}\staging'
+    ansible_async_dir: '{{ powershell_async_workspace.path }}\original-cache'
+    ansible_shell_type: cmd
+  register: powershell_async_source_launch
+  no_log: true
+
+- name: Retain the literal selected launch without rewriting flags
+  ansible.builtin.set_fact:
+    powershell_async_launch: >-
+      {{ powershell_async_native_launch if powershell_async_phase == 'native'
+      else powershell_async_source_launch }}
+  no_log: true
+
+- name: Disconnect the launching session before observing the live script
+  ansible.builtin.meta: reset_connection
+
+- name: Journal live engine and watchdog identities then release the script
+  sustainablelobster.legacy_windows.win_command:
+    argv: ['{{ ansible_python_interpreter }}', '-',
+           '{{ powershell_async_workspace.path }}', pin,
+           '{{ powershell_async_index }}', '{{ powershell_async_phase }}',
+           '{{ powershell_async_launch | to_json | b64encode }}']
+    stdin: '{{ powershell_async_program }}'
+  register: powershell_async_pin
+  changed_when: false
+  no_log: true
+
+- name: Retain the complete native result including genuine script failure
+  when: powershell_async_phase == 'native'
+  block:
+    - name: Poll explicit native status without a collection polling override
+      sustainablelobster.legacy_windows.async_status:
+        jid: '{{ powershell_async_launch.ansible_job_id }}'
+      vars: *native_cache
+      register: powershell_async_native_status
+      until: powershell_async_native_status.finished
+      retries: 120
+      delay: 1
+      no_log: true
+  rescue:
+    - name: Keep the literal native failed completed record
+      ansible.builtin.debug:
+        msg: Complete native script failure retained for parity after recovery.
+
+- name: Retain the complete released result including genuine script failure
+  when: powershell_async_phase == 'original'
+  block:
+    # Core supplies the released Windows module's required _async_dir argument.
+    - name: Poll the unchanged core action and released status payload
+      ansible.builtin.async_status:
+        jid: '{{ powershell_async_launch.ansible_job_id }}'
+      vars: *source_cache
+      register: powershell_async_source_status
+      until: powershell_async_source_status.finished
+      retries: 120
+      delay: 1
+      no_log: true
+  rescue:
+    - name: Keep the literal source failed completed record
+      ansible.builtin.debug:
+        msg: Complete released script failure retained for later parity.
+
+- name: Observe every owned identity and script effect after completion
+  sustainablelobster.legacy_windows.win_command:
+    argv: ['{{ ansible_python_interpreter }}', '-',
+           '{{ powershell_async_workspace.path }}', observe]
+    stdin: '{{ powershell_async_program }}'
+  register: powershell_async_after
+  changed_when: false
+  no_log: true
+
+- name: Retain every selected phase field before comparison or cleanup
+  ansible.builtin.set_fact:
+    powershell_async_phase_record:
+      launch: '{{ powershell_async_launch }}'
+      status: >-
+        {{ powershell_async_native_status if powershell_async_phase == 'native'
+        else powershell_async_source_status }}
+      pin: '{{ powershell_async_pin }}'
+      before: '{{ powershell_async_before }}'
+      after: '{{ powershell_async_after }}'
+  no_log: true
+
+- name: Append the complete phase to the current public pair
+  ansible.builtin.set_fact:
+    powershell_async_pair: >-
+      {{ powershell_async_pair |
+      combine({powershell_async_phase: powershell_async_phase_record.status,
+        'launch_' ~ powershell_async_phase:
+          powershell_async_phase_record.launch,
+        'pin_' ~ powershell_async_phase: powershell_async_phase_record.pin,
+        'before_' ~ powershell_async_phase:
+          powershell_async_phase_record.before,
+        'after_' ~ powershell_async_phase:
+          powershell_async_phase_record.after}) }}
+  no_log: true
+
+- name: Persist all complete and partial phase results before cache removal
+  ansible.builtin.copy:
+    content: >-
+      {{ {'results': powershell_async_records,
+          'partial': powershell_async_pair,
+          'workspace': powershell_async_workspace} | to_nice_json }}
+    dest: '{{ powershell_async_capture.path }}'
+    mode: '0600'
+  delegate_to: localhost
+  vars: &local
+    ansible_connection: local
+    ansible_shell_type: sh
+    ansible_python_interpreter: '{{ ansible_playbook_python }}'
+  changed_when: false
+  no_log: true
+
+- name: Erase only this native completed cache through public cleanup
+  when: powershell_async_phase == 'native'
+  sustainablelobster.legacy_windows.async_status:
+    jid: '{{ powershell_async_launch.ansible_job_id }}'
+    mode: cleanup
+  vars: *native_cache
+  register: powershell_async_native_erased
+
+- name: Erase only this released completed cache through public cleanup
+  when: powershell_async_phase == 'original'
+  ansible.builtin.async_status:
+    jid: '{{ powershell_async_launch.ansible_job_id }}'
+    mode: cleanup
+  vars: *source_cache
+  register: powershell_async_source_erased
+
+- name: Require the completed script's original failure and change semantics
+  ansible.builtin.assert:
+    that:
+      - powershell_async_phase_record.status.started
+      - powershell_async_phase_record.status.finished
+      - >-
+        powershell_async_phase_record.status.failed | default(false) ==
+        powershell_async_case.failed | default(false)
+      - not powershell_async_phase_record.status.changed
+      - not powershell_async_phase_record.launch.changed
+      - >-
+        (powershell_async_phase_record.after.stdout | from_json).
+        engine_scratch == []

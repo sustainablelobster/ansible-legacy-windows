@@ -1,0 +1,266 @@
+---
+# Copyright 2026 Joe Lustri
+# SPDX-License-Identifier: GPL-3.0-or-later
+- name: Exercise URI uploads with owned files and journaled FTP forwards
+  hosts: legacy_windows
+  gather_facts: false
+  vars_files:
+    - vars/get_url_ftp_fixture.yml
+    - vars/uri_upload_ftp_fixture.yml
+  vars:
+    get_url_ftp_controller_parent: >-
+      {{ playbook_dir }}/../../tmp/codex/work
+    uri_upload_include_upstream: false
+    uri_upload_run_native: true
+    uri_upload_results: []
+    uri_upload_file_cases:
+      - {name: file_put, method: PUT, body: 'file 中😀'}
+      - {name: file_new, method: PUT, body: 'new 中😀', missing: true}
+      - {name: file_empty, method: PUT, body: ''}
+      - {name: file_post, method: POST, body: 'post 中😀'}
+      - {name: file_delete, method: DELETE, body: 'delete 中😀'}
+      - {name: file_check, method: PUT, body: 'check 中😀', check: true}
+      - {name: file_zero_status, method: PUT, body: bytes, status: [0]}
+      - {name: file_get_body, method: GET, body: rejected, rejected: true}
+      - {name: file_head_body, method: HEAD, body: '', rejected: true}
+      - {name: file_read, method: GET, read: true}
+  tasks:
+    - name: Require a single guest and private SSH connection ownership
+      ansible.builtin.assert:
+        that:
+          - ansible_play_hosts | length == 1
+          - lookup('env', 'ANSIBLE_SSH_CONTROL_PATH_DIR') | length > 0
+
+    - name: Record actual target runtime free ports and original staging
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import glob,json,os,socket,sys,tempfile;
+        assert sys.version_info[:3] == (3,4,4),sys.version;
+        connections=[socket.socket() for port in (2121,2122)];
+        assert all(connection.connect_ex(('127.0.0.1',port)) != 0
+        for connection,port in zip(connections,(2121,2122)));
+        print(json.dumps({'python':sys.version,'windows':sys.getwindowsversion()[:],
+        'staging':sorted(glob.glob(os.path.join(
+        tempfile.gettempdir(),'ansible-tmp-*')))}))""
+      register: uri_upload_before
+      changed_when: false
+
+    - name: Allocate owner-private evidence outside fixture cleanup
+      ansible.builtin.tempfile:
+        state: file
+        path: >-
+          {{ evidence_dir | default(playbook_dir +
+             '/../../tmp/codex/evidence') }}
+        prefix: uri-upload-bodies-
+        suffix: .json
+      register: uri_upload_capture
+      delegate_to: localhost
+      vars: &local
+        ansible_connection: local
+        ansible_shell_type: sh
+        ansible_python_interpreter: '{{ ansible_playbook_python }}'
+        ansible_become: false
+      changed_when: false
+
+    - name: Capture uploads before checking results
+      block:
+        - name: Allocate the journal-owned controller workspace
+          ansible.builtin.tempfile:
+            state: directory
+            path: '{{ get_url_ftp_controller_parent }}'
+            prefix: get-url-ftp-uri-upload-
+          register: get_url_ftp_workspace
+          delegate_to: localhost
+          vars: *local
+          changed_when: false
+
+        - name: Start upload server using the maintained process journal
+          ansible.builtin.command:
+            argv: ['{{ ansible_playbook_python }}', '-',
+                   '{{ get_url_ftp_workspace.path }}', setup,
+                   '{{ get_url_ftp_controller_parent }}']
+            stdin: '{{ uri_upload_ftp_program }}'
+          register: uri_upload_setup
+          delegate_to: localhost
+          vars: *local
+          changed_when: false
+          no_log: true
+
+        - name: Allocate target file upload workspace
+          sustainablelobster.legacy_windows.win_tempfile:
+            state: directory
+            prefix: uri-upload-bodies-
+          register: uri_upload_workspace
+
+        - name: Bind the existing private SSH master
+          ansible.builtin.set_fact:
+            get_url_ftp_connection:
+              destination: '{{ ansible_host }}'
+              socket: >-
+                {{ lookup('env', 'ANSIBLE_SSH_CONTROL_PATH_DIR') + '/' +
+                   ((ansible_host + '-' +
+                     (ansible_port | default('None') | string) + '-' +
+                     ansible_user) | hash('sha1'))[:10] }}
+          no_log: true
+
+        - name: Open only journaled control and passive reverse forwards
+          ansible.builtin.command:
+            argv: ['{{ ansible_playbook_python }}', '-',
+                   '{{ get_url_ftp_workspace.path }}', forward,
+                   '{{ get_url_ftp_controller_parent }}',
+                   '{{ get_url_ftp_connection | to_json }}']
+            stdin: '{{ uri_upload_ftp_program }}'
+          register: uri_upload_forward
+          delegate_to: localhost
+          vars: *local
+          changed_when: false
+          no_log: true
+
+        - name: Capture paired FTP uploads and independent uploaded bytes
+          ansible.builtin.include_tasks: tasks/uri_upload_ftp_case.yml
+          loop: '{{ uri_upload_ftp_cases }}'
+          loop_control:
+            loop_var: uri_upload_case
+            label: '{{ uri_upload_case.name }}'
+
+        - name: Capture paired file writes and response failures
+          ansible.builtin.include_tasks: tasks/uri_upload_file_case.yml
+          loop: '{{ uri_upload_file_cases }}'
+          loop_control:
+            loop_var: uri_upload_case
+            label: '{{ uri_upload_case.name }}'
+      always:
+        - name: Save all available public and byte evidence before recovery
+          ansible.builtin.copy:
+            content: >-
+              {{ {'before': uri_upload_before,
+                  'results': uri_upload_results,
+                  'controller_workspace': get_url_ftp_workspace | default(none),
+                  'workspace': uri_upload_workspace | default(none),
+                  'setup': uri_upload_setup | default(none),
+                  'forward': uri_upload_forward | default(none)} |
+                 to_nice_json }}
+            dest: '{{ uri_upload_capture.path }}'
+            mode: '0600'
+          delegate_to: localhost
+          vars: *local
+          changed_when: false
+          no_log: true
+
+        - name: Cancel only the journaled reverse forwards
+          when: get_url_ftp_workspace.path is defined
+          ansible.builtin.command:
+            argv: ['{{ ansible_playbook_python }}', '-',
+                   '{{ get_url_ftp_workspace.path }}', unforward,
+                   '{{ get_url_ftp_controller_parent }}']
+            stdin: '{{ uri_upload_ftp_program }}'
+          register: uri_upload_unforward
+          delegate_to: localhost
+          vars: *local
+          changed_when: false
+          no_log: true
+
+        - name: Prove guest listeners are closed before connection closure
+          ansible.builtin.raw: >-
+            cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+            "import json,socket;
+            connections=[socket.socket() for port in (2121,2122)];
+            assert all(connection.connect_ex(('127.0.0.1',port)) != 0
+            for connection,port in zip(connections,(2121,2122)));
+            print(json.dumps({'guest_forward_ports_closed':True}))""
+          register: uri_upload_guest_closed
+          changed_when: false
+
+        - name: Remove only the allocated target file workspace
+          when: uri_upload_workspace.path is defined
+          sustainablelobster.legacy_windows.win_file:
+            path: '{{ uri_upload_workspace.path }}'
+            state: absent
+
+        - name: Prove target absence and unchanged original global staging
+          when: uri_upload_workspace.path is defined
+          ansible.builtin.raw: >-
+            cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+            "import glob,json,os,sys,tempfile;
+            assert not os.path.exists(sys.argv[1]);
+            print(json.dumps({'workspace_absent':True,
+            'staging':sorted(glob.glob(os.path.join(
+            tempfile.gettempdir(),'ansible-tmp-*')))}))"
+            "{{ uri_upload_workspace.path }}""
+          register: uri_upload_after
+          changed_when: false
+
+        - name: Stop only the owned controller process and remove uploads
+          when: get_url_ftp_workspace.path is defined
+          ansible.builtin.command:
+            argv: ['{{ ansible_playbook_python }}', '-',
+                   '{{ get_url_ftp_workspace.path }}', cleanup,
+                   '{{ get_url_ftp_controller_parent }}']
+            stdin: '{{ uri_upload_ftp_program }}'
+          register: uri_upload_recovery
+          delegate_to: localhost
+          vars: *local
+          changed_when: false
+          no_log: true
+
+        - name: Finalize unchanged protected files and allowed entries
+          when: get_url_ftp_workspace.path is defined
+          ansible.builtin.command:
+            argv: ['{{ ansible_playbook_python }}', '-',
+                   '{{ get_url_ftp_workspace.path }}', finalize,
+                   '{{ get_url_ftp_controller_parent }}']
+            stdin: '{{ uri_upload_ftp_program }}'
+          register: uri_upload_finalize
+          delegate_to: localhost
+          vars: *local
+          changed_when: false
+          no_log: true
+
+        - name: Remove only the finalized controller fixture workspace
+          when: get_url_ftp_workspace.path is defined
+          ansible.builtin.file:
+            path: '{{ get_url_ftp_workspace.path }}'
+            state: absent
+          delegate_to: localhost
+          vars: *local
+          changed_when: false
+
+        - name: Independently prove controller workspace absence
+          when: get_url_ftp_workspace.path is defined
+          ansible.builtin.stat:
+            path: '{{ get_url_ftp_workspace.path }}'
+          register: uri_upload_controller_absence
+          delegate_to: localhost
+          vars: *local
+
+        - name: Save recovery evidence without hiding earlier public results
+          ansible.builtin.copy:
+            content: >-
+              {{ {'before': uri_upload_before,
+                  'results': uri_upload_results,
+                  'after': uri_upload_after | default(none),
+                  'unforward': uri_upload_unforward | default(none),
+                  'guest_closed': uri_upload_guest_closed | default(none),
+                  'recovery': uri_upload_recovery | default(none),
+                  'finalize': uri_upload_finalize | default(none),
+                  'controller_absence':
+                    uri_upload_controller_absence | default(none)} |
+                 to_nice_json }}
+            dest: '{{ uri_upload_capture.path }}'
+            mode: '0600'
+          delegate_to: localhost
+          vars: *local
+          changed_when: false
+          no_log: true
+
+        - name: Close owned target connection after resource recovery
+          ansible.builtin.meta: reset_connection
+
+    - name: Validate captured public behavior exact bytes and cleanup offline
+      ansible.builtin.command:
+        argv: ['{{ ansible_playbook_python }}',
+               '{{ playbook_dir }}/verify_uri_upload.py',
+               '{{ uri_upload_capture.path }}']
+      delegate_to: localhost
+      vars: *local
+      changed_when: false

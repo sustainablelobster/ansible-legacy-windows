@@ -1,0 +1,127 @@
+---
+# SPDX-License-Identifier: GPL-3.0-or-later
+- name: Compare Slurp whitespace and ordinary inputs with the released source
+  hosts: legacy_windows
+  gather_facts: false
+  vars_files:
+    - vars/slurp_inputs.yml
+  vars:
+    slurp_inputs_fixture: >-
+      {{ lookup('ansible.builtin.file',
+                playbook_dir + '/fixtures/slurp_inputs.py') }}
+  tasks:
+    - name: Require explicit runtime and physical guest identity
+      ansible.builtin.assert:
+        that:
+          - slurp_inputs_compare_source | bool
+          - slurp_inputs_expected_windows_version is defined
+          - slurp_inputs_expected_windows_version | length == 2
+          - slurp_inputs_expected_mac is defined
+          - slurp_inputs_expected_mac | length == 17
+
+    - name: Allocate a private controller capture
+      ansible.builtin.tempfile:
+        path: '{{ playbook_dir }}/../../tmp'
+        prefix: 'slurp-inputs-{{ inventory_hostname }}-'
+        suffix: .json
+      register: slurp_inputs_capture
+      delegate_to: localhost
+      vars: &local
+        ansible_connection: local
+        ansible_shell_type: sh
+        ansible_python_interpreter: '{{ ansible_playbook_python }}'
+      changed_when: false
+
+    - name: Guard actual identity before allocating owned binary inputs
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "exec(__import__('base64').b64decode(
+        '{{ slurp_inputs_fixture | b64encode }}'))" prepare
+        "{{ slurp_inputs_expected_windows_version | to_json }}"
+        "{{ slurp_inputs_expected_mac }}""
+      register: slurp_inputs_prepared
+      changed_when: false
+      no_log: true
+
+    - name: Retain complete results and close every owned input
+      block:
+        - name: Read the released source with identical normal and check inputs
+          ansible.windows.slurp:
+            src: '{{ item.src }}'
+          check_mode: '{{ item.check }}'
+          loop: '{{ slurp_inputs_cases }}'
+          register: slurp_inputs_source
+          ignore_errors: true
+          no_log: true
+          when: slurp_inputs_compare_source | bool
+
+        - name: Read the native payload with identical normal and check inputs
+          sustainablelobster.legacy_windows.slurp:
+            src: '{{ item.src }}'
+          check_mode: '{{ item.check }}'
+          loop: '{{ slurp_inputs_cases }}'
+          register: slurp_inputs_native
+          ignore_errors: true
+          no_log: true
+      always:
+        - name: Record literal bytes attributes and timestamps before removal
+          ansible.builtin.raw: >-
+            cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+            "exec(__import__('base64').b64decode(
+            '{{ slurp_inputs_fixture | b64encode }}'))" cleanup
+            "{{ slurp_inputs_expected_windows_version | to_json }}"
+            "{{ slurp_inputs_expected_mac }}" "{{ slurp_inputs_root }}""
+          register: slurp_inputs_closed
+          changed_when: false
+          failed_when: false
+          no_log: true
+
+        - name: Save every raw result before recovery and parity gates
+          ansible.builtin.copy:
+            content: >-
+              {{ {'cases': slurp_inputs_cases,
+                  'expected_windows_version':
+                      slurp_inputs_expected_windows_version,
+                  'expected_mac': slurp_inputs_expected_mac,
+                  'before': slurp_inputs_prepared,
+                  'after': slurp_inputs_closed,
+                  'native': slurp_inputs_native | default({}),
+                  'source': slurp_inputs_source | default({})} | to_nice_json }}
+            dest: '{{ slurp_inputs_capture.path }}'
+            mode: '0600'
+          delegate_to: localhost
+          vars: *local
+          changed_when: false
+          no_log: true
+
+        - name: Require owned removal and literal protected observations
+          ansible.builtin.assert:
+            that:
+              - slurp_inputs_closed.rc == 0
+              - >-
+                (slurp_inputs_closed.stdout | from_json).root_absent is
+                sameas true
+              - >-
+                ((slurp_inputs_prepared.stdout | from_json).runtime | to_json(
+                  sort_keys=true)) ==
+                ((slurp_inputs_closed.stdout | from_json).runtime | to_json(
+                  sort_keys=true))
+              - >-
+                ((slurp_inputs_prepared.stdout | from_json).files | to_json(
+                  sort_keys=true)) ==
+                ((slurp_inputs_closed.stdout | from_json).files | to_json(
+                  sort_keys=true))
+          no_log: true
+
+        - name: Close the standard owner-private SSH connection
+          ansible.builtin.meta: reset_connection
+
+    - name: Verify complete typed results without contacting Windows
+      ansible.builtin.command:
+        argv:
+          - '{{ ansible_playbook_python }}'
+          - '{{ playbook_dir }}/../../scripts/verify_slurp_inputs_capture.py'
+          - '{{ slurp_inputs_capture.path }}'
+      delegate_to: localhost
+      vars: *local
+      changed_when: false

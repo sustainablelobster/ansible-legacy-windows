@@ -1,0 +1,154 @@
+---
+dns_client_cases:
+  - name: predict ordered IPv4 servers
+    servers: [192.0.2.53, 192.0.2.54]
+    check: true
+    changed: true
+    expected_servers: [192.0.2.51]
+
+  - name: set ordered IPv4 servers
+    servers: [192.0.2.53, 192.0.2.54]
+    changed: true
+    expected_servers: [192.0.2.53, 192.0.2.54]
+
+  - name: repeat ordered IPv4 servers
+    servers: [192.0.2.53, 192.0.2.54]
+    changed: false
+    expected_servers: [192.0.2.53, 192.0.2.54]
+
+  - name: reverse server priority
+    servers: [192.0.2.54, 192.0.2.53]
+    changed: true
+    expected_servers: [192.0.2.54, 192.0.2.53]
+
+  - name: repeat a narrow adapter wildcard
+    adapter_names: '{{ dns_client_name[:-1] }}*'
+    servers: [192.0.2.54, 192.0.2.53]
+    changed: false
+
+  - name: predict suffix search list
+    servers: [192.0.2.54, 192.0.2.53]
+    suffixes: [first.example.invalid, second.example.invalid]
+    check: true
+    changed: true
+    expected_suffixes: []
+
+  - name: set suffix search list
+    servers: [192.0.2.54, 192.0.2.53]
+    suffixes: [first.example.invalid, second.example.invalid]
+    changed: true
+    expected_suffixes: [first.example.invalid, second.example.invalid]
+
+  - name: preserve an omitted suffix list
+    servers: [192.0.2.54, 192.0.2.53]
+    changed: false
+    expected_suffixes: [first.example.invalid, second.example.invalid]
+
+  - name: repeat suffix search list
+    servers: [192.0.2.54, 192.0.2.53]
+    suffixes: [first.example.invalid, second.example.invalid]
+    changed: false
+
+  - name: preserve an empty suffix list
+    servers: [192.0.2.54, 192.0.2.53]
+    suffixes: []
+    changed: false
+    expected_suffixes: [first.example.invalid, second.example.invalid]
+
+  - name: reject invalid address before changing DNS
+    servers: [not-an-address]
+    changed: false
+    error: 'Invalid IP address(es): (not-an-address)'
+
+  - name: reject a missing adapter before changing DNS
+    adapter_names: LegacyDnsFixtureAbsentAdapter
+    servers: [192.0.2.53]
+    changed: false
+    error: Failed to find network adapter(s)
+
+  - name: an unmatched wildcard is unchanged
+    adapter_names: LegacyDnsFixtureAbsentAdapter*
+    servers: [192.0.2.53]
+    changed: false
+
+  - name: predict reset to automatic DNS
+    servers: []
+    check: true
+    changed: true
+    expected_servers: [192.0.2.54, 192.0.2.53]
+
+  - name: reset to automatic DNS
+    servers: []
+    changed: true
+    expected_v4: []
+    expected_v6: []
+
+  - name: repeat automatic DNS
+    servers: []
+    changed: false
+
+  - name: reject IPv6 on an adapter without IPv6 configuration
+    no_ipv6: true
+    servers: ['2001:db8::53']
+    changed: false
+    error: The selected adapter has no IPv6 DNS configuration
+
+  - name: predict mixed IPv4 and IPv6 servers
+    ipv6: true
+    servers: [192.0.2.53, '2001:db8::53', 192.0.2.54, '2001:db8::54']
+    check: true
+    changed: true
+    expected_v4: []
+    expected_v6: []
+
+  - name: set ordered servers in both address families
+    ipv6: true
+    servers: [192.0.2.53, '2001:db8::53', 192.0.2.54, '2001:db8::54']
+    changed: true
+    expected_v4: [192.0.2.53, 192.0.2.54]
+    expected_v6: ['2001:db8::53', '2001:db8::54']
+
+  - name: repeat mixed servers with equivalent family order
+    ipv6: true
+    servers: ['2001:db8::53', '2001:db8::54', 192.0.2.53, 192.0.2.54]
+    changed: false
+
+  - name: preserve omitted IPv6 in an IPv4-only request
+    ipv6: true
+    servers: [192.0.2.53, 192.0.2.54]
+    changed: true
+    expected_v4: [192.0.2.53, 192.0.2.54]
+    expected_v6: ['2001:db8::53', '2001:db8::54']
+
+  - name: repeat the IPv4-only request with retained static IPv6
+    ipv6: true
+    servers: [192.0.2.53, 192.0.2.54]
+    changed: true
+    expected_v4: [192.0.2.53, 192.0.2.54]
+    expected_v6: ['2001:db8::53', '2001:db8::54']
+
+  - name: preserve omitted IPv4 in an IPv6-only request
+    ipv6: true
+    servers: ['2001:db8::54', '2001:db8::53']
+    changed: true
+    expected_v4: [192.0.2.53, 192.0.2.54]
+    expected_v6: ['2001:db8::54', '2001:db8::53']
+
+  - name: repeat the IPv6-only request with retained static IPv4
+    ipv6: true
+    servers: ['2001:db8::54', '2001:db8::53']
+    changed: true
+    expected_v4: [192.0.2.53, 192.0.2.54]
+    expected_v6: ['2001:db8::54', '2001:db8::53']
+
+  - name: reject explicit null without changing DNS
+    servers: null
+    changed: false
+    error: 'Invalid IP address(es): ()'
+
+  - name: ignore an extra option while resetting automatic DNS
+    servers: []
+    extra_option: ignored
+    changed: '{{ dns_client_ipv6 }}'
+    expected_v4: []
+    expected_v6: []

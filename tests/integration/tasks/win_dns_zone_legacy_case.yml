@@ -1,0 +1,23 @@
+---
+- name: Exercise the existing public module from the journal-owned baseline
+  ansible.builtin.include_tasks: win_dns_zone_run.yml
+  loop: [native]
+  loop_control:
+    loop_var: dns_zone_implementation
+
+- name: Require the independently declared legacy behavior
+  ansible.builtin.assert:
+    that:
+      - (dns_zone_case_results.native.failed | default(false)) ==
+        (dns_zone_case.id in dns_zone_expected_failures)
+      - dns_zone_case_results.native.changed ==
+        (dns_zone_case.id not in
+         dns_zone_expected_failures + dns_zone_expected_unchanged)
+
+- name: Retain this declared contract gate without claiming
+    untouched-upstream execution
+  ansible.builtin.set_fact:
+    dns_zone_comparisons: >-
+      {{ dns_zone_comparisons + [{'case': dns_zone_case,
+      'native': dns_zone_case_results.native,
+      'declared_behavior_verified': true}] }}

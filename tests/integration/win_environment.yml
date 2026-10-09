@@ -1,0 +1,552 @@
+---
+# SPDX-License-Identifier: GPL-3.0-or-later
+- name: Verify isolated environment changes on Windows Python 3.4.4
+  hosts: legacy_windows
+  gather_facts: false
+  vars:
+    prefix: '{{ owned_names.stdout | from_json }}'
+    primary_name: '{{ prefix }}primary'
+    secondary_name: '{{ prefix }}secondary'
+    process_name: '{{ prefix }}process'
+    invalid_name: '{{ prefix }}invalid=bad'
+    literal_value: 'Café 雪 %SystemRoot%'
+    initial_cases:
+      - id: check_create
+        check: true
+        parameters: {state: present, value: Alpha}
+        expected: {before: null, after: Alpha, changed: true}
+      - id: create
+        uppercase: true
+        parameters: {state: present, value: Alpha}
+        expected: {before: null, after: Alpha, changed: true}
+      - id: repeat
+        parameters: {state: present, value: Alpha}
+        expected: {before: Alpha, after: Alpha, changed: false}
+      - id: case_only
+        parameters: {state: present, value: alpha}
+        expected: {before: Alpha, after: alpha, changed: false}
+      - id: check_update
+        check: true
+        parameters: {state: present, value: Beta}
+        expected: {before: Alpha, after: Beta, changed: true}
+    update_cases:
+      - id: inferred_update
+        parameters: {value: '{{ literal_value }}'}
+        expected: {before: Alpha, after: '{{ literal_value }}', changed: true}
+      - id: check_remove_with_value
+        check: true
+        warning: true
+        parameters: {state: absent, value: ignored}
+        expected: {before: '{{ literal_value }}', after: ignored, changed: true}
+    removal_cases:
+      - id: remove_with_value
+        warning: true
+        parameters: {state: absent, value: ignored}
+        expected: {before: '{{ literal_value }}', after: ignored, changed: true}
+      - id: repeat_removal
+        parameters: {state: absent}
+        expected: {before: null, after: '', changed: false}
+      - id: inferred_null_removal
+        parameters: {value: null}
+        expected: {before: null, after: '', changed: false}
+    inspect_code: |
+      import json, os, re, sys, winreg
+      expected = json.loads(sys.stdin.buffer.read().decode('utf-8'))
+      prefix = expected['prefix']
+      assert re.match(r'^LW_ENV_[a-f0-9]{32}_$', prefix)
+      scopes = ((winreg.HKEY_CURRENT_USER, 'Environment'),
+          (winreg.HKEY_LOCAL_MACHINE,
+           r'SYSTEM\CurrentControlSet\Control\Session Manager\Environment'))
+      for hive, subkey in scopes:
+          with winreg.OpenKey(hive, subkey, 0, winreg.KEY_READ) as key:
+              for suffix in ('primary', 'secondary', 'process', 'invalid=bad'):
+                  value = expected.get(suffix)
+                  try:
+                      actual, kind = winreg.QueryValueEx(key, prefix + suffix)
+                  except FileNotFoundError:
+                      assert value is None, (subkey, suffix, value)
+                  else:
+                      assert value is not None, (subkey, suffix, actual)
+                      assert (actual, kind) == (value, winreg.REG_SZ)
+      assert prefix + 'process' not in os.environ
+      print('literal registry values, types, and process isolation verified')
+    cleanup_code: |
+      import ctypes, re, sys, winreg
+      prefix = sys.argv[1]
+      assert re.match(r'^LW_ENV_[a-f0-9]{32}_$', prefix)
+      names = tuple(prefix + suffix for suffix in
+          ('primary', 'secondary', 'process', 'invalid=bad'))
+      removed = 0
+      scopes = ((winreg.HKEY_CURRENT_USER, 'Environment'),
+          (winreg.HKEY_LOCAL_MACHINE,
+           r'SYSTEM\CurrentControlSet\Control\Session Manager\Environment'))
+      for hive, subkey in scopes:
+          with winreg.OpenKey(hive, subkey, 0,
+                  winreg.KEY_READ | winreg.KEY_SET_VALUE) as key:
+              for name in names:
+                  try:
+                      winreg.DeleteValue(key, name)
+                  except FileNotFoundError:
+                      pass
+                  else:
+                      removed += 1
+              for name in names:
+                  try:
+                      winreg.QueryValueEx(key, name)
+                  except FileNotFoundError:
+                      pass
+                  else:
+                      raise AssertionError('Owned name remains: ' + name)
+      if removed:
+          user = ctypes.WinDLL('user32', use_last_error=True)
+          user.SendMessageTimeoutW.argtypes = [ctypes.c_void_p,
+              ctypes.c_uint32, ctypes.c_size_t, ctypes.c_wchar_p,
+              ctypes.c_uint32, ctypes.c_uint32,
+              ctypes.POINTER(ctypes.c_size_t)]
+          user.SendMessageTimeoutW.restype = ctypes.c_void_p
+          result = ctypes.c_size_t()
+          if not user.SendMessageTimeoutW(0xffff, 0x1a, 0, 'Environment',
+                  2, 5000, ctypes.byref(result)):
+              raise ctypes.WinError(ctypes.get_last_error())
+      print('owned environment names removed and absence verified')
+  tasks:
+    - name: Require Python 3.4.4 and record initial task directories
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import glob, json, os, sys, tempfile;
+        assert sys.version_info[:3] == (3, 4, 4);
+        print(json.dumps(sorted(glob.glob(os.path.join(tempfile.gettempdir(),
+        'ansible-tmp-*')))))""
+      register: task_directories_before
+      changed_when: false
+      check_mode: false
+
+    - name: Allocate unpredictable names without creating registry values
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import json, uuid;
+        print(json.dumps('LW_ENV_' + uuid.uuid4().hex + '_'))""
+      register: owned_names
+      changed_when: false
+      check_mode: false
+
+    - name: Exercise only the allocated environment names
+      block:
+        - name: Verify owned names do not already exist
+          # Native reads independently check the module's later mutations.
+          sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+            argv: ['{{ ansible_python_interpreter }}', -c, '{{ inspect_code }}']
+            stdin: '{{ {"prefix": prefix} | to_json }}'
+          register: owned_names_verified
+          changed_when: false
+
+        - name: Exercise initial variable changes  # noqa: args[module]
+          # WANT_JSON arguments and exact results are asserted below.
+          sustainablelobster.legacy_windows.win_environment:
+            name: '{{ primary_name }}'
+            level: >-
+              {{ item[0] | upper if item[1].uppercase | default(false)
+                 else item[0] }}
+            state: '{{ item[1].parameters.state | default(omit) }}'
+            value: '{{ item[1].parameters.value | default(omit) }}'
+          loop: '{{ ["user", "machine"] | product(initial_cases) | list }}'
+          loop_control:
+            label: '{{ item[0] }} / {{ item[1].id }}'
+          check_mode: '{{ item[1].check | default(false) }}'
+          diff: true
+          register: initial_results
+
+        - name: Confirm predictions and case-only requests preserved strings
+          # REG_SZ and exact capitalization are checked through winreg.
+          sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+            argv: ['{{ ansible_python_interpreter }}', -c, '{{ inspect_code }}']
+            stdin: '{{ {"prefix": prefix, "primary": "Alpha"} | to_json }}'
+          changed_when: false
+
+        - name: Update values and predict removal  # noqa: args[module]
+          # Removal with a supplied value retains the pinned result quirk.
+          sustainablelobster.legacy_windows.win_environment:
+            name: '{{ primary_name }}'
+            level: '{{ item[0] }}'
+            state: '{{ item[1].parameters.state | default(omit) }}'
+            value: '{{ item[1].parameters.value | default(omit) }}'
+          loop: '{{ ["user", "machine"] | product(update_cases) | list }}'
+          loop_control:
+            label: '{{ item[0] }} / {{ item[1].id }}'
+          check_mode: '{{ item[1].check | default(false) }}'
+          diff: true
+          register: update_results
+
+        - name: Confirm check-mode removal left literal values and REG_SZ types
+          # Percent-delimited text must remain unexpanded in the registry.
+          sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+            argv: ['{{ ansible_python_interpreter }}', -c, '{{ inspect_code }}']
+            stdin: >-
+              {{ {"prefix": prefix, "primary": literal_value} | to_json }}
+          changed_when: false
+
+        - name: Remove variables repeatedly  # noqa: args[module]
+          # Assertions distinguish removal from the returned requested value.
+          sustainablelobster.legacy_windows.win_environment:
+            name: '{{ primary_name }}'
+            level: '{{ item[0] }}'
+            state: '{{ item[1].parameters.state | default(omit) }}'
+            value: '{{ item[1].parameters.value | default(omit) }}'
+          loop: '{{ ["user", "machine"] | product(removal_cases) | list }}'
+          loop_control:
+            label: '{{ item[0] }} / {{ item[1].id }}'
+          diff: true
+          register: removal_results
+
+        - name: Verify complete single-variable results and diff maps
+          ansible.builtin.assert:
+            that:
+              - item.changed == expected.changed
+              - 'item.env_values == {primary_name: expected}'
+              - item['values'] == item.env_values
+              - item.before_value == expected.before
+              - item.value == expected.after
+              - >-
+                item.diff.before == {result_level:
+                  ({primary_name: expected.before} if expected.before else {})}
+              - >-
+                item.diff.after == {result_level:
+                  ({primary_name: expected.after} if expected.after else {})}
+              - >-
+                not item.item[1].warning | default(false) or
+                (item.warnings | default([])) ==
+                ["When removing environment variable '" + primary_name +
+                 "' it should not have a value 'ignored' set"]
+          loop: >-
+            {{ initial_results.results + update_results.results +
+               removal_results.results }}
+          loop_control:
+            label: '{{ item.item[0] }} / {{ item.item[1].id }}'
+          vars:
+            expected: '{{ item.item[1].expected }}'
+            result_level: >-
+              {{ item.item[0] | upper if item.item[1].uppercase | default(false)
+                 else item.item[0] }}
+
+        - name: Verify persistent removals independently
+          # Each registered result is checked against actual registry absence.
+          sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+            argv: ['{{ ansible_python_interpreter }}', -c, '{{ inspect_code }}']
+            stdin: '{{ {"prefix": prefix} | to_json }}'
+          changed_when: false
+
+        - name: Set two variables in each scope  # noqa: args[module]
+          # Dictionary keys and each individual status are asserted below.
+          sustainablelobster.legacy_windows.win_environment:
+            level: '{{ item }}'
+            variables: '{{ {primary_name: "one", secondary_name: "two"} }}'
+          loop: [user, machine]
+          diff: true
+          register: bulk_created
+
+        - name: Predict bulk update and removal  # noqa: args[module]
+          # An empty dictionary value means removal, not an empty string write.
+          sustainablelobster.legacy_windows.win_environment:
+            level: '{{ item }}'
+            variables: '{{ {primary_name: "three", secondary_name: ""} }}'
+          loop: [user, machine]
+          check_mode: true
+          diff: true
+          register: bulk_predicted
+
+        - name: Verify bulk check mode retained both original values
+          # Native registry reads do not depend on the module's return values.
+          sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+            argv: ['{{ ansible_python_interpreter }}', -c, '{{ inspect_code }}']
+            stdin: >-
+              {{ {"prefix": prefix, "primary": "one", "secondary": "two"}
+                 | to_json }}
+          changed_when: false
+
+        - name: Apply bulk update and removal  # noqa: args[module]
+          # Each scope is modified independently without touching other names.
+          sustainablelobster.legacy_windows.win_environment:
+            level: '{{ item }}'
+            variables: '{{ {primary_name: "three", secondary_name: ""} }}'
+          loop: [user, machine]
+          diff: true
+          register: bulk_updated
+
+        - name: Repeat the mixed bulk operation  # noqa: args[module]
+          # Repetition must not rewrite the surviving value or absent name.
+          sustainablelobster.legacy_windows.win_environment:
+            level: '{{ item }}'
+            variables: '{{ {primary_name: "three", secondary_name: ""} }}'
+          loop: [user, machine]
+          diff: true
+          register: bulk_repeated
+
+        - name: Verify bulk creation returns both exact statuses
+          ansible.builtin.assert:
+            that:
+              - item is changed
+              - item.env_values == expected
+              - item['values'] == expected
+              - 'item.diff.before == {item.item: {}}'
+              - >-
+                item.diff.after == {item.item:
+                  {primary_name: 'one', secondary_name: 'two'}}
+          loop: '{{ bulk_created.results }}'
+          loop_control:
+            label: '{{ item.item }}'
+          vars:
+            expected: >-
+              {{ {primary_name:
+                    {"before": none, "after": "one", "changed": true},
+                  secondary_name:
+                    {"before": none, "after": "two", "changed": true}} }}
+
+        - name: Verify bulk prediction and application agree
+          ansible.builtin.assert:
+            that:
+              - item is changed
+              - item.env_values == expected
+              - item['values'] == expected
+              - >-
+                item.diff.before == {item.item:
+                  {primary_name: 'one', secondary_name: 'two'}}
+              - "item.diff.after == {item.item: {primary_name: 'three'}}"
+          loop: '{{ bulk_predicted.results + bulk_updated.results }}'
+          loop_control:
+            label: '{{ item.item }}'
+          vars:
+            expected: >-
+              {{ {primary_name:
+                    {"before": "one", "after": "three", "changed": true},
+                  secondary_name:
+                    {"before": "two", "after": "", "changed": true}} }}
+
+        - name: Verify bulk repetition reports unchanged statuses
+          ansible.builtin.assert:
+            that:
+              - item is not changed
+              - item.env_values == expected
+              - item['values'] == expected
+              - "item.diff.before == {item.item: {primary_name: 'three'}}"
+              - item.diff.after == item.diff.before
+          loop: '{{ bulk_repeated.results }}'
+          loop_control:
+            label: '{{ item.item }}'
+          vars:
+            expected: >-
+              {{ {primary_name:
+                    {"before": "three", "after": "three", "changed": false},
+                  secondary_name:
+                    {"before": none, "after": "", "changed": false}} }}
+
+        - name: Verify bulk top-level values describe one processed entry
+          ansible.builtin.assert:
+            that:
+              - >-
+                {"before": item.before_value, "after": item.value} in
+                [{"before": item.env_values[primary_name].before,
+                  "after": item.env_values[primary_name].after},
+                 {"before": item.env_values[secondary_name].before,
+                  "after": item.env_values[secondary_name].after}]
+          loop: >-
+            {{ bulk_created.results + bulk_predicted.results +
+               bulk_updated.results + bulk_repeated.results }}
+          loop_control:
+            label: '{{ item.item }}'
+
+        - name: Inspect the mixed bulk operation's final registry state
+          # The removed secondary name must be absent, not stored empty.
+          sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+            argv: ['{{ ansible_python_interpreter }}', -c, '{{ inspect_code }}']
+            stdin: '{{ {"prefix": prefix, "primary": "three"} | to_json }}'
+          changed_when: false
+
+        - name: Remove null dictionary entries  # noqa: args[module]
+          # A null dictionary value binds to the upstream empty return string.
+          sustainablelobster.legacy_windows.win_environment:
+            level: '{{ item }}'
+            variables: '{{ {primary_name: none} }}'
+          loop: [user, machine]
+          diff: true
+          register: bulk_removed
+
+        - name: Verify null dictionary entries remove persistent values
+          ansible.builtin.assert:
+            that:
+              - item is changed
+              - 'item.env_values == {primary_name: expected}'
+              - item['values'] == item.env_values
+              - item.before_value == 'three'
+              - item.value == ''
+              - "item.diff.before == {item.item: {primary_name: 'three'}}"
+              - 'item.diff.after == {item.item: {}}'
+          loop: '{{ bulk_removed.results }}'
+          loop_control:
+            label: '{{ item.item }}'
+          vars:
+            expected: {before: three, after: '', changed: true}
+
+        - name: Set a process-only variable twice  # noqa: args[module]
+          # Process variables disappear with the payload process itself.
+          sustainablelobster.legacy_windows.win_environment:
+            level: process
+            name: '{{ process_name }}'
+            value: Alpha
+          loop: [first, second]
+          diff: true
+          register: process_results
+
+        - name: Verify process changes never survive into the next payload
+          ansible.builtin.assert:
+            that:
+              - item is changed
+              - item.before_value is none
+              - item.value == 'Alpha'
+              - 'item.env_values == {process_name: expected}'
+              - item['values'] == item.env_values
+              - "item.diff.before == {'process': {}}"
+              - "item.diff.after == {'process': {process_name: 'Alpha'}}"
+          loop: '{{ process_results.results }}'
+          loop_control:
+            label: '{{ item.item }}'
+          vars:
+            expected: {before: null, after: Alpha, changed: true}
+
+        - name: Verify empty and null present values fail without mutation
+          block:
+            - name: Reject empty present values  # noqa: args[module]
+              # These invalid requests must reach the target's own validation.
+              sustainablelobster.legacy_windows.win_environment:
+                level: user
+                name: '{{ primary_name }}'
+                state: present
+                value: '{{ item }}'
+              loop: ['', null]
+              register: invalid_values
+
+            - name: Reject unexpected success from invalid values
+              ansible.builtin.fail:
+                msg: Empty or null present values unexpectedly succeeded
+          rescue:
+            - name: Assert both explicit validation failures
+              ansible.builtin.assert:
+                that:
+                  - invalid_values.results | length == 2
+                  - item is failed
+                  - item is not changed
+                  - >-
+                    item.msg is
+                    search('When state=present, value must be defined')
+              loop: '{{ invalid_values.results }}'
+              loop_control:
+                label: '{{ item.item }}'
+
+        - name: Predict a native-invalid name  # noqa: args[module]
+          # Check mode does not call the setter that rejects an equals sign.
+          sustainablelobster.legacy_windows.win_environment:
+            level: user
+            name: '{{ invalid_name }}'
+            value: x
+          check_mode: true
+          diff: true
+          register: invalid_predicted
+
+        - name: Verify check mode reports the pinned setter-validation boundary
+          ansible.builtin.assert:
+            that:
+              - invalid_predicted is changed
+              - invalid_predicted.before_value is none
+              - invalid_predicted.value == 'x'
+              - 'invalid_predicted.env_values == {invalid_name: expected}'
+              - invalid_predicted['values'] == invalid_predicted.env_values
+              - "invalid_predicted.diff.before == {'user': {}}"
+              - >-
+                invalid_predicted.diff.after == {'user': {invalid_name: 'x'}}
+          vars:
+            expected: {before: null, after: x, changed: true}
+
+        - name: Verify the actual setter rejects an invalid owned name
+          block:
+            - name: Attempt a native-invalid name  # noqa: args[module]
+              # The real setter must reject a name accepted by check mode.
+              sustainablelobster.legacy_windows.win_environment:
+                level: user
+                name: '{{ invalid_name }}'
+                value: x
+              register: invalid_write
+
+            - name: Reject unexpected success from an invalid environment name
+              ansible.builtin.fail:
+                msg: A name containing an equals sign unexpectedly succeeded
+          rescue:
+            - name: Assert the setter failure has no successful value results
+              ansible.builtin.assert:
+                that:
+                  - invalid_write is failed
+                  - invalid_write is not changed
+                  - invalid_write.env_values is not defined
+                  - "'values' not in invalid_write"
+                  - invalid_write.msg is string
+                  - invalid_write.msg | length > 0
+
+        - name: Confirm failed and process-only tasks left no registry values
+          # Also checks the inspecting process did not inherit the process name.
+          sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+            argv: ['{{ ansible_python_interpreter }}', -c, '{{ inspect_code }}']
+            stdin: '{{ {"prefix": prefix} | to_json }}'
+          changed_when: false
+
+        - name: Recover after validation failures  # noqa: args[module]
+          # A fresh module invocation must still create both scoped values.
+          sustainablelobster.legacy_windows.win_environment:
+            level: '{{ item }}'
+            name: '{{ primary_name }}'
+            value: Recovered
+          loop: [user, machine]
+          register: recovered
+
+        - name: Verify recovery reports real changes
+          ansible.builtin.assert:
+            that:
+              - item is changed
+              - item.before_value is none
+              - item.value == 'Recovered'
+          loop: '{{ recovered.results }}'
+          loop_control:
+            label: '{{ item.item }}'
+
+        - name: Inspect successful recovery directly
+          # Successful output alone does not establish registry persistence.
+          sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+            argv: ['{{ ansible_python_interpreter }}', -c, '{{ inspect_code }}']
+            stdin: '{{ {"prefix": prefix, "primary": "Recovered"} | to_json }}'
+          changed_when: false
+      always:
+        - name: Remove only the exact owned names and broadcast cleanup changes
+          ansible.builtin.raw: >-
+            cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+            "import base64;
+            exec(base64.b64decode('{{ cleanup_code | b64encode }}'))"
+            "{{ prefix }}""
+          changed_when: true
+          check_mode: false
+          when:
+            - owned_names_verified is defined
+            - owned_names_verified is succeeded
+
+    - name: Record remaining task directories
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import glob, json, os, tempfile;
+        print(json.dumps(sorted(glob.glob(os.path.join(tempfile.gettempdir(),
+        'ansible-tmp-*')))))""
+      register: task_directories_after
+      changed_when: false
+      check_mode: false
+
+    - name: Verify successful and failed tasks removed their staged files
+      ansible.builtin.assert:
+        that:
+          - >-
+            (task_directories_before.stdout | from_json) ==
+            (task_directories_after.stdout | from_json)

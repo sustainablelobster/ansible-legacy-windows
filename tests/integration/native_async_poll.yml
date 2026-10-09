@@ -1,0 +1,295 @@
+---
+# SPDX-License-Identifier: GPL-3.0-or-later
+- name: Verify standard automatic polling and exact owned recovery
+  hosts: legacy_windows
+  gather_facts: false
+  vars_files:
+    - vars/native_async.yml
+  vars:
+    native_async_poll_compare: true
+  tasks:
+    - name: Require actual Python and record original global staging
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import glob,json,os,sys,tempfile;assert sys.version_info[:3]==(3,4,4);
+        print(json.dumps(sorted(glob.glob(os.path.join(
+        tempfile.gettempdir(),'ansible-tmp-*')))))""
+      register: native_async_poll_staging_before
+      changed_when: false
+
+    - name: Allocate private controller capture
+      ansible.builtin.tempfile:
+        path: '{{ playbook_dir }}/../../tmp/codex/evidence'
+        prefix: 'native-async-poll-{{ inventory_hostname }}-'
+        suffix: .json
+      register: native_async_poll_capture
+      delegate_to: localhost
+      vars: &local
+        ansible_connection: local
+        ansible_shell_type: sh
+        ansible_python_interpreter: '{{ ansible_playbook_python }}'
+      changed_when: false
+
+    - name: Allocate exclusively owned async workspace
+      sustainablelobster.legacy_windows.win_tempfile:
+        prefix: legacy-windows-native-async-poll-
+        state: directory
+      register: native_async_poll_workspace
+
+    - name: Exercise public automatic jobs with mandatory recovery
+      block:
+        - name: Journal protected bytes configuration and owned cache
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - '-'
+              - '{{ native_async_poll_workspace.path }}'
+              - setup
+            stdin: '{{ native_async_program }}'
+          register: native_async_poll_setup
+          changed_when: false
+          no_log: true
+
+        - name: Automatically poll the complete native Unicode ping
+          sustainablelobster.legacy_windows.win_ping:
+            data: 'automatic café λ'
+          async: 30
+          poll: 1
+          vars:
+            ansible_remote_tmp: '{{ native_async_poll_workspace.path }}\staging'
+            ansible_async_dir: '{{ native_async_poll_workspace.path }}\cache'
+          register: native_async_poll_native
+
+        - name: Require the standard completed public response
+          ansible.builtin.assert:
+            that:
+              - native_async_poll_native.started
+              - native_async_poll_native.finished
+              - not native_async_poll_native.changed
+              - native_async_poll_native.ping == 'automatic café λ'
+              - >-
+                native_async_poll_native.ansible_job_id is
+                match('^j[0-9]+\.[0-9]+$')
+
+        - name: Automatically poll the unchanged released Unicode ping
+          ansible.windows.win_ping:
+            data: 'automatic café λ'
+          async: 30
+          poll: 1
+          vars:
+            ansible_remote_tmp: '{{ native_async_poll_workspace.path }}\staging'
+            ansible_async_dir: '{{ native_async_poll_workspace.path }}\cache'
+            ansible_shell_type: cmd
+          register: native_async_poll_source
+          when: native_async_poll_compare | bool
+
+        - name: Compare all typed public fields with bounded job metadata
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - '-'
+              - '{{ native_async_poll_workspace.path }}'
+              - compare
+              - >-
+                {{ {'native_launch': native_async_poll_native,
+                    'native_status': native_async_poll_native,
+                    'original_launch': native_async_poll_source,
+                    'original_status': native_async_poll_source} |
+                    to_json | b64encode }}
+            stdin: '{{ native_async_program }}'
+          register: native_async_poll_comparison
+          changed_when: false
+          when: native_async_poll_compare | bool
+
+        - name: Journal the live worker inside an automatic owned payload
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - '-'
+              - '{{ native_async_poll_workspace.path }}'
+              - record_running
+            stdin: '{{ native_async_program }}'
+          async: 30
+          poll: 1
+          vars:
+            ansible_remote_tmp: '{{ native_async_poll_workspace.path }}\staging'
+            ansible_async_dir: '{{ native_async_poll_workspace.path }}\cache'
+          register: native_async_poll_recorded
+
+        - name: Require the live birth journal operation completed normally
+          ansible.builtin.assert:
+            that:
+              - native_async_poll_recorded.finished
+              - native_async_poll_recorded.rc == 0
+              - >-
+                (native_async_poll_recorded.stdout | from_json).
+                recorded_live_worker
+
+        - name: Automatically report an owned module failure
+          sustainablelobster.legacy_windows.win_ping:
+            data: crash
+          async: 30
+          poll: 1
+          vars:
+            ansible_remote_tmp: '{{ native_async_poll_workspace.path }}\staging'
+            ansible_async_dir: '{{ native_async_poll_workspace.path }}\cache'
+          register: native_async_poll_failure
+          ignore_errors: true
+
+        - name: Require the failed module result rather than a polling failure
+          ansible.builtin.assert:
+            that:
+              - native_async_poll_failure is failed
+              - native_async_poll_failure.finished
+              - native_async_poll_failure.msg is search('boom')
+
+        - name: Automatically report a journal-owned descendant timeout
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - '-'
+              - '{{ native_async_poll_workspace.path }}'
+              - record_then_timeout
+            stdin: '{{ native_async_program }}'
+          async: 12
+          poll: 1
+          vars:
+            ansible_remote_tmp: '{{ native_async_poll_workspace.path }}\staging'
+            ansible_async_dir: '{{ native_async_poll_workspace.path }}\cache'
+          register: native_async_poll_timeout
+          ignore_errors: true
+
+        - name: Require the watchdog timeout instead of a lost async job
+          ansible.builtin.assert:
+            that:
+              - native_async_poll_timeout is failed
+              - native_async_poll_timeout.finished
+              - >-
+                native_async_poll_timeout.msg ==
+                ('failure during async watchdog: ' ~
+                'timed out waiting for module completion')
+
+        - name: Observe cache cleanup and killed owned timeout descendants
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - '-'
+              - '{{ native_async_poll_workspace.path }}'
+              - observe
+            stdin: '{{ native_async_program }}'
+          register: native_async_poll_observation
+          changed_when: false
+          no_log: true
+
+        - name: Require automatic core cleanup before fixture recovery
+          ansible.builtin.assert:
+            that:
+              - (native_async_poll_observation.stdout | from_json).cache == []
+              - (native_async_poll_observation.stdout | from_json).staging == []
+              - >-
+                (native_async_poll_observation.stdout | from_json).
+                processes | length == 3
+              - >-
+                native_async_poll_recorded.ansible_async_watchdog_pid in
+                ((native_async_poll_observation.stdout | from_json).
+                processes | map(attribute='expected.pid') | list)
+              - >-
+                native_async_poll_timeout.ansible_async_watchdog_pid in
+                ((native_async_poll_observation.stdout | from_json).
+                processes | map(attribute='expected.pid') | list)
+
+        - name: Require all owned processes closed before fixture recovery
+          ansible.builtin.assert:
+            that:
+              - item.expected.alive
+              - >-
+                item.actual == none or
+                item.actual.created != item.expected.created or
+                not item.actual.alive
+          loop: >-
+            {{ (native_async_poll_observation.stdout | from_json).processes }}
+      always:
+        - name: Recover only journal-owned workers and validate protection
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - '-'
+              - '{{ native_async_poll_workspace.path }}'
+              - cleanup
+            stdin: '{{ native_async_program }}'
+          register: native_async_poll_recovery
+          failed_when: false
+          changed_when: false
+          no_log: true
+
+        - name: Persist complete results before recovery assertions
+          ansible.builtin.copy:
+            content: >-
+              {{ {'workspace': native_async_poll_workspace,
+                  'setup': native_async_poll_setup | default(none),
+                  'native': native_async_poll_native | default(none),
+                  'source': native_async_poll_source | default(none),
+                  'comparison': native_async_poll_comparison | default(none),
+                  'recorded': native_async_poll_recorded | default(none),
+                  'failure': native_async_poll_failure | default(none),
+                  'timeout': native_async_poll_timeout | default(none),
+                  'observation': native_async_poll_observation | default(none),
+                  'recovery': native_async_poll_recovery,
+                  'staging_before': native_async_poll_staging_before} |
+                  to_nice_json }}
+            dest: '{{ native_async_poll_capture.path }}'
+            mode: '0600'
+          delegate_to: localhost
+          vars: *local
+          changed_when: false
+          no_log: true
+
+        - name: Require protected configuration and owned recovery
+          ansible.builtin.assert:
+            that:
+              - native_async_poll_recovery.rc == 0
+              - (native_async_poll_recovery.stdout | from_json).restored
+              - >-
+                (native_async_poll_recovery.stdout | from_json).
+                final.processes | length == 3
+              - >-
+                native_async_poll_recorded.ansible_async_watchdog_pid in
+                ((native_async_poll_recovery.stdout | from_json).
+                final.processes | map(attribute='expected.pid') | list)
+
+        - name: Remove only the recovered owned workspace
+          sustainablelobster.legacy_windows.win_file:
+            path: '{{ native_async_poll_workspace.path }}'
+            state: absent
+
+        - name: Require workspace absence and original global staging
+          ansible.builtin.raw: >-
+            cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+            "import glob,json,os,sys,tempfile;
+            assert not os.path.exists(sys.argv[1]);
+            print(json.dumps(sorted(glob.glob(os.path.join(
+            tempfile.gettempdir(),'ansible-tmp-*')))))"
+            "{{ native_async_poll_workspace.path }}""
+          register: native_async_poll_staging_after
+          changed_when: false
+          failed_when: >-
+            native_async_poll_staging_after.rc != 0 or
+            (native_async_poll_staging_after.stdout | from_json) !=
+            (native_async_poll_staging_before.stdout | from_json)
+
+        - name: Retain the literal final staging observation
+          ansible.builtin.copy:
+            content: >-
+              {{ (lookup('ansible.builtin.file', native_async_poll_capture.path)
+                  | from_json) |
+                  combine({'staging_after': native_async_poll_staging_after}) |
+                  to_nice_json }}
+            dest: '{{ native_async_poll_capture.path }}'
+            mode: '0600'
+          delegate_to: localhost
+          vars: *local
+          changed_when: false
+          no_log: true
+
+        - name: Close the owner-private persistent connection
+          ansible.builtin.meta: reset_connection

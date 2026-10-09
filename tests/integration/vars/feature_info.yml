@@ -1,0 +1,70 @@
+---
+feature_info_cases:
+  - name: Complete feature catalogue
+    params: {}
+    all: true
+  - name: Complete catalogue in check mode
+    params: {name: '*'}
+    all: true
+    check: true
+  - name: Role metadata
+    params: {name: AD-Certificate}
+    names: [AD-Certificate]
+  - name: Descriptor with scalar and array properties
+    params: {name: Hyper-V}
+    names: [Hyper-V]
+  - name: Descriptor with database property
+    params: {name: UpdateServices-DB}
+    names: [UpdateServices-DB]
+  - name: Descriptor with content properties
+    params: {name: UpdateServices-Services}
+    names: [UpdateServices-Services]
+  - name: Case-insensitive wildcard retains tree order
+    params: {name: adcs-*}
+    names: [ADCS-Cert-Authority, ADCS-Enroll-Web-Pol,
+            ADCS-Enroll-Web-Svc, ADCS-Web-Enrollment,
+            ADCS-Device-Enrollment, ADCS-Online-Cert]
+  - name: Question wildcard
+    params: {name: 'ADCS-Cert-Authorit?'}
+    names: [ADCS-Cert-Authority]
+  - name: Multiple wildcard segments
+    params: {name: 'A*-*cate'}
+    names: [AD-Certificate]
+  - name: Brackets are literal rather than character classes
+    params: {name: 'ADCS-Cert-[Aa]uthority'}
+    names: []
+  - name: Unclosed bracket remains literal
+    params: {name: '['}
+    names: []
+  - name: Backticks remain literal
+    params: {name: 'ADCS-Cert-Authorit`y'}
+    names: []
+  - name: No trimming of the selector
+    params: {name: 'ADCS-Cert-Authority '}
+    names: []
+  - name: No comma-separated alternatives
+    params: {name: 'ADCS-Cert-Authority,AD-Certificate'}
+    names: []
+  - name: Unmatched selector
+    params: {name: LegacyWindowsAbsentFeature*}
+    names: []
+  - name: Numeric selector binds to text
+    params: {name: 42}
+    names: []
+  - name: List selector binds to type text
+    params: {name: []}
+    names: []
+  - name: Dictionary selector binds to type text
+    params: {name: {}}
+    names: []
+  - name: Explicit null selector fails
+    params: {name: null}
+    failed: true
+  - name: Empty selector fails in check mode
+    params: {name: ''}
+    failed: true
+    check: true
+  - name: Unsupported parameter fails before querying
+    params: {unknown: true}
+    failed: true
+    module_identity: true

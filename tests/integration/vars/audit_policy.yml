@@ -1,0 +1,135 @@
+---
+audit_policy_cases:
+  - name: Predict success auditing
+    params: {subcategory: File System, audit_type: success}
+    check: true
+    changed: true
+    setting: no auditing
+    flags: 0
+  - name: Enable success auditing
+    params: {subcategory: File System, audit_type: success}
+    changed: true
+    setting: success
+    flags: 1
+  - name: Repeat success with case-insensitive names and flags
+    params: {subcategory: FILE SYSTEM, audit_type: SUCCESS}
+    changed: false
+    setting: success
+    flags: 1
+  - name: Predict failure-only auditing without changing success
+    params: {subcategory: File System, audit_type: failure}
+    check: true
+    changed: true
+    setting: success
+    flags: 1
+  - name: Enable failure-only auditing
+    params: {subcategory: File System, audit_type: failure}
+    changed: true
+    setting: failure
+    flags: 2
+  - name: Enable both flags from comma-separated input
+    params: {subcategory: File System, audit_type: 'success,failure'}
+    changed: true
+    setting: success and failure
+    flags: 3
+  - name: Preserve both flags despite none and duplicates
+    params:
+      subcategory: File System
+      audit_type: [NONE, SUCCESS, failure, success]
+    changed: false
+    setting: success and failure
+    flags: 3
+  - name: Disable both flags with an empty list
+    params: {subcategory: File System, audit_type: []}
+    changed: true
+    setting: no auditing
+    flags: 0
+  - name: Repeat disabled state with explicit null
+    params: {subcategory: File System, audit_type: null}
+    changed: false
+    setting: no auditing
+    flags: 0
+  - name: None does not override success
+    params: {subcategory: File System, audit_type: [none, success]}
+    changed: true
+    setting: success
+    flags: 1
+  - name: Enable all System subcategories
+    params: {category: System, audit_type: [success, failure]}
+    changed: true
+    category: true
+    setting: success and failure
+    flags: 3
+  - name: Repeat all System subcategories
+    params: {category: SYSTEM, audit_type: [failure, success]}
+    changed: false
+    category: true
+    setting: success and failure
+    flags: 3
+  - name: Predict disabling System while retaining current results
+    params: {category: System, audit_type: none}
+    check: true
+    changed: true
+    category: true
+    setting: success and failure
+    flags: 3
+  - name: Disable all System subcategories
+    params: {category: System, audit_type: none}
+    changed: true
+    category: true
+    setting: no auditing
+    flags: 0
+  - name: Reject an unknown category
+    params: {category: legacy-windows-absent, audit_type: none}
+    changed: false
+    failed: true
+    message: Invalid category provided
+  - name: Reject an unknown subcategory
+    params: {subcategory: legacy-windows-absent, audit_type: none}
+    changed: false
+    failed: true
+    message: Invalid sub category provided
+  - name: Reject both selectors even when one is null
+    params: {subcategory: null, category: System, audit_type: none}
+    changed: false
+    failed: true
+    message: 'parameters are mutually exclusive: subcategory, category'
+  - name: Reject a missing audit type
+    params: {subcategory: File System}
+    changed: false
+    failed: true
+    message: 'missing required arguments: audit_type'
+  - name: Reject a missing selector
+    params: {audit_type: none}
+    changed: false
+    failed: true
+    message: 'one of the following is required: subcategory, category'
+  - name: Preserve null-selector native error as unchanged success
+    params: {subcategory: null, audit_type: success}
+    changed: false
+    error_text: true
+  - name: Preserve empty-selector native error as unchanged success
+    params: {subcategory: '', audit_type: none}
+    changed: false
+    error_text: true
+  - name: Reject an unsupported option
+    params: {subcategory: File System, audit_type: none, unrelated: true}
+    changed: false
+    failed: true
+    message: Unsupported parameters
+  - name: Reject an invalid audit type
+    params: {subcategory: File System, audit_type: invalid}
+    changed: false
+    failed: true
+    message: value of audit_type
+  - name: Predict disabling File System after validation failures
+    params: {subcategory: File System, audit_type: none}
+    check: true
+    changed: true
+    setting: success
+    flags: 1
+  - name: Recover valid writes after validation failures
+    params: {subcategory: File System, audit_type: none}
+    changed: true
+    setting: no auditing
+    flags: 0

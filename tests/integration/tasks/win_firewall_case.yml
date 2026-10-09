@@ -1,0 +1,273 @@
+---
+- name: Initialize one firewall case record
+  ansible.builtin.set_fact:
+    firewall_before: {}
+    firewall_after: {}
+    firewall_result:
+    firewall_validated: false
+
+- name: Observe capture and validate one public firewall request
+  vars:
+    firewall_pending: '{{ firewall_results + [firewall_case_record] }}'
+    firewall_case_record:
+      name: '{{ firewall_case.name }}'
+      params: '{{ firewall_case.params }}'
+      check: '{{ firewall_case.check | default(false) }}'
+      validated: '{{ firewall_validated }}'
+      result: '{{ firewall_result }}'
+      before: >-
+        {{ (firewall_before.stdout | from_json)
+        if firewall_before.rc | default(1) == 0 else none }}
+      after: >-
+        {{ (firewall_after.stdout | from_json)
+        if firewall_after.rc | default(1) == 0 else none }}
+      before_command: '{{ firewall_before }}'
+      after_command: '{{ firewall_after }}'
+  block:
+    - name: Establish only the requested inactive fixture enum
+      sustainablelobster.legacy_windows.win_command: # noqa: args[module]
+        argv:
+          - '{{ ansible_python_interpreter }}'
+          - '-'
+          - '{{ firewall_workspace.path }}'
+          - seed
+          - '{{ firewall_case.seed.profile }}'
+          - '{{ firewall_case.seed.property }}'
+          - '{{ firewall_case.seed.value | string }}'
+        stdin: '{{ firewall_program }}'
+      when: firewall_case.seed is defined
+      changed_when: true
+      check_mode: false
+
+    - name: Independently observe complete policy before the public request
+      sustainablelobster.legacy_windows.win_command: # noqa: args[module]
+        argv:
+          - '{{ ansible_python_interpreter }}'
+          - '-'
+          - '{{ firewall_workspace.path }}'
+          - observe
+        stdin: '{{ firewall_program }}'
+      register: firewall_before
+      changed_when: false
+      check_mode: false
+
+    - name: Capture the public success or failure
+      block:
+        - name: Run the public firewall case # noqa: args[module]
+          sustainablelobster.legacy_windows.win_firewall: >-
+            {{ firewall_case.params }}
+          register: firewall_result
+          check_mode: '{{ firewall_case.check | default(false) }}'
+      rescue:
+        - name: Retain the failure until independent observation completes
+          ansible.builtin.assert:
+            that: [firewall_result is failed]
+
+    - name: Independently observe complete policy after the public request
+      sustainablelobster.legacy_windows.win_command: # noqa: args[module]
+        argv:
+          - '{{ ansible_python_interpreter }}'
+          - '-'
+          - '{{ firewall_workspace.path }}'
+          - observe
+        stdin: '{{ firewall_program }}'
+      register: firewall_after
+      changed_when: false
+      check_mode: false
+
+    - name: Save all raw public fields and observations before assertions
+      ansible.builtin.copy:
+        content: >-
+          {{ firewall_capture | combine({'results': firewall_pending})
+          | to_nice_json }}
+        dest: '{{ firewall_capture_file.path }}'
+        mode: '0600'
+      delegate_to: localhost
+      vars: &local
+        ansible_connection: local
+        ansible_shell_type: sh
+        ansible_python_interpreter: '{{ ansible_playbook_python }}'
+      changed_when: false
+
+    - name: Verify change failure and no-write behavior
+      vars:
+        before: '{{ firewall_before.stdout | from_json }}'
+        after: '{{ firewall_after.stdout | from_json }}'
+      ansible.builtin.assert:
+        that:
+          - firewall_result.changed == firewall_case.changed
+          - (firewall_result is failed) ==
+            (firewall_case.failed | default(false))
+          - firewall_case.message | default('') in
+            firewall_result.msg | default('')
+          - >-
+            (firewall_case.changed and not (firewall_case.check |
+            default(false))) or before == after
+
+    - name: Compare each public profile with independent configured observations
+      vars:
+        before: >-
+          {{ (firewall_before.stdout | from_json).configured
+          | selectattr('Name', 'equalto', item) | first }}
+        after: >-
+          {{ (firewall_after.stdout | from_json).configured
+          | selectattr('Name', 'equalto', item) | first }}
+        selected: >-
+          {{ item | lower in (firewall_result.profiles | default([], true)
+          | map('lower') | list) }}
+        enabling: '{{ firewall_result.state | default("", true) | lower ==
+          "enabled" }}'
+        predicted: >-
+          {{ true if selected and enabling and before.Enabled == 0 else
+          false if selected and not enabling and before.Enabled == 1
+          else before.Enabled == 1 }}
+        actions: {allow: 2, block: 4, not_configured: 0}
+        profile_keys:
+          Domain: DomainProfile
+          Private: StandardProfile
+          Public: PublicProfile
+        observed_registry: >-
+          {{ (firewall_after.stdout | from_json).registry }}
+        policy_tree: '{{ observed_registry[firewall_registry_path] }}'
+        native_values: >-
+          {{ policy_tree.children[profile_keys[item]]['values'] }}
+      ansible.builtin.assert:
+        that:
+          - firewall_result[item].currentstate == before.Enabled
+          - firewall_result[item].considered == selected
+          - firewall_result[item].enabled == predicted
+          - firewall_case.check | default(false) or
+            firewall_result[item].enabled == (after.Enabled == 1)
+          - selected or before == after
+          - >-
+            firewall_case.check | default(false) or not selected or
+            not enabling or firewall_case.params.inbound_action |
+            default(none) is none or after.DefaultInboundAction ==
+            actions[firewall_case.params.inbound_action | lower]
+          - >-
+            firewall_case.check | default(false) or not selected or
+            not enabling or firewall_case.params.outbound_action |
+            default(none) is none or after.DefaultOutboundAction ==
+            actions[firewall_case.params.outbound_action | lower]
+          - >-
+            (selected and enabling and firewall_case.params.inbound_action |
+            default(none) is not none) or after.DefaultInboundAction ==
+            before.DefaultInboundAction
+          - >-
+            (selected and enabling and firewall_case.params.outbound_action |
+            default(none) is not none) or after.DefaultOutboundAction ==
+            before.DefaultOutboundAction
+          - >-
+            after.Enabled == (native_values.EnableFirewall[0]
+            if 'EnableFirewall' in native_values else 2)
+          - >-
+            after.DefaultInboundAction == (0
+            if 'DefaultInboundAction' not in native_values else 2
+            if native_values.DefaultInboundAction[0] == 0 else 4)
+          - >-
+            after.DefaultOutboundAction == (0
+            if 'DefaultOutboundAction' not in native_values else 2
+            if native_values.DefaultOutboundAction[0] == 0 else 4)
+      loop: [Domain, Private, Public]
+      when:
+        - not (firewall_case.failed | default(false))
+        - (firewall_before.stdout | from_json).configured is not none
+
+    - name: Compare three-profile native values without configured enums
+      vars:
+        native_before: '{{ (firewall_before.stdout | from_json).native }}'
+        native_after: '{{ (firewall_after.stdout | from_json).native }}'
+        before: '{{ native_before.profiles[item] }}'
+        after: '{{ native_after.profiles[item] }}'
+        selected: >-
+          {{ item | lower in (firewall_result.profiles | default([], true)
+          | map('lower') | list) }}
+        enabling: '{{ firewall_result.state | default("", true) | lower ==
+          "enabled" }}'
+        predicted: '{{ enabling if selected else before.enabled != 0 }}'
+        actions: {allow: 1, block: 0}
+      ansible.builtin.assert:
+        that:
+          - firewall_result[item].currentstate ==
+            (1 if before.enabled != 0 else 0)
+          - firewall_result[item].considered == selected
+          - firewall_result[item].enabled == predicted
+          - firewall_case.check | default(false) or
+            firewall_result[item].enabled == (after.enabled != 0)
+          - selected or before == after
+          - native_before.current == native_after.current
+          - >-
+            firewall_case.check | default(false) or not selected or
+            not enabling or firewall_case.params.inbound_action |
+            default(none) is none or after.inbound ==
+            actions[firewall_case.params.inbound_action | lower]
+          - >-
+            firewall_case.check | default(false) or not selected or
+            not enabling or firewall_case.params.outbound_action |
+            default(none) is none or after.outbound ==
+            actions[firewall_case.params.outbound_action | lower]
+          - >-
+            (selected and enabling and firewall_case.params.inbound_action |
+            default(none) is not none) or after.inbound == before.inbound
+          - >-
+            (selected and enabling and firewall_case.params.outbound_action |
+            default(none) is not none) or after.outbound == before.outbound
+      loop: [Domain, Private, Public]
+      when:
+        - not (firewall_case.failed | default(false))
+        - (firewall_before.stdout | from_json).configured is none
+        - (firewall_before.stdout | from_json).native.current is defined
+
+    - name: Compare the classic Domain observation without profile aliases
+      vars:
+        before: '{{ (firewall_before.stdout | from_json).native }}'
+        after: '{{ (firewall_after.stdout | from_json).native }}'
+        selected: >-
+          {{ 'domain' in (firewall_result.profiles | default([], true)
+          | map('lower') | list) }}
+        enabling: '{{ firewall_result.state | default("", true) | lower ==
+          "enabled" }}'
+        enabled: '{{ before.profiles.Domain.enabled != 0 }}'
+      ansible.builtin.assert:
+        that:
+          - firewall_result.Domain.currentstate == (1 if enabled else 0)
+          - firewall_result.Domain.considered == selected
+          - firewall_result.Domain.enabled ==
+            (enabling if selected else enabled)
+          - firewall_case.check | default(false) or
+            firewall_result.Domain.enabled ==
+            (after.profiles.Domain.enabled != 0)
+          - firewall_result.Private is undefined
+          - firewall_result.Public is undefined
+          - before.profiles.Standard == after.profiles.Standard
+          - before.current_legacy == after.current_legacy
+      when:
+        - not (firewall_case.failed | default(false))
+        - (firewall_before.stdout | from_json).native.current_legacy is defined
+
+    - name: Verify requested state and profile spelling order and duplicates
+      ansible.builtin.assert:
+        that:
+          - firewall_result.state == firewall_case.params.state
+          - firewall_result.profiles == firewall_case.returned_profiles |
+            default(firewall_case.params.profiles |
+            default(['Domain', 'Private', 'Public']))
+          - not firewall_result.restart_required
+      when: not (firewall_case.failed | default(false))
+
+    - name: Record successful case validation
+      ansible.builtin.set_fact:
+        firewall_validated: true
+  always:
+    - name: Retain this case after success or failure
+      ansible.builtin.set_fact:
+        firewall_results: '{{ firewall_results + [firewall_case_record] }}'
+
+    - name: Save complete private firewall evidence
+      ansible.builtin.copy:
+        content: '{{ firewall_capture | to_nice_json }}'
+        dest: '{{ firewall_capture_file.path }}'
+        mode: '0600'
+      delegate_to: localhost
+      vars: *local
+      changed_when: false

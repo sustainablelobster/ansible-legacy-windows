@@ -1,0 +1,640 @@
+---
+# SPDX-License-Identifier: GPL-3.0-or-later
+- name: Verify native file searches on Windows Python 3.4.4
+  hosts: legacy_windows
+  gather_facts: false
+  vars:
+    workspace_path: '{{ workspace.stdout | from_json }}'
+    simple: '{{ workspace_path }}\simple'
+    expected: '{{ fixtures.stdout | from_json }}'
+    baseline_names: [empty.bin, LARGE.LOG, small.txt]
+    invalid_root_suffixes:
+      - '\*'
+      - '\*.txt'
+      - '\?mall.txt'
+      - "\0suffix"
+      - '"'
+      - '\<bad>'
+      - '|bad'
+      - "\tbad"
+    baseline_checksums:
+      empty.bin: "{{ '' | hash('sha1') }}"
+      small.txt: "{{ 'abc' | hash('sha1') }}"
+      LARGE.LOG: "{{ ('a' * 1024) | hash('sha1') }}"
+    recursive_names:
+      - empty.bin
+      - grandchild.txt
+      - LARGE.LOG
+      - nested.txt
+      - small.txt
+      - visible.txt
+    filter_cases:
+      - id: wildcard_case_insensitive
+        patterns: ['*.log']
+        case_sensitive: true
+        names: [LARGE.LOG]
+      - id: regular_expression
+        patterns: ['^small[.]txt$']
+        use_regex: true
+        case_sensitive: true
+        names: [small.txt]
+      - id: regex_case_sensitive
+        patterns: ['^large[.]log$']
+        use_regex: true
+        case_sensitive: true
+        names: []
+      - id: wildcard_character_set
+        patterns: ['[s]mall.*']
+        names: [small.txt]
+      - id: wildcard_unicode_upper_range
+        patterns: ['[A-Ž]mall.*']
+        names: [small.txt]
+      - id: wildcard_unicode_lower_range
+        patterns: ['[a-ž]mall.*']
+        names: [small.txt]
+      - id: wildcard_unicode_range_exclusion
+        patterns: ['[À-Ö]mall.*']
+        names: []
+      - id: regex_named_group_and_end_anchor
+        patterns: ['(?<stem>small)[.]txt\z']
+        use_regex: true
+        names: [small.txt]
+      - id: regex_case_insensitive
+        patterns: ['^SMALL[.]TXT$']
+        use_regex: true
+        names: [small.txt]
+      - id: pattern_alias_precedence
+        patterns: ['*.log']
+        regex: small.txt
+        regexp: empty.bin
+        names: [empty.bin]
+      - id: patterns_null
+        patterns: null
+        names: '{{ baseline_names }}'
+      - id: patterns_empty
+        patterns: []
+        names: []
+      - id: patterns_empty_string
+        patterns: ''
+        names: []
+      - id: include_hidden
+        hidden: true
+        names: [empty.bin, hidden.txt, LARGE.LOG, small.txt]
+      - id: minimum_size
+        size: 1K
+        names: [LARGE.LOG]
+      - id: maximum_size
+        size: '-3b'
+        names: [empty.bin, small.txt]
+      - id: older_than_one_day
+        age: 1D
+        names: '{{ baseline_names }}'
+      - id: newer_than_one_hour
+        age: '-1h'
+        names: []
+      - id: directory_length_zero
+        file_type: directory
+        size: '0'
+        names: [folder]
+      - id: directory_length_one
+        file_type: directory
+        size: '1'
+        names: [folder]
+      - id: directory_length_two
+        file_type: directory
+        size: '2'
+        names: []
+      - id: directory_length_negative_one
+        file_type: directory
+        size: '-1'
+        names: [folder]
+      - id: recurse_null_depth
+        recurse: true
+        depth: null
+        examined: 10
+        names: '{{ recursive_names }}'
+      - id: recurse_zero_depth
+        recurse: true
+        depth: 0
+        examined: 10
+        names: '{{ recursive_names }}'
+      - id: recurse_negative_depth
+        recurse: true
+        depth: -1
+        examined: 10
+        names: '{{ recursive_names }}'
+      - id: recurse_one_level
+        recurse: true
+        depth: 1
+        names: '{{ baseline_names }}'
+      - id: recurse_two_levels
+        recurse: true
+        depth: 2
+        examined: 9
+        names: [empty.bin, LARGE.LOG, nested.txt, small.txt, visible.txt]
+      - id: duplicate_roots
+        paths: ['{{ simple }}', '{{ simple }}\folder', '{{ simple | upper }}']
+        recurse: true
+        examined: 10
+        names: '{{ recursive_names }}'
+      - id: lazy_regex_alternative
+        patterns: ['.*', '[']
+        use_regex: true
+        names: '{{ baseline_names }}'
+      - id: invalid_regex_empty_directory
+        paths: '{{ workspace_path }}\empty'
+        patterns: ['[']
+        use_regex: true
+        examined: 0
+        names: []
+      - id: null_paths
+        paths: null
+        examined: 0
+        names: []
+      - id: empty_paths
+        paths: []
+        examined: 0
+        names: []
+    reset_access_code: |
+      import ctypes, os, sys
+      root = os.path.abspath(sys.argv[1])
+      assert os.path.basename(root).startswith('legacy-windows-find-')
+      kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+      kernel.CreateFileW.argtypes = [ctypes.c_wchar_p, ctypes.c_uint32,
+          ctypes.c_uint32, ctypes.c_void_p, ctypes.c_uint32, ctypes.c_uint32,
+          ctypes.c_void_p]
+      kernel.CreateFileW.restype = ctypes.c_void_p
+      kernel.SetFileTime.argtypes = [ctypes.c_void_p, ctypes.c_void_p,
+          ctypes.c_void_p, ctypes.c_void_p]
+      kernel.SetFileTime.restype = ctypes.c_int
+      kernel.CloseHandle.argtypes = [ctypes.c_void_p]
+      kernel.CloseHandle.restype = ctypes.c_int
+      timestamp = ctypes.c_uint64((1477984205 + 11644473600) * 10000000)
+      for name in ('empty.bin', 'LARGE.LOG', 'small.txt'):
+          path = os.path.join(root, 'simple', name)
+          handle = kernel.CreateFileW(path, 0x100, 7, None, 3, 0x02000000, None)
+          if handle == ctypes.c_void_p(-1).value:
+              raise ctypes.WinError(ctypes.get_last_error())
+          try:
+              if not kernel.SetFileTime(handle, None,
+                      ctypes.byref(timestamp), None):
+                  raise ctypes.WinError(ctypes.get_last_error())
+          finally:
+              assert kernel.CloseHandle(handle)
+    cleanup_code: |
+      import ctypes, os, sys, tempfile
+      root = os.path.abspath(sys.argv[1])
+      assert os.path.basename(root).startswith('legacy-windows-find-')
+      kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+      kernel.GetLongPathNameW.argtypes = [ctypes.c_wchar_p,
+          ctypes.c_wchar_p, ctypes.c_uint32]
+      kernel.GetLongPathNameW.restype = ctypes.c_uint32
+      temporary = ctypes.create_unicode_buffer(32768)
+      length = kernel.GetLongPathNameW(tempfile.gettempdir(), temporary,
+          len(temporary))
+      assert length in range(1, len(temporary))
+      assert os.path.normcase(os.path.dirname(root)) == os.path.normcase(
+          os.path.abspath(temporary.value))
+      kernel.GetFileAttributesW.argtypes = [ctypes.c_wchar_p]
+      kernel.GetFileAttributesW.restype = ctypes.c_uint32
+      kernel.SetFileAttributesW.argtypes = [ctypes.c_wchar_p, ctypes.c_uint32]
+      kernel.SetFileAttributesW.restype = ctypes.c_int
+      def remove_owned(path):
+          attributes = kernel.GetFileAttributesW(path)
+          if attributes == 0xffffffff:
+              error = ctypes.get_last_error()
+              if error in (2, 3):
+                  return
+              raise ctypes.WinError(error)
+          assert not attributes & 0x400, 'Unexpected reparse point: ' + path
+          if attributes & 7:
+              if not kernel.SetFileAttributesW(path, (attributes & ~7) or 128):
+                  raise ctypes.WinError(ctypes.get_last_error())
+          if attributes & 0x10:
+              for name in os.listdir(path):
+                  remove_owned(os.path.join(path, name))
+              os.rmdir(path)
+          else:
+              os.remove(path)
+      remove_owned(root)
+      assert kernel.GetFileAttributesW(root) == 0xffffffff
+      assert ctypes.get_last_error() in (2, 3)
+      print('owned find workspace removed and absence verified')
+  tasks:
+    - name: Require Python 3.4.4 and record initial task directories
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import glob, json, os, sys, tempfile;
+        assert sys.version_info[:3] == (3, 4, 4);
+        print(json.dumps(sorted(glob.glob(os.path.join(tempfile.gettempdir(),
+        'ansible-tmp-*')))))""
+      register: task_directories_before
+      changed_when: false
+      check_mode: false
+
+    - name: Allocate one owned workspace with long path names
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import ctypes, json, tempfile;
+        kernel = ctypes.WinDLL('kernel32', use_last_error=True);
+        kernel.GetLongPathNameW.argtypes =
+        [ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_uint32];
+        kernel.GetLongPathNameW.restype = ctypes.c_uint32;
+        root = tempfile.mkdtemp(prefix='legacy-windows-find-');
+        expanded = ctypes.create_unicode_buffer(32768);
+        length = kernel.GetLongPathNameW(root, expanded, len(expanded));
+        assert length in range(1, len(expanded));
+        print(json.dumps(expanded.value))""
+      register: workspace
+      changed_when: true
+      check_mode: false
+
+    - name: Exercise searches within the owned workspace
+      block:
+        - name: Create independent native fixtures and expected local timestamps
+          # WANT_JSON setup is checked by its Python assertions and later reads.
+          sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - |
+                import calendar, ctypes, json, os, sys
+                root = sys.argv[1]
+                kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+                kernel.CreateFileW.argtypes = [ctypes.c_wchar_p,
+                    ctypes.c_uint32, ctypes.c_uint32, ctypes.c_void_p,
+                    ctypes.c_uint32, ctypes.c_uint32, ctypes.c_void_p]
+                kernel.CreateFileW.restype = ctypes.c_void_p
+                kernel.CloseHandle.argtypes = [ctypes.c_void_p]
+                kernel.CloseHandle.restype = ctypes.c_int
+                kernel.SetFileTime.argtypes = [ctypes.c_void_p,
+                    ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p]
+                kernel.SetFileTime.restype = ctypes.c_int
+                kernel.SetFileAttributesW.argtypes = [ctypes.c_wchar_p,
+                    ctypes.c_uint32]
+                kernel.SetFileAttributesW.restype = ctypes.c_int
+                kernel.CreateHardLinkW.argtypes = [ctypes.c_wchar_p,
+                    ctypes.c_wchar_p, ctypes.c_void_p]
+                kernel.CreateHardLinkW.restype = ctypes.c_int
+                # Temp folders can inherit NotContentIndexed. Initialize
+                # this owned parent before testing exact child metadata.
+                if not kernel.SetFileAttributesW(root, 16):
+                    raise ctypes.WinError(ctypes.get_last_error())
+                directories = ('simple', 'simple/folder',
+                    'simple/folder/nested', 'simple/hidden-dir',
+                    'empty', 'links')
+                files = (('simple/empty.bin', b''),
+                    ('simple/small.txt', b'abc'),
+                    ('simple/LARGE.LOG', b'a' * 1024),
+                    ('simple/hidden.txt', b'hidden'),
+                    ('simple/folder/nested.txt', b'nested'),
+                    ('simple/folder/nested/grandchild.txt', b'grandchild'),
+                    ('simple/hidden-dir/visible.txt', b'visible'),
+                    ('links/original.txt', b'abc'))
+                for name in directories:
+                    os.mkdir(os.path.join(root, name))
+                for name, data in files:
+                    with open(os.path.join(root, name), 'wb') as stream:
+                        stream.write(data)
+                assert kernel.CreateHardLinkW(
+                    os.path.join(root, 'links/alias.txt'),
+                    os.path.join(root, 'links/original.txt'), None)
+                timestamp = ctypes.c_uint64(
+                    (1477984205 + 11644473600) * 10000000)
+                for name in list(directories) + [pair[0] for pair in files]:
+                    path = os.path.join(root, name)
+                    handle = kernel.CreateFileW(path, 0x100, 7, None, 3,
+                        0x02000000, None)
+                    assert handle != ctypes.c_void_p(-1).value
+                    try:
+                        assert kernel.SetFileTime(handle,
+                            ctypes.byref(timestamp), ctypes.byref(timestamp),
+                            ctypes.byref(timestamp))
+                    finally:
+                        assert kernel.CloseHandle(handle)
+                for name, attributes in (('simple/hidden.txt', 34),
+                        ('simple/hidden-dir', 18)):
+                    assert kernel.SetFileAttributesW(
+                        os.path.join(root, name), attributes)
+                universal = (ctypes.c_uint16 * 8)()
+                local = (ctypes.c_uint16 * 8)()
+                kernel.FileTimeToSystemTime.argtypes = [ctypes.c_void_p,
+                    ctypes.c_void_p]
+                kernel.FileTimeToSystemTime.restype = ctypes.c_int
+                assert kernel.FileTimeToSystemTime(
+                    ctypes.byref(timestamp), universal)
+                zone = ctypes.create_string_buffer(172)
+                yearly = getattr(kernel, 'GetTimeZoneInformationForYear',
+                    None)
+                if yearly is not None:
+                    yearly.argtypes = [ctypes.c_uint16, ctypes.c_void_p,
+                        ctypes.c_void_p]
+                    yearly.restype = ctypes.c_int
+                    assert yearly(universal[0], None, zone)
+                else:
+                    kernel.GetTimeZoneInformation.argtypes = [ctypes.c_void_p]
+                    kernel.GetTimeZoneInformation.restype = ctypes.c_uint32
+                    assert kernel.GetTimeZoneInformation(zone) != 0xffffffff
+                kernel.SystemTimeToTzSpecificLocalTime.argtypes = [
+                    ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p]
+                kernel.SystemTimeToTzSpecificLocalTime.restype = ctypes.c_int
+                assert kernel.SystemTimeToTzSpecificLocalTime(
+                    zone, universal, local)
+                seconds = calendar.timegm((local[0], local[1], local[3],
+                    local[4], local[5], local[6], 0, 0, 0))
+                print(json.dumps({'local_timestamp': seconds,
+                    'sizes': {'empty.bin': 0, 'small.txt': 3,
+                              'LARGE.LOG': 1024}}))
+              - '{{ workspace_path }}'
+          register: fixtures
+          check_mode: false
+
+        - name: Read the default matching files
+          # Runtime assertions verify the WANT_JSON result contract.
+          sustainablelobster.legacy_windows.win_find:  # noqa: args[module]
+            paths: '{{ simple }}'
+          register: baseline
+
+        - name: Check default counts and complete ordinary metadata
+          ansible.builtin.assert:
+            that:
+              - baseline is not changed
+              - baseline.examined == 6
+              - baseline.matched == 3
+              - >-
+                (baseline.files | map(attribute='filename') | list) ==
+                baseline_names
+              - item.path == simple + '\\' + item.filename
+              - item.size == expected.sizes[item.filename]
+              - item.checksum == baseline_checksums[item.filename]
+              - item.extension == '.' + item.filename.split('.')[-1]
+              - item.exists and item.isreg and item.isarchive
+              - not item.isdir and not item.ishidden and not item.isreadonly
+              - not item.islnk and not item.isjunction and not item.isshared
+              - item.attributes == 'Archive'
+              - item.owner is string
+              - item.owner | length > 0
+              - item.nlink == 1 and item.hlnk_targets == []
+              - item.lnk_source is none and item.lnk_target is none
+              - item.sharename is none
+              - item.creationtime == expected.local_timestamp
+              - item.lastwritetime == expected.local_timestamp
+              - item.lastaccesstime == expected.local_timestamp
+          loop: '{{ baseline.files }}'
+          loop_control:
+            label: '{{ item.filename }}'
+
+        - name: Restore only fixture access times before repeating the search
+          # XP and 2003 can update last-access time while computing checksums.
+          sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - '{{ reset_access_code }}'
+              - '{{ workspace_path }}'
+          check_mode: false
+
+        - name: Repeat the search from the same initial metadata
+          # Complete result equality still checks every returned metadata field.
+          sustainablelobster.legacy_windows.win_find:  # noqa: args[module]
+            paths: '{{ simple }}'
+          register: repeated
+
+        - name: Restore only fixture access times before the check-mode search
+          # Leave creation/write times and content untouched for exact checks.
+          sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - '{{ reset_access_code }}'
+              - '{{ workspace_path }}'
+          check_mode: false
+
+        - name: Repeat the search in check mode
+          # Check mode performs the same reads without reporting a change.
+          sustainablelobster.legacy_windows.win_find:  # noqa: args[module]
+            paths: '{{ simple }}'
+          check_mode: true
+          register: checked
+
+        - name: Verify repeated and check-mode results match exactly
+          ansible.builtin.assert:
+            that:
+              - item is not changed
+              - item.examined == baseline.examined
+              - item.matched == baseline.matched
+              - item.files == baseline.files
+          loop: '{{ [repeated, checked] }}'
+
+        - name: Exercise matching and traversal boundaries
+          # Cases retain explicit nulls while omitting unspecified options.
+          sustainablelobster.legacy_windows.win_find:  # noqa: args[module]
+            paths: '{{ item.paths | default(simple) }}'
+            patterns: '{{ item.patterns | default(omit) }}'
+            regex: '{{ item.regex | default(omit) }}'
+            regexp: '{{ item.regexp | default(omit) }}'
+            use_regex: '{{ item.use_regex | default(omit) }}'
+            case_sensitive: '{{ item.case_sensitive | default(omit) }}'
+            file_type: '{{ item.file_type | default(omit) }}'
+            hidden: '{{ item.hidden | default(omit) }}'
+            recurse: '{{ item.recurse | default(omit) }}'
+            depth: '{{ item.depth | default(omit) }}'
+            size: '{{ item.size | default(omit) }}'
+            age: '{{ item.age | default(omit) }}'
+            get_checksum: false
+          loop: '{{ filter_cases }}'
+          loop_control:
+            label: '{{ item.id }}'
+          register: filtered
+
+        - name: Verify filter results and hidden-directory traversal
+          ansible.builtin.assert:
+            that:
+              - item is not changed
+              - item.examined == item.item.examined | default(6)
+              - item.matched == item.item.names | length
+              - >-
+                (item.files | map(attribute='filename') | sort | list) ==
+                (item.item.names | sort | list)
+              - >-
+                (item.files | map(attribute='checksum') | unique | list)
+                in [[], [none]]
+          loop: '{{ filtered.results }}'
+          loop_control:
+            label: '{{ item.item.id }}'
+
+        - name: Verify directory metadata retains the upstream null fields
+          ansible.builtin.assert:
+            that:
+              - item.isdir and not item.isreg
+              - item.size is none and item.extension is none
+              - item.checksum is none and item.sharename is none
+              - item.lnk_source is none and item.lnk_target is none
+          loop: >-
+            {{ filtered.results
+               | selectattr('item.id', 'equalto', 'directory_length_one')
+               | map(attribute='files') | flatten }}
+
+        - name: Preserve explicit null checksum selection
+          # A null boolean disables hashing instead of restoring its default.
+          sustainablelobster.legacy_windows.win_find:  # noqa: args[module]
+            paths: '{{ simple }}'
+            patterns: small.txt
+            get_checksum: null
+          register: null_checksum
+
+        - name: Verify metadata remains available without a checksum
+          ansible.builtin.assert:
+            that:
+              - null_checksum is not changed
+              - null_checksum.examined == 6 and null_checksum.matched == 1
+              - null_checksum.files[0].checksum is none
+              - null_checksum.files[0].size == 3
+
+        - name: Hash known bytes with each supported native algorithm
+          # The controller computes expected digests from the known fixture.
+          sustainablelobster.legacy_windows.win_find:  # noqa: args[module]
+            paths: '{{ simple }}'
+            patterns: small.txt
+            checksum_algorithm: '{{ item | upper }}'
+          loop: [md5, sha1, sha256, sha384, sha512]
+          register: hashes
+
+        - name: Verify every requested checksum
+          ansible.builtin.assert:
+            that:
+              - item is not changed
+              - item.examined == 6 and item.matched == 1
+              - item.files[0].checksum == ('abc' | hash(item.item))
+          loop: '{{ hashes.results }}'
+          loop_control:
+            label: '{{ item.item }}'
+
+        - name: Query native hard-link counts on every Windows version
+          # XP can return the count without the newer name-enumeration API.
+          sustainablelobster.legacy_windows.win_find:  # noqa: args[module]
+            paths: '{{ workspace_path }}\links'
+          register: hardlinks
+
+        - name: Preserve the pinned upstream hard-link result shape
+          ansible.builtin.assert:
+            that:
+              - hardlinks is not changed
+              - hardlinks.examined == 2 and hardlinks.matched == 2
+              - item.nlink == 2
+              - item.hlnk_targets == [none]
+              - item.checksum == ('abc' | hash('sha1'))
+              - item.isreg and not item.islnk and not item.isjunction
+          loop: '{{ hardlinks.files }}'
+          loop_control:
+            label: '{{ item.filename }}'
+
+        - name: Require invalid regex failure and subsequent recovery
+          block:
+            - name: Evaluate a malformed regex against populated fixtures
+              # An invalid expression must fail in normal and check mode.
+              sustainablelobster.legacy_windows.win_find:  # noqa: args[module]
+                paths: '{{ simple }}'
+                patterns: '['
+                use_regex: true
+              loop: [false, true]
+              check_mode: '{{ item }}'
+              register: invalid_patterns
+
+            - name: Reject unexpected malformed-regex success
+              ansible.builtin.fail:
+                msg: A malformed regex unexpectedly succeeded
+          rescue:
+            - name: Verify complete failure without partial search results
+              ansible.builtin.assert:
+                that:
+                  - invalid_patterns.results | length == 2
+                  - item is failed
+                  - item is not changed
+                  - item.msg | length > 0
+                  - item.examined is not defined
+                  - item.matched is not defined
+                  - item.files is not defined
+              loop: '{{ invalid_patterns.results }}'
+
+        - name: Require malformed literal roots to fail before matching entries
+          block:
+            # Runtime assertions validate this WANT_JSON payload's arguments.
+            - name: Reject malformed literal roots  # noqa: args[module]
+              sustainablelobster.legacy_windows.win_find:
+                paths: ['{{ simple }}{{ item.0 }}']
+                get_checksum: false
+              loop: >-
+                {{ invalid_root_suffixes | product([false, true]) | list }}
+              loop_control:
+                label: '{{ item.0 | to_json }} check={{ item.1 }}'
+              check_mode: '{{ item.1 }}'
+              register: invalid_roots
+
+            - name: Reject unexpected malformed-root success
+              ansible.builtin.fail:
+                msg: A malformed literal search root unexpectedly succeeded
+          rescue:
+            - name: Verify root failures return no successful search result
+              ansible.builtin.assert:
+                that:
+                  - invalid_roots.results | length == 16
+                  - item is failed
+                  - item is not changed
+                  - item.msg == 'Invalid Windows path characters in paths.'
+                  - item.examined is not defined
+                  - item.matched is not defined
+                  - item.files is not defined
+              loop: '{{ invalid_roots.results }}'
+              loop_control:
+                label: '{{ item.item.0 | to_json }} check={{ item.item.1 }}'
+
+        - name: Restore fixture access times before checking recovery
+          # Hashing may change access times; other metadata must remain intact.
+          sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - '{{ reset_access_code }}'
+              - '{{ workspace_path }}'
+          check_mode: false
+
+        - name: Read successfully after malformed-pattern and root failures
+          # Recovery proves failure did not alter fixtures or future searches.
+          sustainablelobster.legacy_windows.win_find:  # noqa: args[module]
+            paths: '{{ simple }}'
+          register: recovered
+
+        - name: Verify recovery matches the original search
+          ansible.builtin.assert:
+            that:
+              - recovered is not changed
+              - recovered.examined == baseline.examined
+              - recovered.matched == baseline.matched
+              - recovered.files == baseline.files
+      always:
+        - name: Remove only the guarded owned workspace and verify absence
+          ansible.builtin.raw: >-
+            cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+            "import base64;
+            exec(base64.b64decode('{{ cleanup_code | b64encode }}'))"
+            "{{ workspace_path }}""
+          changed_when: true
+          check_mode: false
+
+    - name: Record remaining task directories
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import glob, json, os, tempfile;
+        print(json.dumps(sorted(glob.glob(os.path.join(tempfile.gettempdir(),
+        'ansible-tmp-*')))))""
+      register: task_directories_after
+      changed_when: false
+      check_mode: false
+
+    - name: Verify successful and failed tasks removed their staged files
+      ansible.builtin.assert:
+        that:
+          - >-
+            (task_directories_before.stdout | from_json) ==
+            (task_directories_after.stdout | from_json)

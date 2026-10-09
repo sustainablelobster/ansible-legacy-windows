@@ -1,0 +1,121 @@
+---
+http_trust_program: |
+  # Copyright 2026 Joe Lustri
+  # SPDX-License-Identifier: GPL-3.0-or-later
+  """Recover an initially absent owned trust anchor and compare native state."""
+  import base64, ctypes, hashlib, json, os, ssl, sys, tempfile, winreg
+  assert sys.version_info[:3] == (3, 4, 4)
+  workspace, operation, thumbprint = sys.argv[1:4]
+  assert os.path.basename(workspace).startswith('legacy-windows-http-trust-')
+  def canonical(path):
+      api = ctypes.WinDLL('kernel32', use_last_error=True)
+      api.GetLongPathNameW.argtypes = [ctypes.c_wchar_p, ctypes.c_wchar_p,
+                                     ctypes.c_uint32]
+      required = api.GetLongPathNameW(path, None, 0)
+      assert required
+      buffer = ctypes.create_unicode_buffer(required)
+      assert api.GetLongPathNameW(path, buffer, required)
+      return buffer.value.lower()
+
+  assert canonical(os.path.dirname(workspace)) == canonical(
+      tempfile.gettempdir())
+  assert len(thumbprint) == 40
+  assert all(c in '0123456789ABCDEF' for c in thumbprint)
+  journal = os.path.join(workspace, 'trust.json')
+
+  def registry_tree(hive, path):
+      try:
+          key = winreg.OpenKey(hive, path, 0, winreg.KEY_READ)
+      except OSError as error:
+          if error.winerror in (2, 3):
+              return None
+          raise
+      with key:
+          values, children = {}, {}
+          for index in range(winreg.QueryInfoKey(key)[1]):
+              name, value, kind = winreg.EnumValue(key, index)
+              if isinstance(value, bytes):
+                  value = {'base64': base64.b64encode(value).decode('ascii')}
+              values[name] = [value, kind]
+          for index in range(winreg.QueryInfoKey(key)[0]):
+              name = winreg.EnumKey(key, index)
+              children[name] = registry_tree(hive, path + '\\' + name)
+          return {'values': values, 'children': children}
+
+  def state():
+      root = r'SOFTWARE\Microsoft\SystemCertificates\Root'
+      keys = {}
+      for relative in ('RSA', 'Keys'):
+          path = os.path.join(os.environ['APPDATA'], 'Microsoft',
+                              'Crypto', relative)
+          for directory, folders, names in os.walk(path):
+              folders.sort()
+              for name in sorted(names):
+                  filename = os.path.join(directory, name)
+                  with open(filename, 'rb') as stream:
+                      keys[filename] = hashlib.sha256(stream.read()).hexdigest()
+      return {'roots': [registry_tree(hive, root) for hive in
+                       (winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE)],
+              'user_personal_store': registry_tree(winreg.HKEY_CURRENT_USER,
+                  r'SOFTWARE\Microsoft\SystemCertificates\My'),
+              'user_key_files': keys}
+
+  def owned_present():
+      return any(hashlib.sha1(encoded).hexdigest().upper() == thumbprint
+                 for encoded, encoding, trust in ssl.enum_certificates('ROOT')
+                 if encoding == 'x509_asn')
+
+  if operation == 'setup':
+      assert not os.listdir(workspace) and not owned_present()
+      record = {'thumbprint': thumbprint, 'before': state()}
+      with open(journal, 'w', encoding='utf-8') as stream:
+          json.dump(record, stream, sort_keys=True)
+          stream.flush()
+          os.fsync(stream.fileno())
+      result = {'journaled': True, 'initially_absent': True}
+  elif operation in ('observe', 'cleanup'):
+      with open(journal, encoding='utf-8') as stream:
+          record = json.load(stream)
+      assert record['thumbprint'] == thumbprint
+      if operation == 'cleanup':
+          # Public removal is tested first; this independently bounded fallback
+          # ensures failure recovery never leaves our new trust anchor behind.
+          crypt = ctypes.WinDLL('crypt32', use_last_error=True)
+          crypt.CertOpenStore.restype = ctypes.c_void_p
+          crypt.CertOpenStore.argtypes = [ctypes.c_void_p, ctypes.c_uint32,
+              ctypes.c_void_p, ctypes.c_uint32, ctypes.c_wchar_p]
+          crypt.CertEnumCertificatesInStore.restype = ctypes.c_void_p
+          crypt.CertEnumCertificatesInStore.argtypes = [
+              ctypes.c_void_p, ctypes.c_void_p]
+          crypt.CertDeleteCertificateFromStore.argtypes = [ctypes.c_void_p]
+          crypt.CertCloseStore.argtypes = [ctypes.c_void_p, ctypes.c_uint32]
+          class Context(ctypes.Structure):
+              _fields_ = [('encoding', ctypes.c_uint32),
+                          ('encoded', ctypes.c_void_p),
+                          ('size', ctypes.c_uint32)]
+          store = crypt.CertOpenStore(10, 0, None, 0x20000 | 0x4000, 'Root')
+          assert store
+          try:
+              context = None
+              while True:
+                  context = crypt.CertEnumCertificatesInStore(store, context)
+                  if not context:
+                      break
+                  native = ctypes.cast(context,
+                                       ctypes.POINTER(Context)).contents
+                  encoded = ctypes.string_at(native.encoded, native.size)
+                  if hashlib.sha1(encoded).hexdigest().upper() == thumbprint:
+                      assert crypt.CertDeleteCertificateFromStore(context)
+                      context = None
+              assert ctypes.get_last_error() & 0xffffffff in (0, 0x80092004)
+          finally:
+              assert crypt.CertCloseStore(store, 0)
+      observed = state()
+      restored = observed == record['before'] and not owned_present()
+      result = {'owned_present': owned_present(), 'state': observed,
+                'restored': restored}
+      if operation == 'cleanup':
+          assert restored, 'Owned trust or user key state was not restored'
+  else:
+      raise ValueError('Unknown trust fixture operation')
+  print(json.dumps(result, sort_keys=True))

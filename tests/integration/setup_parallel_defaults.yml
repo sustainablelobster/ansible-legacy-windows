@@ -1,0 +1,122 @@
+---
+- name: Demonstrate omitted parallel gathering timeout
+  ansible.builtin.import_playbook: setup_parallel.yml
+  vars:
+    setup_parallel_compare: false
+    setup_parallel_timeout: null
+
+- name: Demonstrate resolved Setup defaults and credentialed parallel gathering
+  ansible.builtin.import_playbook: setup_parallel.yml
+  vars:
+    setup_parallel_compare: false
+    setup_parallel_timeout: null
+    setup_parallel_defaults_timeout: 17
+    setup_parallel_become: true
+
+- name: Demonstrate explicit collector timeout without a whole-job limit
+  ansible.builtin.import_playbook: setup_parallel.yml
+  vars:
+    setup_parallel_compare: false
+    setup_parallel_timeout: 30
+
+- name: Prepare owned caches before implicit fact gathering
+  hosts: legacy_windows
+  gather_facts: false
+  vars_files:
+    - vars/setup_parallel.yml
+  tasks:
+    - name: Record actual Python floor and original global staging
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import glob,json,os,sys,tempfile;assert sys.version_info[:3]==(3,4,4);
+        print(json.dumps(sorted(glob.glob(os.path.join(
+        tempfile.gettempdir(),'ansible-tmp-*')))))""
+      register: setup_parallel_staging_before
+      changed_when: false
+
+    - name: Allocate a private implicit gathering capture
+      ansible.builtin.tempfile:
+        path: '{{ setup_parallel_evidence_dir }}'
+        prefix: 'setup-implicit-{{ inventory_hostname }}-'
+        suffix: .json
+      delegate_to: localhost
+      vars: &controller
+        ansible_connection: local
+        ansible_shell_type: sh
+        ansible_python_interpreter: '{{ ansible_playbook_python }}'
+      register: setup_parallel_capture
+      changed_when: false
+
+    - name: Allocate the exclusively owned implicit gathering workspace
+      sustainablelobster.legacy_windows.win_tempfile:
+        state: directory
+        prefix: legacy-windows-setup-parallel-
+      register: setup_parallel_workspace
+
+    - name: Initialize protected journal and fresh job caches
+      sustainablelobster.legacy_windows.win_command:
+        argv: ['{{ ansible_python_interpreter }}', '-',
+               '{{ setup_parallel_workspace.path }}', setup]
+        stdin: '{{ setup_parallel_program }}'
+      register: setup_parallel_setup
+      changed_when: false
+      no_log: true
+
+    - name: Retain workspace ownership for recovery after a gathering failure
+      ansible.builtin.copy:
+        dest: '{{ setup_parallel_evidence_dir }}/implicit-workspace.json'
+        mode: '0600'
+        content: >-
+          {{ {'setup_parallel_workspace': setup_parallel_workspace,
+              'setup_parallel_capture': setup_parallel_capture,
+              'setup_parallel_setup': setup_parallel_setup,
+              'setup_parallel_staging_before': setup_parallel_staging_before}
+              | to_nice_json }}
+      delegate_to: localhost
+      vars: *controller
+      changed_when: false
+      no_log: true
+
+    - name: Clear previously gathered facts before the implicit play
+      ansible.builtin.meta: clear_facts
+
+- name: Implicit parallel facts with defaults # noqa: fqcn[keyword]
+  hosts: legacy_windows
+  collections:
+    - sustainablelobster.legacy_windows
+  gather_facts: true
+  module_defaults:
+    sustainablelobster.legacy_windows.setup:
+      gather_subset: ['!all', '!min', distribution, user]
+      gather_timeout: 17
+  vars:
+    ansible_facts_modules:
+      - sustainablelobster.legacy_windows.setup
+      - sustainablelobster.legacy_windows.win_product_facts
+    ansible_async_dir: '{{ setup_parallel_workspace.path }}\native-cache'
+    ansible_remote_tmp: '{{ setup_parallel_workspace.path }}\staging'
+  tasks:
+    - name: Preserve facts gathered before the first ordinary task
+      ansible.builtin.set_fact:
+        setup_parallel_native:
+          changed: false
+          ansible_facts: '{{ ansible_facts }}'
+      no_log: true
+
+    - name: Require selected implicit facts and product facts
+      ansible.builtin.assert:
+        that:
+          - ansible_facts._ansible_facts_gathered
+          - ansible_facts.module_setup
+          - >-
+            ansible_facts.gather_subset ==
+            ['!all', '!min', 'distribution', 'user']
+          - ansible_facts.distribution_version | length > 0
+          - ansible_facts.user_sid | length > 0
+          - ansible_facts.os_product_id is defined
+          - ansible_facts.interfaces is not defined
+          - ansible_facts.memtotal_mb is not defined
+      no_log: true
+
+- name: Observe and recover implicit gathering jobs
+  ansible.builtin.import_playbook: setup_parallel_recovery.yml

@@ -1,0 +1,51 @@
+---
+dhcp_classic_cases: >-
+  {{ dhcp_cases | rejectattr('name', 'in',
+  ['Create ordinary lease with explicit duration and A registration',
+   'Create ordinary lease without DNS registration']) | list +
+   dhcp_classic_unsupported_dns_cases }}
+dhcp_classic_unsupported_dns_cases:
+  - name: Reject unavailable per-lease A registration before creation
+    params: {ip: '{{ dhcp_ip }}', mac: '020000000025', type: lease,
+             dns_regtype: a, duration: 14}
+    failed: true
+    changed: false
+    nonmutating: true
+  - name: Reject unavailable per-lease A registration in preview
+    params: {ip: '{{ dhcp_ip }}', mac: '020000000025', type: lease,
+             dns_regtype: a, duration: 14}
+    check: true
+    failed: true
+    changed: false
+    nonmutating: true
+  - name: Reject unavailable disabled DNS registration before creation
+    params: {ip: '{{ dhcp_ip }}', mac: '020000000025', type: lease,
+             dns_regtype: noreg, duration: 14}
+    failed: true
+    changed: false
+    nonmutating: true
+  - name: Reject unavailable disabled DNS registration in preview
+    params: {ip: '{{ dhcp_ip }}', mac: '020000000025', type: lease,
+             dns_regtype: noreg, duration: 14}
+    check: true
+    failed: true
+    changed: false
+    nonmutating: true
+
+dhcp_lease_classic_program: |
+  import sys, types
+  for helper_name, source in (
+      ('legacy_windows_wmi', {{ lookup('ansible.builtin.file',
+          (dhcp_lease_source_root | default(playbook_dir + '/../..')) +
+          '/plugins/module_utils/legacy_windows_wmi.py', rstrip=false) |
+          to_json }}),
+      ('legacy_windows_dhcp_api', {{ lookup('ansible.builtin.file',
+          (dhcp_lease_source_root | default(playbook_dir + '/../..')) +
+          '/plugins/module_utils/legacy_windows_dhcp_api.py', rstrip=false) |
+          to_json }})):
+      helper = types.ModuleType(helper_name)
+      sys.modules[helper_name] = helper
+      exec(source, helper.__dict__)
+  {{ lookup('ansible.builtin.file',
+      (dhcp_lease_source_root | default(playbook_dir + '/../..')) +
+      '/tests/integration/fixtures/win_dhcp_lease_classic.py', rstrip=false) }}

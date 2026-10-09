@@ -1,0 +1,43 @@
+---
+native_async_runas_body: 'AAH/AApib2R5IM67'
+native_async_runas_environment: 'literal λ %PATH% !text! & | < > ^'
+native_async_runas_program: |
+  RUNAS_SOURCE = {{ lookup('ansible.builtin.file',
+    playbook_dir + '/fixtures/runas_observer.py') | to_json }}
+  PROCESS_SOURCE = {{ lookup('ansible.builtin.file',
+    playbook_dir + '/fixtures/native_async.py').split('def _protected():')[0] |
+    to_json }}
+  {{ lookup('ansible.builtin.file',
+    playbook_dir + '/fixtures/native_async_runas.py') }}
+native_async_runas_recovery_program: |
+  WMI_SOURCE = {{ lookup('ansible.builtin.file',
+    playbook_dir + '/../../plugins/module_utils/legacy_windows_wmi.py') |
+    to_json }}
+  ASYNC_SOURCE = {{ lookup('ansible.builtin.file',
+    playbook_dir + '/fixtures/native_async.py').split(
+    'if __name__ == "__main__":')[0] | to_json }}
+  {{ lookup('ansible.builtin.file',
+    playbook_dir + '/fixtures/native_async_runas.py').split(
+    'if __name__ == "__main__":')[0] }}
+  print(json.dumps(_recover(sys.argv[1])))
+native_async_runas_comparison_program: |
+  ASYNC_SOURCE = {{ lookup('ansible.builtin.file',
+    playbook_dir + '/fixtures/native_async.py').split(
+    'if __name__ == "__main__":')[0] | to_json }}
+  {{ lookup('ansible.builtin.file',
+    playbook_dir + '/fixtures/native_async_runas.py').split(
+    'if __name__ == "__main__":')[0] }}
+  pairs = json.loads({{ [
+    {'operation': 'launch',
+     'native': native_async_runas_results[0].launch,
+     'source': native_async_runas_results[1].launch},
+    {'operation': 'status',
+     'native': native_async_runas_results[0].status,
+     'source': native_async_runas_results[1].status},
+    {'operation': 'launch',
+     'native': native_async_runas_results[2].launch,
+     'source': native_async_runas_results[3].launch},
+    {'operation': 'status',
+     'native': native_async_runas_results[2].status,
+     'source': native_async_runas_results[3].status} ] | to_json | to_json }})
+  print(json.dumps(_compare(sys.argv[1], pairs)))

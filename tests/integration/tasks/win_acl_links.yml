@@ -1,0 +1,211 @@
+---
+- name: Create independent junction and target permission fixtures
+  sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+    argv:
+      - '{{ ansible_python_interpreter }}'
+      - '-'
+      - '{{ acl_workspace.path }}'
+      - setup
+    stdin: '{{ acl_link_fixture }}'
+  register: acl_link_setup
+  changed_when: true
+  check_mode: false
+
+- name: Retain the owned link fixture paths
+  ansible.builtin.set_fact:
+    acl_link_paths: '{{ (acl_link_setup.stdout | from_json).paths }}'
+
+- name: Predict default junction access without modifying either object
+  sustainablelobster.legacy_windows.win_acl:  # noqa: args[module]
+    path: '{{ acl_link_paths.link }}'
+    user: '{{ acl_guest_sid }}'
+    rights: Write
+    inherit: None
+    type: allow
+  check_mode: true
+  register: acl_link_prediction
+
+- name: Verify prediction preserved link target and file permissions
+  sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+    argv:
+      - '{{ ansible_python_interpreter }}'
+      - '-'
+      - '{{ acl_workspace.path }}'
+      - verify
+      - none
+    stdin: '{{ acl_link_fixture }}'
+  register: acl_link_before_observation
+  changed_when: false
+  check_mode: false
+
+- name: Add access to the junction using the default follow behavior
+  sustainablelobster.legacy_windows.win_acl:  # noqa: args[module]
+    path: '{{ acl_link_paths.link }}'
+    user: '{{ acl_guest_sid }}'
+    rights: Write
+    inherit: None
+    type: allow
+  register: acl_link_added
+
+- name: Repeat junction access with explicit follow false
+  sustainablelobster.legacy_windows.win_acl:  # noqa: args[module]
+    path: '{{ acl_link_paths.link }}'
+    user: '{{ acl_guest_sid }}'
+    rights: Write
+    inherit: None
+    type: allow
+    follow: false
+  register: acl_link_repeated
+
+- name: Verify only the junction received the explicit rule
+  sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+    argv:
+      - '{{ ansible_python_interpreter }}'
+      - '-'
+      - '{{ acl_workspace.path }}'
+      - verify
+      - link
+    stdin: '{{ acl_link_fixture }}'
+  register: acl_link_only_observation
+  changed_when: false
+  check_mode: false
+
+- name: Follow the junction and add access to its target
+  sustainablelobster.legacy_windows.win_acl:  # noqa: args[module]
+    path: '{{ acl_link_paths.link }}'
+    user: '{{ acl_guest_sid }}'
+    rights: Write
+    inherit: None
+    type: allow
+    follow: true
+  register: acl_link_target_added
+
+- name: Repeat access to the followed target
+  sustainablelobster.legacy_windows.win_acl:  # noqa: args[module]
+    path: '{{ acl_link_paths.link }}'
+    user: '{{ acl_guest_sid }}'
+    rights: Write
+    inherit: None
+    type: allow
+    follow: true
+  register: acl_link_target_repeated
+
+- name: Verify link and target received separate explicit rules
+  sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+    argv:
+      - '{{ ansible_python_interpreter }}'
+      - '-'
+      - '{{ acl_workspace.path }}'
+      - verify
+      - link,target
+    stdin: '{{ acl_link_fixture }}'
+  register: acl_link_both_observation
+  changed_when: false
+  check_mode: false
+
+- name: Predict removal from the followed target
+  sustainablelobster.legacy_windows.win_acl:  # noqa: args[module]
+    path: '{{ acl_link_paths.link }}'
+    user: '{{ acl_guest_sid }}'
+    rights: Write
+    inherit: None
+    type: allow
+    state: absent
+    follow: true
+  check_mode: true
+  register: acl_link_target_prediction
+
+- name: Verify removal prediction preserved both explicit rules
+  sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+    argv:
+      - '{{ ansible_python_interpreter }}'
+      - '-'
+      - '{{ acl_workspace.path }}'
+      - verify
+      - link,target
+    stdin: '{{ acl_link_fixture }}'
+  register: acl_link_check_observation
+  changed_when: false
+  check_mode: false
+
+- name: Remove access from the followed target
+  sustainablelobster.legacy_windows.win_acl:  # noqa: args[module]
+    path: '{{ acl_link_paths.link }}'
+    user: '{{ acl_guest_sid }}'
+    rights: Write
+    inherit: None
+    type: allow
+    state: absent
+    follow: true
+  register: acl_link_target_removed
+
+- name: Verify the junction rule remains after target removal
+  sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+    argv:
+      - '{{ ansible_python_interpreter }}'
+      - '-'
+      - '{{ acl_workspace.path }}'
+      - verify
+      - link
+    stdin: '{{ acl_link_fixture }}'
+  register: acl_link_retained_observation
+  changed_when: false
+  check_mode: false
+
+- name: Remove access from the junction itself
+  sustainablelobster.legacy_windows.win_acl:  # noqa: args[module]
+    path: '{{ acl_link_paths.link }}'
+    user: '{{ acl_guest_sid }}'
+    rights: Write
+    inherit: None
+    type: allow
+    state: absent
+    follow: false
+  register: acl_link_removed
+
+- name: Verify both ACLs and binary contents returned to the initial state
+  sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+    argv:
+      - '{{ ansible_python_interpreter }}'
+      - '-'
+      - '{{ acl_workspace.path }}'
+      - verify
+      - none
+    stdin: '{{ acl_link_fixture }}'
+  register: acl_link_final_observation
+  changed_when: false
+  check_mode: false
+
+- name: Require correct change reporting for link and target operations
+  ansible.builtin.assert:
+    that:
+      - acl_link_prediction.changed
+      - acl_link_added.changed
+      - not acl_link_repeated.changed
+      - acl_link_target_added.changed
+      - not acl_link_target_repeated.changed
+      - acl_link_target_prediction.changed
+      - acl_link_target_removed.changed
+      - acl_link_removed.changed
+      - acl_link_repeated.msg is not defined
+      - acl_link_target_repeated.msg is not defined
+
+- name: Retain complete junction results and native observations
+  ansible.builtin.set_fact:
+    acl_link_results:
+      results:
+        - '{{ acl_link_prediction }}'
+        - '{{ acl_link_added }}'
+        - '{{ acl_link_repeated }}'
+        - '{{ acl_link_target_added }}'
+        - '{{ acl_link_target_repeated }}'
+        - '{{ acl_link_target_prediction }}'
+        - '{{ acl_link_target_removed }}'
+        - '{{ acl_link_removed }}'
+      snapshots:
+        - '{{ acl_link_before_observation.stdout | from_json }}'
+        - '{{ acl_link_only_observation.stdout | from_json }}'
+        - '{{ acl_link_both_observation.stdout | from_json }}'
+        - '{{ acl_link_check_observation.stdout | from_json }}'
+        - '{{ acl_link_retained_observation.stdout | from_json }}'
+        - '{{ acl_link_final_observation.stdout | from_json }}'

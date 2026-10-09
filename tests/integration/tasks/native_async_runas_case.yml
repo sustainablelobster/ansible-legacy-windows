@@ -1,0 +1,220 @@
+---
+- name: Launch a command under the requested native token
+  sustainablelobster.legacy_windows.win_command:
+    argv:
+      - '{{ ansible_python_interpreter }}'
+      - '-'
+      - '{{ native_async_runas_workspace.path }}'
+      - '{{ native_async_runas_case.phase }}'
+      - '{{ native_async_runas_body }}'
+    stdin: '{{ native_async_runas_program }}'
+  async: 90
+  poll: 0
+  become: true
+  become_method: ansible.builtin.runas
+  become_user: '{{ native_async_runas_case.user }}'
+  vars:
+    ansible_become_password: '{{ native_async_runas_case.password }}'
+    ansible_remote_tmp: '{{ native_async_runas_workspace.path }}\staging'
+    ansible_async_dir: '{{ native_async_runas_workspace.path }}\cache'
+  environment:
+    LEGACY_WINDOWS_RUNAS_TEST: '{{ native_async_runas_environment }}'
+  register: native_async_runas_launch
+  no_log: true
+
+- name: Disconnect the launching SSH session
+  ansible.builtin.meta: reset_connection
+
+- name: Wait for the owned payload's live birth record
+  sustainablelobster.legacy_windows.win_wait_for:
+    path: >-
+      {{ native_async_runas_workspace.path ~ '\\' ~
+         native_async_runas_case.phase ~ '-live.json' }}
+    state: present
+    timeout: 30
+
+- name: Pin the live watchdog before releasing the command
+  sustainablelobster.legacy_windows.win_command:
+    argv:
+      - '{{ ansible_python_interpreter }}'
+      - '-'
+      - '{{ native_async_runas_workspace.path }}'
+      - record
+      - '{{ native_async_runas_launch | to_json | b64encode }}'
+    stdin: '{{ native_async_program }}'
+  become: true
+  become_method: ansible.builtin.runas
+  become_user: 'NT AUTHORITY\SYSTEM'
+  register: native_async_runas_pin
+  changed_when: false
+  no_log: true
+
+- name: Release only this owned payload
+  sustainablelobster.legacy_windows.win_file:
+    path: >-
+      {{ native_async_runas_workspace.path ~ '\\' ~
+         native_async_runas_case.phase ~ '-release' }}
+    state: touch
+
+- name: Poll the command through become-enabled native Async Status
+  sustainablelobster.legacy_windows.async_status:
+    jid: '{{ native_async_runas_launch.ansible_job_id }}'
+  become: true
+  become_method: ansible.builtin.runas
+  become_user: '{{ native_async_runas_case.user }}'
+  vars:
+    ansible_become_password: '{{ native_async_runas_case.password }}'
+    ansible_async_dir: '{{ native_async_runas_workspace.path }}\cache'
+    ansible_remote_tmp: '{{ native_async_runas_workspace.path }}\staging'
+  register: native_async_runas_status
+  until: native_async_runas_status.finished
+  retries: 30
+  delay: 1
+  no_log: true
+
+- name: Retain the complete result before identity assertions
+  ansible.builtin.set_fact:
+    native_async_runas_results: >-
+      {{ native_async_runas_results +
+         [{'phase': native_async_runas_case.phase,
+           'launch': native_async_runas_launch,
+           'pin': native_async_runas_pin,
+           'status': native_async_runas_status}] }}
+  no_log: true
+
+- name: Require the actual requested identity and literal task input
+  vars:
+    actual: '{{ native_async_runas_status.stdout | from_json }}'
+  ansible.builtin.assert:
+    that:
+      - native_async_runas_status.rc == 0
+      - native_async_runas_status.stderr == ''
+      - actual.sid == native_async_runas_case.sid
+      - actual.python == [3, 4, 4]
+      - actual.body_base64 == native_async_runas_body
+      - actual.environment == native_async_runas_environment
+      - (native_async_runas_pin.stdout | from_json).worker.alive
+  no_log: true
+
+- name: Clean the owned cache using the requested account
+  sustainablelobster.legacy_windows.async_status:
+    jid: '{{ native_async_runas_launch.ansible_job_id }}'
+    mode: cleanup
+  become: true
+  become_method: ansible.builtin.runas
+  become_user: '{{ native_async_runas_case.user }}'
+  vars:
+    ansible_become_password: '{{ native_async_runas_case.password }}'
+    ansible_async_dir: '{{ native_async_runas_workspace.path }}\cache'
+    ansible_remote_tmp: '{{ native_async_runas_workspace.path }}\staging'
+  no_log: true
+
+- name: Remove only the completed native command's owned release markers
+  sustainablelobster.legacy_windows.win_file:
+    path: '{{ native_async_runas_workspace.path }}\{{ item }}'
+    state: absent
+  become: true
+  become_method: ansible.builtin.runas
+  become_user: 'NT AUTHORITY\SYSTEM'
+  loop:
+    - '{{ native_async_runas_case.phase }}-live.json'
+    - '{{ native_async_runas_case.phase }}-release'
+
+- name: Launch the identical command using the untouched released source
+  ansible.windows.win_command:
+    argv:
+      - '{{ ansible_python_interpreter }}'
+      - '-'
+      - '{{ native_async_runas_workspace.path }}'
+      - '{{ native_async_runas_case.phase }}'
+      - '{{ native_async_runas_body }}'
+    stdin: '{{ native_async_runas_program }}'
+  async: 90
+  poll: 0
+  become: true
+  become_method: ansible.builtin.runas
+  become_user: '{{ native_async_runas_case.user }}'
+  vars:
+    ansible_become_password: '{{ native_async_runas_case.password }}'
+    ansible_shell_type: cmd
+    ansible_remote_tmp: '{{ native_async_runas_workspace.path }}\staging'
+    ansible_async_dir: '{{ native_async_runas_workspace.path }}\cache'
+  environment:
+    LEGACY_WINDOWS_RUNAS_TEST: '{{ native_async_runas_environment }}'
+  register: native_async_runas_source_launch
+  no_log: true
+
+- name: Disconnect the released launching SSH session
+  ansible.builtin.meta: reset_connection
+
+- name: Wait for the released payload's live birth record
+  sustainablelobster.legacy_windows.win_wait_for:
+    path: >-
+      {{ native_async_runas_workspace.path ~ '\\' ~
+         native_async_runas_case.phase ~ '-live.json' }}
+    state: present
+    timeout: 30
+
+- name: Pin the released watchdog with the same SYSTEM observer
+  sustainablelobster.legacy_windows.win_command:
+    argv:
+      - '{{ ansible_python_interpreter }}'
+      - '-'
+      - '{{ native_async_runas_workspace.path }}'
+      - record
+      - '{{ native_async_runas_source_launch | to_json | b64encode }}'
+    stdin: '{{ native_async_program }}'
+  become: true
+  become_method: ansible.builtin.runas
+  become_user: 'NT AUTHORITY\SYSTEM'
+  register: native_async_runas_source_pin
+  changed_when: false
+  no_log: true
+
+- name: Release only the owned source payload
+  sustainablelobster.legacy_windows.win_file:
+    path: >-
+      {{ native_async_runas_workspace.path ~ '\\' ~
+         native_async_runas_case.phase ~ '-release' }}
+    state: touch
+
+- name: Poll the released command with unchanged core Async Status
+  ansible.builtin.async_status:
+    jid: '{{ native_async_runas_source_launch.ansible_job_id }}'
+  become: true
+  become_method: ansible.builtin.runas
+  become_user: '{{ native_async_runas_case.user }}'
+  vars:
+    ansible_become_password: '{{ native_async_runas_case.password }}'
+    ansible_shell_type: cmd
+    ansible_async_dir: '{{ native_async_runas_workspace.path }}\cache'
+    ansible_remote_tmp: '{{ native_async_runas_workspace.path }}\staging'
+  register: native_async_runas_source_status
+  until: native_async_runas_source_status.finished
+  retries: 30
+  delay: 1
+  no_log: true
+
+- name: Retain every released result before comparing public behavior
+  ansible.builtin.set_fact:
+    native_async_runas_results: >-
+      {{ native_async_runas_results +
+         [{'phase': native_async_runas_case.phase ~ '-source',
+           'launch': native_async_runas_source_launch,
+           'pin': native_async_runas_source_pin,
+           'status': native_async_runas_source_status}] }}
+  no_log: true
+
+- name: Clean only the owned released cache using the requested account
+  ansible.builtin.async_status:
+    jid: '{{ native_async_runas_source_launch.ansible_job_id }}'
+    mode: cleanup
+  become: true
+  become_method: ansible.builtin.runas
+  become_user: '{{ native_async_runas_case.user }}'
+  vars:
+    ansible_become_password: '{{ native_async_runas_case.password }}'
+    ansible_shell_type: cmd
+    ansible_async_dir: '{{ native_async_runas_workspace.path }}\cache'
+    ansible_remote_tmp: '{{ native_async_runas_workspace.path }}\staging'
+  no_log: true

@@ -1,0 +1,30 @@
+---
+- name: Prepare private local DHCP capture before guest changes
+  hosts: localhost
+  gather_facts: false
+  connection: local
+  vars:
+    ansible_shell_type: sh
+    ansible_python_interpreter: '{{ ansible_playbook_python }}'
+  tasks:
+    - name: Create the private evidence directory
+      ansible.builtin.file:
+        path: '{{ playbook_dir }}/../../tmp/codex/evidence'
+        state: directory
+        mode: '0700'
+
+- name: Select installed older DHCP workflows without changing modern cases
+  hosts: legacy_windows
+  gather_facts: false
+  vars_files:
+    - vars/dhcp_lease.yml
+    - vars/dhcp_lease_classic_fixture.yml
+  tasks:
+    - name: Select classic observation and genuine unavailable DNS controls
+      ansible.builtin.set_fact:
+        dhcp_lease_fixture: '{{ dhcp_lease_classic_program }}'
+        dhcp_compare: false
+        dhcp_use_classic_fixture: true
+
+- name: Exercise public legacy DHCP requests within the maintained cleanup
+  ansible.builtin.import_playbook: win_dhcp_lease.yml

@@ -1,0 +1,21 @@
+---
+powershell_cases:
+  - name: Caller selects SecureString and credential output values
+    params:
+      sensitive_parameters:
+        - { name: Token, value: fixture-secret-token }
+        - name: Credential
+          username: fixture-user
+          password: fixture-secret-password
+      # Preserve the measured script and its statement positions.
+      # yamllint disable rule:line-length
+      script: |
+        param([Security.SecureString]$Token,[Management.Automation.PSCredential]$Credential)
+        $Ansible.Changed=$false
+        $plain=[Net.NetworkCredential]::new('',$Token).Password
+        $Ansible.Result=@{token=$plain;credential=$Credential.GetNetworkCredential().Password;user=$Credential.UserName}
+        Write-Host "prefix $plain suffix"
+      # yamllint enable rule:line-length
+  - name: Public dictionary depth returns the released type diagnostic
+    failed: true
+    params: { script: "1", depth: {} }

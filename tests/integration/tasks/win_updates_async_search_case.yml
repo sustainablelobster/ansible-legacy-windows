@@ -1,0 +1,204 @@
+---
+# SPDX-License-Identifier: GPL-3.0-or-later
+- name: Reset one literal searched or check-mode public pair
+  ansible.builtin.set_fact:
+    updates_async_search_pair:
+      case: '{{ updates_async_search_case }}'
+      workspace: '{{ updates_async_search_workspace.path }}'
+
+- name: Launch a real native WUA search under the accepted async wrapper
+  sustainablelobster.legacy_windows.win_updates:
+    state: '{{ updates_async_search_case.state }}'
+    category_names: ['*']
+    reject_list: ['.*']
+    server_selection: >-
+      {{ updates_async_search_case.server_selection | default('default') }}
+  check_mode: '{{ updates_async_search_case.check }}'
+  async: 300
+  poll: 0
+  vars: &native_cache
+    ansible_remote_tmp: '{{ updates_async_search_workspace.path }}\staging'
+    ansible_async_dir: '{{ updates_async_search_workspace.path }}\cache'
+  register: updates_async_search_native_launch
+  no_log: true
+
+- name: Journal the native watchdog birth if it remains observable
+  sustainablelobster.legacy_windows.win_command:
+    argv: ['{{ ansible_python_interpreter }}', '-',
+           '{{ updates_async_search_workspace.path }}', record,
+           '{{ updates_async_search_native_launch | to_json | b64encode }}']
+    stdin: '{{ native_async_program }}'
+  register: updates_async_search_native_identity
+  changed_when: false
+  no_log: true
+
+- name: Disconnect the launching connection before native status polling
+  ansible.builtin.meta: reset_connection
+
+- name: Poll the complete native real searched or check-mode result
+  sustainablelobster.legacy_windows.async_status:
+    jid: '{{ updates_async_search_native_launch.ansible_job_id }}'
+  vars: *native_cache
+  register: updates_async_search_native_status
+  ignore_errors: >-
+    {{ updates_async_search_case.expected_failure | default(false) }}
+  until: updates_async_search_native_status.finished
+  retries: 29
+  delay: 5
+  no_log: true
+
+- name: Preserve the complete native phase before the released operation
+  ansible.builtin.set_fact:
+    updates_async_search_pair: >-
+      {{ updates_async_search_pair | combine({
+        'native_launch': updates_async_search_native_launch,
+        'native_identity': updates_async_search_native_identity,
+        'native_status': updates_async_search_native_status}) }}
+  no_log: true
+
+- name: Launch the same real searched or check-mode released WUA request
+  ansible.windows.win_updates:
+    state: '{{ updates_async_search_case.state }}'
+    category_names: ['*']
+    reject_list: ['.*']
+    server_selection: >-
+      {{ updates_async_search_case.server_selection | default('default') }}
+  check_mode: '{{ updates_async_search_case.check }}'
+  async: 300
+  poll: 0
+  vars: &source_cache
+    ansible_remote_tmp: '{{ updates_async_search_workspace.path }}\staging'
+    ansible_async_dir: '{{ updates_async_search_workspace.path }}\cache'
+    ansible_shell_type: cmd
+  register: updates_async_search_source_launch
+  no_log: true
+
+- name: Journal the released watchdog birth if it remains observable
+  sustainablelobster.legacy_windows.win_command:
+    argv: ['{{ ansible_python_interpreter }}', '-',
+           '{{ updates_async_search_workspace.path }}', record,
+           '{{ updates_async_search_source_launch | to_json | b64encode }}']
+    stdin: '{{ native_async_program }}'
+  register: updates_async_search_source_identity
+  changed_when: false
+  no_log: true
+
+- name: Disconnect the released launching connection before status polling
+  ansible.builtin.meta: reset_connection
+
+- name: Poll through core's action and the unchanged released Status payload
+  ansible.builtin.async_status:
+    jid: '{{ updates_async_search_source_launch.ansible_job_id }}'
+  vars: *source_cache
+  register: updates_async_search_source_status
+  ignore_errors: >-
+    {{ updates_async_search_case.expected_failure | default(false) }}
+  until: updates_async_search_source_status.finished
+  retries: 29
+  delay: 5
+  no_log: true
+
+- name: Retain complete cache bytes and protected observations before erasure
+  sustainablelobster.legacy_windows.win_command:
+    argv: ['{{ ansible_python_interpreter }}', '-',
+           '{{ updates_async_search_workspace.path }}', observe]
+    stdin: '{{ native_async_program }}'
+  register: updates_async_search_observed
+  changed_when: false
+  no_log: true
+
+- name: Retain the complete released phase and both cache bodies
+  ansible.builtin.set_fact:
+    updates_async_search_pair: >-
+      {{ updates_async_search_pair | combine({
+        'original_launch': updates_async_search_source_launch,
+        'original_identity': updates_async_search_source_identity,
+        'original_status': updates_async_search_source_status,
+        'observation': updates_async_search_observed}) }}
+  no_log: true
+
+- name: Retain complete pairs before bounded controller comparison
+  ansible.builtin.set_fact:
+    updates_async_search_records: >-
+      {{ updates_async_search_records + [updates_async_search_pair] }}
+  no_log: true
+
+- name: Persist complete public fields before removing either owned cache
+  ansible.builtin.copy:
+    content: >-
+      {{ {'results': updates_async_search_records,
+          'workspace': updates_async_search_workspace} | to_nice_json }}
+    dest: '{{ updates_async_search_capture_path }}'
+    mode: '0600'
+  delegate_to: localhost
+  vars: &local
+    ansible_connection: local
+    ansible_shell_type: sh
+    ansible_python_interpreter: '{{ ansible_playbook_python }}'
+  changed_when: false
+  no_log: true
+
+- name: Compare complete retained public results without Windows argv limits
+  ansible.builtin.command:
+    argv:
+      - '{{ ansible_playbook_python }}'
+      - '{{ playbook_dir }}/../../scripts/verify_win_updates_async_capture.py'
+      - '{{ updates_async_search_capture_path }}'
+      - --last
+  delegate_to: localhost
+  vars: *local
+  register: updates_async_search_comparison
+  changed_when: false
+  failed_when: false
+  no_log: true
+
+- name: Keep the literal comparison result alongside its unmodified pair
+  ansible.builtin.set_fact:
+    updates_async_search_records: >-
+      {{ updates_async_search_records[:-1] +
+        [updates_async_search_records[-1] |
+        combine({'comparison': updates_async_search_comparison})] }}
+  no_log: true
+
+- name: Erase exactly the completed native job through public cleanup
+  sustainablelobster.legacy_windows.async_status:
+    jid: '{{ updates_async_search_native_launch.ansible_job_id }}'
+    mode: cleanup
+  vars: *native_cache
+
+- name: Erase exactly the completed released job through public cleanup
+  ansible.builtin.async_status:
+    jid: '{{ updates_async_search_source_launch.ansible_job_id }}'
+    mode: cleanup
+  vars: *source_cache
+
+- name: Require actual searched catalog rows and no selected servicing writes
+  when: not updates_async_search_case.expected_failure | default(false)
+  ansible.builtin.assert:
+    that:
+      - updates_async_search_native_status.finished
+      - updates_async_search_source_status.finished
+      - updates_async_search_native_status.found_update_count == 0
+      - updates_async_search_native_status.failed_update_count == 0
+      - updates_async_search_native_status.installed_update_count == 0
+      - updates_async_search_native_status.updates == {}
+      - updates_async_search_native_status.filtered_updates | length > 0
+      - not updates_async_search_native_status.changed
+      - not updates_async_search_native_status.rebooted
+  no_log: true
+
+- name: Require the exact expected managed-source public failure
+  when: updates_async_search_case.expected_failure | default(false)
+  ansible.builtin.assert:
+    that:
+      - updates_async_search_native_status.finished
+      - updates_async_search_source_status.finished
+      - updates_async_search_native_status.failed
+      - updates_async_search_source_status.failed
+      - updates_async_search_native_status.hresult < 0
+      - updates_async_search_source_status.hresult < 0
+      - updates_async_search_native_status.updates == {}
+      - updates_async_search_native_status.filtered_updates == {}
+      - not updates_async_search_native_status.changed
+      - not updates_async_search_native_status.rebooted
+  no_log: true

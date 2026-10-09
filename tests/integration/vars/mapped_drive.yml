@@ -1,0 +1,121 @@
+---
+mapped_drive_cases:
+  - name: Missing required letter
+    params: {state: absent}
+    changed: false
+    error: 'missing required arguments: letter'
+  - name: Missing required target
+    params: {letter: '{{ mapped_drive_initial.letter }}'}
+    changed: false
+    error: 'state is present but all of the following are missing: path'
+  - name: Invalid drive letter
+    params: {letter: invalid, state: absent}
+    changed: false
+    error: 'letter must be a single letter from A-Z, was: invalid'
+  - name: Physical drive collision in check mode
+    params: {letter: C, path: '{{ mapped_drive_initial.primary }}'}
+    check: true
+    initialized: true
+    changed: false
+    error: >-
+      failed to create mapped drive C, this letter is in use and is pointing
+      to a non UNC path
+  - name: Absent mapping is unchanged
+    params: {letter: '{{ mapped_drive_initial.letter }}', state: absent}
+    changed: false
+    expected: null
+  - name: Predict a new mapping without authenticating
+    params:
+      letter: '{{ mapped_drive_initial.letter }}'
+      path: '{{ mapped_drive_initial.primary }}'
+      username: fixture-only-account
+      password: fixture-only-not-a-real-password
+    check: true
+    changed: true
+    expected: '{{ mapped_drive_initial.primary }}'
+  - name: Create the persistent mapping
+    params:
+      letter: '{{ mapped_drive_initial.letter }}'
+      path: '{{ mapped_drive_initial.primary }}'
+    changed: true
+    expected: '{{ mapped_drive_initial.primary }}'
+  - name: Repeat the mapping
+    params:
+      letter: '{{ mapped_drive_initial.letter }}'
+      path: '{{ mapped_drive_initial.primary }}'
+    changed: false
+    expected: '{{ mapped_drive_initial.primary }}'
+  - name: Letter and target comparisons are case insensitive
+    params:
+      letter: '{{ mapped_drive_initial.letter | lower }}'
+      path: '{{ mapped_drive_initial.primary | upper }}'
+    changed: false
+    expected: '{{ mapped_drive_initial.primary }}'
+  - name: Changed credentials do not reconnect an existing target
+    params:
+      letter: '{{ mapped_drive_initial.letter }}'
+      path: '{{ mapped_drive_initial.primary }}'
+      username: fixture-only-account
+      password: fixture-only-not-a-real-password
+    changed: false
+    expected: '{{ mapped_drive_initial.primary }}'
+  - name: Predict a changed target
+    params:
+      letter: '{{ mapped_drive_initial.letter }}'
+      path: '{{ mapped_drive_initial.alternative }}'
+    check: true
+    changed: true
+    expected: '{{ mapped_drive_initial.alternative }}'
+  - name: Change the persistent target
+    params:
+      letter: '{{ mapped_drive_initial.letter }}'
+      path: '{{ mapped_drive_initial.alternative }}'
+    changed: true
+    expected: '{{ mapped_drive_initial.alternative }}'
+  - name: Reject removal of a different target
+    params:
+      letter: '{{ mapped_drive_initial.letter }}'
+      path: '{{ mapped_drive_initial.primary }}'
+      state: absent
+    changed: false
+    initialized: true
+    error: >-
+      did not delete mapped drive {{ mapped_drive_initial.letter }}, the target
+      path is pointing to a different location at
+      {{ mapped_drive_initial.alternative }}
+  - name: Predict removal of the matching target
+    params:
+      letter: '{{ mapped_drive_initial.letter }}'
+      path: '{{ mapped_drive_initial.alternative }}'
+      state: absent
+    check: true
+    changed: true
+    expected: null
+  - name: Remove the matching target
+    params:
+      letter: '{{ mapped_drive_initial.letter }}'
+      path: '{{ mapped_drive_initial.alternative }}'
+      state: absent
+    changed: true
+    expected: null
+  - name: Repeat removal
+    params:
+      letter: '{{ mapped_drive_initial.letter }}'
+      path: '{{ mapped_drive_initial.alternative }}'
+      state: absent
+    changed: false
+    expected: null
+  - name: Recreate after removal
+    params:
+      letter: '{{ mapped_drive_initial.letter }}'
+      path: '{{ mapped_drive_initial.primary }}'
+    changed: true
+    expected: '{{ mapped_drive_initial.primary }}'
+  - name: Remove without requiring a target
+    params: {letter: '{{ mapped_drive_initial.letter }}', state: absent}
+    changed: true
+    expected: null
+  - name: Repeat targetless removal
+    params: {letter: '{{ mapped_drive_initial.letter }}', state: absent}
+    changed: false
+    expected: null

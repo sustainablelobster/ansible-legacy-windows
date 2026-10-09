@@ -1,0 +1,109 @@
+---
+- name: Verify explicit PowerShell engine absence without provider writes
+  hosts: legacy_windows
+  gather_facts: false
+  vars_files:
+    - vars/win_powershell_unavailable.yml
+  tasks:
+    - name: Require actual Python and observe original staging
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import glob,json,os,sys,tempfile;
+        assert sys.version_info[:3] == (3,4,4);
+        assert not glob.glob(os.path.join(
+        tempfile.gettempdir(),'legacy-windows-powershell-*'));
+        print(json.dumps(sorted(glob.glob(os.path.join(
+        tempfile.gettempdir(),'ansible-tmp-*')))))""
+      register: powershell_absence_staging_before
+      changed_when: false
+
+    - name: Allocate private controller evidence
+      ansible.builtin.tempfile:
+        path: '{{ playbook_dir }}/../../tmp'
+        prefix: 'win-powershell-absence-{{ inventory_hostname }}-'
+        suffix: .json
+        state: file
+      register: powershell_absence_capture
+      delegate_to: localhost
+      vars: &local
+        ansible_connection: local
+        ansible_shell_type: sh
+        ansible_python_interpreter: '{{ ansible_playbook_python }}'
+
+    - name: Require engine absence and record protected configuration
+      sustainablelobster.legacy_windows.win_command:
+        argv: ['{{ ansible_python_interpreter }}', '-']
+        stdin: '{{ powershell_absence_program }}'
+      register: powershell_absence_before
+      changed_when: false
+      no_log: true
+
+    - name: Exercise normal and preview prerequisite failures
+      block:
+        - name: Request the public script interface without an engine
+          sustainablelobster.legacy_windows.win_powershell:
+            script: "throw 'the unavailable engine must not execute this'"
+          check_mode: '{{ item }}'
+          loop: '{{ powershell_absence_modes }}'
+          register: powershell_absence_results
+          ignore_errors: true
+      always:
+        - name: Observe exact protected configuration after both failures
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}', '-']
+            stdin: '{{ powershell_absence_program }}'
+          register: powershell_absence_after
+          changed_when: false
+          no_log: true
+
+        - name: Observe final global staging and compiler scratch absence
+          ansible.builtin.raw: >-
+            cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+            "import glob,json,os,tempfile;
+            assert not glob.glob(os.path.join(
+            tempfile.gettempdir(),'legacy-windows-powershell-*'));
+            print(json.dumps(sorted(glob.glob(os.path.join(
+            tempfile.gettempdir(),'ansible-tmp-*')))))""
+          register: powershell_absence_staging_after
+          changed_when: false
+
+        - name: Retain every raw failure and protected-state observation
+          ansible.builtin.copy:
+            content: >-
+              {{ {'before': powershell_absence_before,
+                  'after': powershell_absence_after,
+                  'results': powershell_absence_results,
+                  'staging_before': powershell_absence_staging_before,
+                  'staging_after': powershell_absence_staging_after} |
+                 to_nice_json }}
+            dest: '{{ powershell_absence_capture.path }}'
+            mode: '0600'
+          delegate_to: localhost
+          vars: *local
+          changed_when: false
+          no_log: true
+
+        - name: Require configuration staging and scratch nonmutation
+          ansible.builtin.assert:
+            that:
+              - powershell_absence_before.rc == 0
+              - powershell_absence_after.rc == 0
+              - powershell_absence_before.stdout ==
+                powershell_absence_after.stdout
+              - powershell_absence_staging_before.stdout ==
+                powershell_absence_staging_after.stdout
+
+    - name: Require literal early failures without script result fields
+      ansible.builtin.assert:
+        that:
+          - item is failed
+          - not item.changed
+          - >-
+            item.msg == 'win_powershell requires an installed PowerShell
+            5.1 or newer engine; it is not available on this host'
+          - item.output is not defined
+          - item.result is not defined
+          - item.information is not defined
+      loop: '{{ powershell_absence_results.results }}'
+      loop_control:
+        label: '{{ item.item }}'

@@ -1,0 +1,190 @@
+---
+dsc3_compare: false
+dsc3_case_start: 0
+dsc3_archive: >-
+  {{ playbook_dir + '/../../tmp/codex/artifacts/' +
+     'DSC-3.1.2-x86_64-pc-windows-msvc.zip' }}
+dsc3_echo:
+  resources:
+    - name: nested echo
+      type: Microsoft.DSC.Debug/Echo
+      properties:
+        output:
+          string: "quotes \" backslash \\ λ < > & %PATH% !text!"
+          array: [null, true, false, 3, 2.5, "text"]
+          dictionary: {empty: {}, items: []}
+dsc3_registry:
+  resources:
+    - name: owned registry value
+      type: Microsoft.Windows/Registry
+      properties:
+        keyPath: "{{ dsc3_key_path }}"
+        valueName: message
+        valueData:
+          String: desired λ
+dsc3_cases:
+  - name: nested echo set and identity diff
+    params: {config: "{{ dsc3_echo }}"}
+    changed: false
+  - name: nested echo check mode
+    params: {config: "{{ dsc3_echo }}"}
+    check: true
+    changed: false
+  - name: explicit null schema defaults
+    params: {config: "{{ dsc3_echo | combine({'$schema': none}) }}"}
+    changed: false
+  - name: explicit bundled schema
+    params:
+      config: >-
+        {{ dsc3_echo | combine({'$schema':
+           'https://aka.ms/dsc/schemas/v3/bundled/config/document.json'}) }}
+    changed: false
+  - name: parameter substitution
+    params:
+      config:
+        parameters:
+          message: {type: string}
+        resources:
+          - name: parameter echo
+            type: Microsoft.DSC.Debug/Echo
+            properties: {output: "[parameters('message')]"}
+      parameters: {message: "parameter λ \" \\ value"}
+    changed: false
+  - name: empty parameter object
+    params: {config: "{{ dsc3_echo }}", parameters: {}}
+    changed: false
+    error: Input YAML or JSON is invalid (ExitCode=4)
+    rc: 4
+  - name: two ordered resources
+    params:
+      config:
+        resources:
+          - name: first
+            type: Microsoft.DSC.Debug/Echo
+            properties: {output: one}
+          - name: second
+            type: Microsoft.DSC.Debug/Echo
+            properties: {output: two}
+    changed: false
+  - name: registry creation preview
+    params: {config: "{{ dsc3_registry }}"}
+    check: true
+    changed: true
+  - name: registry creation
+    params: {config: "{{ dsc3_registry }}"}
+    changed: true
+    expected_value: desired λ
+  - name: registry idempotence
+    params: {config: "{{ dsc3_registry }}"}
+    seed: desired λ
+    changed: false
+    expected_value: desired λ
+  - name: registry idempotence preview
+    params: {config: "{{ dsc3_registry }}"}
+    seed: desired λ
+    check: true
+    changed: false
+  - name: registry update preview
+    params: {config: "{{ dsc3_registry }}"}
+    seed: protected predecessor
+    check: true
+    changed: true
+  - name: registry update
+    params: {config: "{{ dsc3_registry }}"}
+    seed: protected predecessor
+    changed: true
+    expected_value: desired λ
+  - name: registry key removal preview
+    params:
+      config:
+        resources:
+          - name: remove owned key
+            type: Microsoft.Windows/Registry
+            properties: {keyPath: "{{ dsc3_key_path }}", _exist: false}
+    seed: protected predecessor
+    check: true
+    changed: true
+  - name: registry key removal
+    params:
+      config:
+        resources:
+          - name: remove owned key
+            type: Microsoft.Windows/Registry
+            properties: {keyPath: "{{ dsc3_key_path }}", _exist: false}
+    seed: protected predecessor
+    changed: true
+    expected_absent: true
+  - name: remote configuration file
+    params:
+      config_file: "{{ dsc3_workspace.path }}\\echo.dsc.json"
+      remote_config_file: true
+    changed: false
+  - name: controller configuration file with upstream default
+    params:
+      config_file: "{{ playbook_dir }}/files/dsc3_echo.dsc.json"
+    changed: false
+  - name: controller configuration file explicitly selected
+    params:
+      config_file: "{{ playbook_dir }}/files/dsc3_echo.dsc.json"
+      remote_config_file: false
+    changed: false
+  - name: unknown resource
+    params:
+      config:
+        resources:
+          - name: unknown
+            type: LegacyWindows.Missing/Unknown
+            properties: {}
+    changed: false
+    error: Resource error (ExitCode=2)
+    rc: 2
+  - name: invalid remote YAML
+    params:
+      config_file: "{{ dsc3_workspace.path }}\\invalid.dsc.yaml"
+      remote_config_file: true
+    changed: false
+    error: Input YAML or JSON is invalid (ExitCode=4)
+    rc: 4
+  - name: invalid configuration schema
+    params: {config: {resources: invalid}}
+    changed: false
+    error: Resource error (ExitCode=2)
+    rc: 2
+  - name: missing external DSC engine
+    params: {config: {resources: []}}
+    engine: false
+    no_child: true
+    changed: false
+    error: >-
+      Unhandled exception while executing module: Exception calling
+      "CreateProcess" with "7" argument(s): "CreateProcessW() failed
+      (The system cannot find the file specified,
+      Win32ErrorCode 2 - 0x00000002)"
+  - name: uppercase trace choice is passed unchanged to the engine
+    params: {config: "{{ dsc3_echo }}", trace_level: WARN}
+    changed: false
+    error: Resource error (ExitCode=2)
+    rc: 2
+  - name: mixed-case trace choice is passed unchanged to the engine
+    params: {config: "{{ dsc3_echo }}", trace_level: Info}
+    changed: false
+    error: Resource error (ExitCode=2)
+    rc: 2
+  - name: explicit null trace choice is passed as an empty engine value
+    params: {config: "{{ dsc3_echo }}", trace_level: null}
+    changed: false
+    error: Resource error (ExitCode=2)
+    rc: 2
+  - name: invalid trace choice fails before engine execution
+    params: {config: "{{ dsc3_echo }}", trace_level: invalid}
+    changed: false
+    no_child: true
+    error: >-
+      value of trace_level must be one of: error, warn, info, debug, trace.
+      Got no match for: invalid
+  - name: empty trace choice fails before engine execution
+    params: {config: "{{ dsc3_echo }}", trace_level: ""}
+    changed: false
+    no_child: true
+    error: "value of trace_level must be one of: error, warn, info, debug,
+            trace. Got no match for: "

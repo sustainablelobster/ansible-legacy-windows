@@ -1,0 +1,130 @@
+---
+- name: Verify timezone changes and exact original native restoration
+  hosts: legacy_windows
+  gather_facts: false
+  vars_files:
+    - vars/timezone.yml
+    - vars/timezone_fixture.yml
+  vars:
+    timezone_helper_names:
+      - legacy_windows_account
+      - legacy_windows_group
+      - legacy_windows_owner
+      - legacy_windows_time
+      - legacy_windows_environment
+      - legacy_windows_timezone
+  tasks:
+    - name: Read the maintained sources for fixture setup and restoration
+      ansible.builtin.set_fact:
+        timezone_helper_sources: >-
+          {{ timezone_helper_sources | default({}) |
+             combine({item: lookup('ansible.builtin.file', playbook_dir ~
+             '/../../plugins/module_utils/' ~ item ~ '.py')}) }}
+      loop: '{{ timezone_helper_names }}'
+      when: item not in (timezone_helper_sources | default({}))
+
+    - name: Require Python 3.4.4 and record existing task directories
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import glob, json, os, sys, tempfile;
+        assert sys.version_info[:3] == (3, 4, 4);
+        print(json.dumps(sorted(glob.glob(os.path.join(tempfile.gettempdir(),
+        'ansible-tmp-*')))))""
+      register: task_directories_before
+      changed_when: false
+
+    - name: Exercise timezones with a native recovery journal
+      block:
+        - name: Allocate the recovery workspace
+          sustainablelobster.legacy_windows.win_tempfile:  # noqa: args[module]
+            state: directory
+            prefix: legacy-windows-timezone-
+          register: timezone_workspace
+          check_mode: false
+
+        - name: Back up native state before setting the controlled baseline
+          sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - '-'
+              - '{{ timezone_workspace.path }}'
+              - setup
+              - '{{ timezone_baseline }}'
+            stdin: '{{ timezone_fixture }}'
+          register: timezone_setup
+          changed_when: true
+          check_mode: false
+
+        - name: Verify the controlled baseline has effective daylight saving
+          ansible.builtin.assert:
+            that:
+              - >-
+                (timezone_setup.stdout | from_json).offsets ==
+                timezone_baseline_offsets
+              - >-
+                (timezone_setup.stdout | from_json).dynamic is none or
+                not (timezone_setup.stdout |
+                     from_json).dynamic.daylight_disabled
+
+        - name: Retain the initial independent native observation
+          ansible.builtin.set_fact:
+            timezone_initial: '{{ timezone_setup.stdout | from_json }}'
+            timezone_previous_snapshot: >-
+              {{ timezone_setup.stdout | from_json }}
+            timezone_previous: '{{ timezone_baseline }}'
+            timezone_offsets: '{{ timezone_baseline_offsets }}'
+            timezone_daylight_disabled: false
+
+        - name: Exercise timezone changes check mode DST failure and recovery
+          ansible.builtin.include_tasks: tasks/win_timezone_case.yml
+          loop: '{{ range(timezone_cases | length) | list }}'
+          loop_control:
+            loop_var: timezone_case_index
+          vars:
+            timezone_case: '{{ timezone_cases[timezone_case_index] }}'
+      always:
+        - name: Restore native state before removing recovery data
+          when: timezone_workspace.path is defined
+          block:
+            - name: Restore and verify native timezone  # noqa: args[module]
+              sustainablelobster.legacy_windows.win_command:
+                argv:
+                  - '{{ ansible_python_interpreter }}'
+                  - '-'
+                  - '{{ timezone_workspace.path }}'
+                  - cleanup
+                stdin: '{{ timezone_fixture }}'
+              register: timezone_restoration
+              changed_when: true
+              check_mode: false
+
+            - name: Require verified restoration before discarding the journal
+              ansible.builtin.assert:
+                that:
+                  - (timezone_restoration.stdout | from_json).restored
+
+            - name: Remove only the verified recovery workspace
+              sustainablelobster.legacy_windows.win_file:  # noqa: args[module]
+                path: '{{ timezone_workspace.path }}'
+                state: absent
+              check_mode: false
+
+        - name: Verify recovery-workspace and staging cleanup
+          ansible.builtin.raw: >-
+            cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+            "import glob, json, os, sys, tempfile;
+            assert not os.path.exists(sys.argv[1]);
+            print(json.dumps(sorted(glob.glob(os.path.join(tempfile.gettempdir(),
+            'ansible-tmp-*')))))" "{{ timezone_workspace.path }}""
+          when: timezone_workspace.path is defined
+          register: task_directories_after
+          changed_when: false
+          check_mode: false
+
+        - name: Require task-directory cleanup
+          ansible.builtin.assert:
+            that:
+              - >-
+                (task_directories_before.stdout | from_json) ==
+                (task_directories_after.stdout | from_json)
+          when: timezone_workspace.path is defined

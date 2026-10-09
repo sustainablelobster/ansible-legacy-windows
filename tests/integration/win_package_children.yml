@@ -1,0 +1,210 @@
+---
+- name: Verify real package child trees and exact owned cleanup
+  hosts: legacy_windows
+  gather_facts: false
+  vars_files:
+    - vars/package_registry_fixture.yml
+    - vars/package_children_fixture.yml
+    - vars/package_children.yml
+  tasks:
+    - name: Require actual Python3.4.4 and record original staging
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import glob,json,os,sys,tempfile;assert sys.version_info[:3]==(3,4,4);
+        print(json.dumps(sorted(glob.glob(os.path.join(tempfile.gettempdir(),'ansible-tmp-*')))))""
+      register: package_children_staging_before
+      changed_when: false
+
+    - name: Allocate private controller capture
+      ansible.builtin.tempfile:
+        state: file
+        path: '{{ playbook_dir }}/../../tmp'
+        prefix: 'package-children-{{ inventory_hostname }}-'
+        suffix: .json
+      register: package_children_capture
+      delegate_to: localhost
+      vars: &controller
+        ansible_connection: local
+        ansible_shell_type: sh
+        ansible_python_interpreter: '{{ ansible_playbook_python }}'
+      changed_when: false
+
+    - name: Initialize complete process observations
+      ansible.builtin.set_fact:
+        package_children_results: []
+        package_children_reference_args: []
+
+    - name: Retain each exact source reference path as one CLI argument
+      ansible.builtin.set_fact:
+        package_children_reference_args: >-
+          {{ package_children_reference_args + ['--reference', item] }}
+      loop: '{{ package_children_source_captures | default([]) }}'
+
+    - name: Exercise the guarded disposable registry installer
+      block:
+        - name: Allocate exact owned fixture workspace  # noqa: args[module]
+          sustainablelobster.legacy_windows.win_tempfile:
+            state: directory
+            prefix: legacy-windows-package-registry-test-children-
+          register: package_children_workspace
+
+        - name: Journal original catalogue registry services and runtime
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}', '-',
+                   '{{ package_children_workspace.path }}', journal]
+            stdin: '{{ package_children_program }}'
+          register: package_children_journal
+          changed_when: false
+          no_log: true
+
+        - name: Stage guarded registry program  # noqa: args[module]
+          sustainablelobster.legacy_windows.win_copy:
+            content: '{{ package_registry_installer_source }}'
+            dest: '{{ package_children_workspace.path }}\registry_installer.py'
+
+        - name: Stage owned process tree program  # noqa: args[module]
+          sustainablelobster.legacy_windows.win_copy:
+            src: '{{ playbook_dir }}/fixtures/package_children_installer.py'
+            dest: '{{ package_children_workspace.path }}\tree_installer.py'
+
+        - name: Transfer identical measured x86 executable and DLL bytes
+          sustainablelobster.legacy_windows.win_copy:
+            src: '{{ package_children_controller_x86 }}/{{ item }}'
+            dest: '{{ package_children_workspace.path }}\{{ item }}'
+          loop: ['registry installer.exe', python34.dll, MSVCR100.dll]
+
+        - name: Validate exact executable provenance before any launch
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}', '-',
+                   '{{ package_children_workspace.path }}', setup, x86]
+            stdin: '{{ package_children_program }}'
+          register: package_children_setup
+          changed_when: false
+          no_log: true
+
+        - name: Exercise maintained whole public scenarios
+          ansible.builtin.include_tasks: tasks/win_package_children_case.yml
+          loop: '{{ package_children_selected_cases }}'
+          loop_control:
+            loop_var: package_children_case
+            label: '{{ package_children_case.name }}'
+      always:
+        - name: Preserve every raw result before recovery
+          ansible.builtin.copy:
+            content: >-
+              {{ {'results': package_children_results,
+              'journal': package_children_journal | default(none),
+              'setup': package_children_setup | default(none),
+              'latest_before': package_children_before | default(none),
+              'latest_native': package_children_native | default(none),
+              'latest_after_native':
+              package_children_after_native | default(none),
+              'latest_before_original':
+              package_children_before_original | default(none),
+              'latest_original': package_children_original | default(none),
+              'latest_after_original':
+              package_children_after_original | default(none)} |
+              to_nice_json }}
+            dest: '{{ package_children_capture.path }}'
+            mode: '0600'
+          delegate_to: localhost
+          vars: *controller
+          changed_when: false
+          no_log: true
+
+        - name: Settle exact owned processes and restore guarded registry state
+          when: package_children_workspace.path is defined
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}', '-',
+                   '{{ package_children_workspace.path }}', cleanup]
+            stdin: '{{ package_children_program }}'
+          register: package_children_recovery
+          changed_when: false
+          no_log: true
+
+        - name: Require strict restoration before deleting resources
+          ansible.builtin.assert:
+            that:
+              - (package_children_recovery.stdout | from_json).restored
+              - >-
+                (package_children_recovery.stdout | from_json).
+                process_tree_absent
+              - >-
+                (package_children_recovery.stdout | from_json).
+                receipt_files_absent
+
+        - name: Independently re-observe restoration before journal removal
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}', '-',
+                   '{{ package_children_workspace.path }}', finalize]
+            stdin: '{{ package_children_program }}'
+          changed_when: false
+          no_log: true
+
+        - name: Remove verified owned workspace  # noqa: args[module]
+          sustainablelobster.legacy_windows.win_file:
+            path: '{{ package_children_workspace.path }}'
+            state: absent
+
+        - name: Independently observe exact workspace absence and global staging
+          ansible.builtin.raw: >-
+            cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+            "import glob,json,os,sys,tempfile;
+            assert not os.path.exists(sys.argv[1]);
+            print(json.dumps(sorted(glob.glob(os.path.join(tempfile.gettempdir(),'ansible-tmp-*')))))"
+            "{{ package_children_workspace.path }}""
+          register: package_children_staging_after
+          changed_when: false
+
+        - name: Require literal original staging
+          ansible.builtin.assert:
+            that:
+              - (package_children_staging_before.stdout | from_json) ==
+                (package_children_staging_after.stdout | from_json)
+
+        - name: Retain final complete results and recovery
+          ansible.builtin.copy:
+            content: >-
+              {{ {'results': package_children_results,
+              'journal': package_children_journal | default(none),
+              'setup': package_children_setup | default(none),
+              'latest_before': package_children_before | default(none),
+              'latest_native': package_children_native | default(none),
+              'latest_after_native':
+              package_children_after_native | default(none),
+              'latest_before_original':
+              package_children_before_original | default(none),
+              'latest_original': package_children_original | default(none),
+              'latest_after_original':
+              package_children_after_original | default(none),
+              'recovery': package_children_recovery,
+              'workspace_absent': true,
+              'staging_before': package_children_staging_before,
+              'staging_after': package_children_staging_after} | to_nice_json }}
+            dest: '{{ package_children_capture.path }}'
+            mode: '0600'
+          delegate_to: localhost
+          vars: *controller
+          changed_when: false
+          no_log: true
+
+        - name: Verify every whole public result real process tree and recovery
+          ansible.builtin.command:
+            argv: >-
+              {{ [ansible_playbook_python,
+              playbook_dir + '/files/package_children_compare.py',
+              package_children_capture.path,
+              package_compare | bool | ternary('paired', 'native')] +
+              package_children_reference_args }}
+          delegate_to: localhost
+          vars: *controller
+          changed_when: false
+
+        - name: Require selected matrix completion
+          ansible.builtin.assert:
+            that:
+              - package_children_results | length ==
+                package_children_selected_cases | length
+
+        - name: Reset only this invocation's standard SSH connection
+          ansible.builtin.meta: reset_connection

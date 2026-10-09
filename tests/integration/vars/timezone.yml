@@ -1,0 +1,90 @@
+---
+timezone_baseline: Pacific Standard Time
+timezone_baseline_offsets: [-480, -420]
+timezone_alternate: India Standard Time
+timezone_alternate_offsets: [330, 330]
+timezone_cases:
+  - name: Keep the controlled timezone unchanged
+    timezone: '{{ timezone_baseline }}'
+    changed: false
+  - name: Predict another installed timezone
+    timezone: '{{ timezone_alternate }}'
+    changed: true
+    check: true
+  - name: Change to another installed timezone
+    timezone: '{{ timezone_alternate }}'
+    changed: true
+    current: '{{ timezone_alternate }}'
+    offsets: '{{ timezone_alternate_offsets }}'
+    daylight_disabled: false
+  - name: Repeat the alternate timezone
+    timezone: '{{ timezone_alternate }}'
+    changed: false
+  - name: Compare the same timezone without case sensitivity
+    timezone: '{{ timezone_alternate | upper }}'
+    changed: false
+  - name: Predict a case-insensitive baseline request
+    timezone: '{{ timezone_baseline | lower }}'
+    changed: true
+    check: true
+  - name: Return to the controlled timezone
+    timezone: '{{ timezone_baseline }}'
+    changed: true
+    current: '{{ timezone_baseline }}'
+    offsets: '{{ timezone_baseline_offsets }}'
+    daylight_disabled: false
+  - name: Predict disabling daylight saving
+    timezone: '{{ timezone_baseline }}_dstoff'
+    changed: true
+    check: true
+  - name: Disable daylight saving
+    timezone: '{{ timezone_baseline }}_dstoff'
+    changed: true
+    current: '{{ timezone_baseline }}_dstoff'
+    offsets: >-
+      {{ [timezone_baseline_offsets[0], timezone_baseline_offsets[0]] }}
+    daylight_disabled: true
+  - name: Repeat disabled daylight saving
+    timezone: '{{ timezone_baseline }}_dstoff'
+    changed: false
+  - name: Compare disabled daylight saving without case sensitivity
+    timezone: '{{ (timezone_baseline ~ "_dstoff") | upper }}'
+    changed: false
+  - name: Re-enable daylight saving
+    timezone: '{{ timezone_baseline }}'
+    changed: true
+    current: '{{ timezone_baseline }}'
+    offsets: '{{ timezone_baseline_offsets }}'
+    daylight_disabled: false
+  - name: Repeat enabled daylight saving
+    timezone: '{{ timezone_baseline }}'
+    changed: false
+  - name: Reject an unsupported timezone in check mode
+    timezone: Legacy Fixture Unsupported Time
+    changed: false
+    check: true
+    error: >-
+      The specified timezone: Legacy Fixture Unsupported Time isn't supported
+      on the machine.
+  - name: Reject an unsupported timezone without writing
+    timezone: Legacy Fixture Unsupported Time
+    changed: false
+    error: >-
+      The specified timezone: Legacy Fixture Unsupported Time isn't supported
+      on the machine.
+  - name: Recover with a supported timezone
+    timezone: '{{ timezone_alternate }}'
+    changed: true
+    current: '{{ timezone_alternate }}'
+    offsets: '{{ timezone_alternate_offsets }}'
+    daylight_disabled: false
+  - name: Predict the recovered timezone without changes
+    timezone: '{{ timezone_alternate }}'
+    changed: false
+    check: true
+  - name: Return to the controlled baseline before cleanup
+    timezone: '{{ timezone_baseline }}'
+    changed: true
+    current: '{{ timezone_baseline }}'
+    offsets: '{{ timezone_baseline_offsets }}'
+    daylight_disabled: false

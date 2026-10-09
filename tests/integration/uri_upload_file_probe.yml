@@ -1,0 +1,85 @@
+---
+# Copyright 2026 Joe Lustri
+# SPDX-License-Identifier: GPL-3.0-or-later
+- name: Observe released file URI uploads before native implementation
+  hosts: legacy_windows
+  gather_facts: false
+  vars:
+    uri_upload_file_cases:
+      - {name: put_existing, method: PUT, body: 'upload 中😀'}
+      - {name: put_new, method: PUT, body: 'upload 中😀', missing: true}
+      - {name: put_empty, method: PUT, body: ''}
+      - {name: post_existing, method: POST, body: 'post 中😀'}
+      - {name: put_check, method: PUT, body: 'check 中😀', check: true}
+      - {name: get_body, method: GET, body: 'rejected 中😀'}
+      - {name: delete_body, method: DELETE, body: 'delete 中😀'}
+      - {name: put_accepted, method: PUT, body: 'accepted 中😀', status: [0]}
+      - {name: put_empty_accepted, method: PUT, body: '', status: [0]}
+      - {name: post_accepted, method: POST, body: 'accepted 中😀', status: [0]}
+      - {name: head_without_body, method: HEAD, status: [0]}
+      - {name: head_body, method: HEAD, body: 'rejected 中😀', status: [0]}
+  tasks:
+    - name: Allocate owner-private discovery capture
+      ansible.builtin.tempfile:
+        state: file
+        path: >-
+          {{ evidence_dir | default(playbook_dir +
+             '/../../tmp/codex/evidence') }}
+        prefix: uri-upload-file-probe-
+        suffix: .json
+      register: uri_upload_file_capture
+      delegate_to: localhost
+      vars: &local
+        ansible_connection: local
+        ansible_shell_type: sh
+        ansible_python_interpreter: '{{ ansible_playbook_python }}'
+        ansible_become: false
+      changed_when: false
+
+    - name: Initialize discovery observations
+      ansible.builtin.set_fact:
+        uri_upload_file_observations: []
+
+    - name: Capture file uploads in an owned target directory
+      block:
+        - name: Allocate target workspace
+          sustainablelobster.legacy_windows.win_tempfile:
+            state: directory
+            prefix: uri-upload-file-probe-
+          register: uri_upload_file_workspace
+
+        - name: Capture independent method and write observations
+          ansible.builtin.include_tasks: tasks/uri_upload_file_probe_case.yml
+          loop: '{{ uri_upload_file_cases }}'
+          loop_control:
+            loop_var: uri_upload_file_case
+            label: '{{ uri_upload_file_case.name }}'
+      always:
+        - name: Preserve all available observations before cleanup
+          ansible.builtin.copy:
+            content: >-
+              {{ {'workspace': uri_upload_file_workspace | default(none),
+                  'observations': uri_upload_file_observations} |
+                 to_nice_json }}
+            dest: '{{ uri_upload_file_capture.path }}'
+            mode: '0600'
+          delegate_to: localhost
+          vars: *local
+          changed_when: false
+          no_log: true
+
+        - name: Remove only the allocated target workspace
+          when: uri_upload_file_workspace.path is defined
+          sustainablelobster.legacy_windows.win_file:
+            path: '{{ uri_upload_file_workspace.path }}'
+            state: absent
+
+        - name: Require target workspace absence
+          when: uri_upload_file_workspace.path is defined
+          sustainablelobster.legacy_windows.win_stat:
+            path: '{{ uri_upload_file_workspace.path }}'
+          register: uri_upload_file_workspace_after
+          failed_when: uri_upload_file_workspace_after.stat.exists
+
+        - name: Close the discovery connection
+          ansible.builtin.meta: reset_connection

@@ -1,0 +1,256 @@
+---
+# Copyright 2026 Joe Lustri
+# SPDX-License-Identifier: GPL-3.0-or-later
+- name: Verify owned package service guards and exact cleanup
+  hosts: legacy_windows
+  gather_facts: false
+  become: false
+  vars:
+    package_guard_compare: false
+    package_guard_denial_only: false
+    package_guard_case_names: []
+    package_guard_program: '{{ package_guard_workspace.path }}\guard_fixture.py'
+    package_guard_staging_command: >-
+      cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+      "import glob,json,os,sys,tempfile;assert sys.version_info[:3]==(3,4,4);
+      print(json.dumps(sorted(glob.glob(os.path.join(
+      tempfile.gettempdir(),'ansible-tmp-*')))))""
+  tasks:
+    - name: Require Python 3.4.4 and record original task staging
+      ansible.builtin.raw: '{{ package_guard_staging_command }}'
+      register: package_guard_staging_before
+      changed_when: false
+
+    - name: Allocate private evidence before target changes
+      ansible.builtin.tempfile:
+        state: file
+        path: >-
+          {{ evidence_dir |
+          default(playbook_dir + '/../../tmp/codex/evidence') }}
+        prefix: 'package-service-guards-{{ inventory_hostname }}-'
+        suffix: .json
+      register: package_guard_capture
+      delegate_to: localhost
+      become: false
+      vars: &controller
+        ansible_connection: local
+        ansible_shell_type: sh
+        ansible_python_interpreter: '{{ ansible_playbook_python }}'
+        ansible_become: false
+      changed_when: false
+
+    - name: Initialize captures before a fixture phase can fail
+      ansible.builtin.set_fact:
+        package_guard_results: []
+        package_guard_comparisons: []
+        package_guard_setup: null
+        package_guard_denied: null
+        package_guard_denied_result: null
+        package_guard_denied_after: null
+        package_guard_recovery: null
+        package_guard_staging_after: null
+
+    - name: Exercise stopped owned services and the harmless installer counter
+      block:
+        - name: Allocate the uniquely owned target workspace
+          sustainablelobster.legacy_windows.win_tempfile:
+            state: directory
+            prefix: legacy-package-service-guard-
+          register: package_guard_workspace
+
+        - name: Stage the Python 3.4 fixture and counter installer
+          sustainablelobster.legacy_windows.win_copy:
+            src: fixtures/package_service_guard.py
+            dest: '{{ package_guard_program }}'
+
+        - name: Journal absent unique names before creating stopped services
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}',
+                   '{{ package_guard_program }}',
+                   '{{ package_guard_workspace.path }}', setup]
+          register: package_guard_setup
+          changed_when: false
+
+        - name: Select literal pattern repeated preview and failure cases
+          ansible.builtin.set_fact:
+            package_guard_setup_data: >-
+              {{ package_guard_setup.stdout | from_json }}
+
+        - name: Define bounded independent guard decisions
+          ansible.builtin.set_fact:
+            package_guard_cases:
+              - {name: literal,
+                 guard: '{{ package_guard_setup_data.names[0] }}',
+                 changed: false}
+              - {name: literal_repeat,
+                 guard: '{{ package_guard_setup_data.names[0] }}',
+                 changed: false}
+              - {name: case_insensitive,
+                 guard: '{{ package_guard_setup_data.names[0] | lower }}',
+                 changed: false}
+              - {name: exact_display,
+                 guard: 'Display {{ package_guard_setup_data.names[0] }}',
+                 changed: false}
+              - {name: star_multiple,
+                 guard: '{{ package_guard_setup_data.prefix }}*',
+                 changed: false}
+              - {name: star_repeat,
+                 guard: '{{ package_guard_setup_data.prefix }}*',
+                 changed: false}
+              - {name: question_multiple,
+                 guard: '{{ package_guard_setup_data.prefix }}?',
+                 changed: false}
+              - {name: bracket_range,
+                 guard: '{{ package_guard_setup_data.prefix }}[A-B]',
+                 changed: false}
+              - {name: escape_only_literal,
+                 guard: '{{ package_guard_setup_data.prefix }}`[L`]',
+                 changed: true}
+              - {name: escaped_brackets_with_active_pattern,
+                 guard: '{{ package_guard_setup_data.prefix }}`[L`]*',
+                 changed: false}
+              - {name: display_pattern_not_a_key,
+                 guard: 'Display {{ package_guard_setup_data.prefix }}*',
+                 changed: true}
+              - {name: absent_literal,
+                 guard: '{{ package_guard_setup_data.prefix }}Missing',
+                 changed: true}
+              - {name: absent_pattern,
+                 guard: '{{ package_guard_setup_data.prefix }}Missing*',
+                 changed: true}
+              - {name: preview_match,
+                 guard: '{{ package_guard_setup_data.prefix }}*',
+                 changed: false, check: true}
+              - {name: preview_absent,
+                 guard: '{{ package_guard_setup_data.prefix }}Missing*',
+                 changed: true, check: true}
+              - {name: service_overrides_absent_path,
+                 guard: '{{ package_guard_setup_data.prefix }}*',
+                 path: '{{ package_guard_workspace.path }}\absent',
+                 changed: false}
+              - {name: service_overrides_existing_path,
+                 guard: '{{ package_guard_setup_data.prefix }}Missing*',
+                 path: '{{ package_guard_program }}', changed: true}
+              - {name: unterminated_bracket,
+                 guard: '{{ package_guard_setup_data.prefix }}[',
+                 changed: false, fail: true}
+              - {name: reversed_range, guard: '[z-a]',
+                 changed: false, fail: true}
+
+        - name: Exercise each public guard and independent counter observation
+          ansible.builtin.include_tasks:
+            file: tasks/win_package_service_guard_case.yml
+          when:
+            - not package_guard_denial_only | bool
+            - >-
+              not package_guard_case_names or
+              package_guard_case.name in package_guard_case_names
+          loop: '{{ package_guard_cases }}'
+          loop_control:
+            loop_var: package_guard_case
+            label: '{{ package_guard_case.name }}'
+
+        - name: Deny status access only on the uniquely owned denied service
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}',
+                   '{{ package_guard_program }}',
+                   '{{ package_guard_workspace.path }}', deny]
+          register: package_guard_denied
+          changed_when: false
+
+        - name: Require actionable denial before any installer execution
+          sustainablelobster.legacy_windows.win_package:
+            provider: registry
+            path: '{{ package_guard_setup_data.installer }}'
+            product_id: '{{ package_guard_setup_data.prefix }}'
+            arguments: ['{{ package_guard_program }}',
+                        '{{ package_guard_workspace.path }}', install]
+            creates_service: '{{ package_guard_setup_data.names[-1] }}'
+          environment:
+            PYTHONHOME: '{{ package_guard_setup_data.python_home }}'
+          register: package_guard_denied_result
+          ignore_errors: true
+
+        - name: Independently observe the denied guard's installer effects
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}',
+                   '{{ package_guard_program }}',
+                   '{{ package_guard_workspace.path }}', observe]
+          register: package_guard_denied_after
+          changed_when: false
+
+        - name: Require explicit access failure and an unchanged counter
+          ansible.builtin.assert:
+            that:
+              - package_guard_denied_result is failed
+              - package_guard_denied_result is not changed
+              - "'[WinError 5]' in package_guard_denied_result.msg"
+              - >-
+                (package_guard_denied_after.stdout | from_json).count ==
+                (package_guard_denied.stdout | from_json).count
+      always:
+        - name: Retain all available public observations before cleanup
+          ansible.builtin.copy: &save_guard_evidence
+            content: >-
+              {{ {'native': package_guard_results,
+                  'original': package_guard_comparisons,
+                  'setup': package_guard_setup,
+                  'denied': package_guard_denied,
+                  'denied_result': package_guard_denied_result,
+                  'denied_after': package_guard_denied_after,
+                  'recovery': package_guard_recovery,
+                  'staging_before': package_guard_staging_before,
+                  'staging_after': package_guard_staging_after} |
+                  to_nice_json }}
+            dest: '{{ package_guard_capture.path }}'
+            mode: '0600'
+          delegate_to: localhost
+          become: false
+          vars: *controller
+          changed_when: false
+
+        - name: Restore the owned service DACL and remove only owned services
+          when: package_guard_workspace.path is defined
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}',
+                   '{{ package_guard_program }}',
+                   '{{ package_guard_workspace.path }}', cleanup]
+          register: package_guard_recovery
+          changed_when: false
+
+        - name: Require absent owned services before deleting the workspace
+          ansible.builtin.assert:
+            that: (package_guard_recovery.stdout | from_json).restored
+
+        - name: Remove the recovered owned workspace
+          sustainablelobster.legacy_windows.win_file:
+            path: '{{ package_guard_workspace.path }}'
+            state: absent
+
+        - name: Independently require workspace absence and record final staging
+          ansible.builtin.raw: >-
+            cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+            "import glob,json,os,sys,tempfile;
+            assert not os.path.exists(sys.argv[1]);
+            print(json.dumps(sorted(glob.glob(os.path.join(
+            tempfile.gettempdir(),'ansible-tmp-*')))))"
+            "{{ package_guard_workspace.path }}""
+          register: package_guard_staging_after
+          changed_when: false
+
+        - name: Retain final cleanup and staging observations
+          ansible.builtin.copy: *save_guard_evidence
+          delegate_to: localhost
+          become: false
+          vars: *controller
+          changed_when: false
+
+        - name: Require the exact original task staging
+          ansible.builtin.assert:
+            that:
+              - >-
+                (package_guard_staging_after.stdout | from_json) ==
+                (package_guard_staging_before.stdout | from_json)
+
+        - name: Close the fixture connection after cleanup
+          ansible.builtin.meta: reset_connection

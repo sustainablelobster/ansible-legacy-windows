@@ -1,0 +1,139 @@
+---
+- name: Observe independently bounded DSC state before each async request
+  sustainablelobster.legacy_windows.win_command:
+    argv: ['{{ ansible_python_interpreter }}', '-',
+           '{{ dsc3_workspace.path }}', observe]
+    stdin: '{{ dsc3_fixture }}'
+  register: dsc3_async_before
+  changed_when: false
+  no_log: true
+
+- name: Launch native inline or remote DSC through the standard native watchdog
+  sustainablelobster.legacy_windows.dsc3:
+    config: '{{ dsc3_async_case.params.config | default(omit) }}'
+    config_file: '{{ dsc3_async_case.params.config_file | default(omit) }}'
+    remote_config_file: >-
+      {{ dsc3_async_case.params.remote_config_file | default(omit) }}
+  async: 30
+  poll: 0
+  diff: true
+  environment: &engine_env
+    PATH: '{{ dsc3_engine }};{{ dsc3_path_env }}'
+    DSC_RESOURCE_PATH: '{{ dsc3_engine }}'
+  vars: &async_vars
+    ansible_remote_tmp: '{{ dsc3_workspace.path }}\staging'
+    ansible_async_dir: '{{ dsc3_workspace.path }}\cache'
+  register: dsc3_async_native_launch
+  ignore_errors: true
+  no_log: true
+  when: dsc3_async_phase == 'native'
+
+- name: Launch untouched released DSC through its original watchdog
+  ansible.windows.dsc3:
+    config: '{{ dsc3_async_case.params.config | default(omit) }}'
+    config_file: '{{ dsc3_async_case.params.config_file | default(omit) }}'
+    remote_config_file: >-
+      {{ dsc3_async_case.params.remote_config_file | default(omit) }}
+  async: 30
+  poll: 0
+  diff: true
+  environment: *engine_env
+  vars: *async_vars
+  register: dsc3_async_original_launch
+  ignore_errors: true
+  no_log: true
+  when: dsc3_async_phase == 'original'
+
+- name: Select the complete executed launch result
+  ansible.builtin.set_fact:
+    dsc3_async_launch: >-
+      {{ dsc3_async_native_launch if dsc3_async_phase == 'native'
+         else dsc3_async_original_launch }}
+  no_log: true
+
+- name: Poll native completed DSC using its public status action
+  sustainablelobster.legacy_windows.async_status:
+    jid: '{{ dsc3_async_launch.ansible_job_id }}'
+  vars: *async_vars
+  register: dsc3_async_native_status
+  until: dsc3_async_native_status.finished | default(false)
+  retries: 30
+  delay: 1
+  ignore_errors: true
+  no_log: true
+  when: >-
+    dsc3_async_phase == 'native' and
+    not (dsc3_async_case.local_rejection | default(false))
+
+- name: Poll original completed DSC using untouched builtin status
+  ansible.builtin.async_status:
+    jid: '{{ dsc3_async_launch.ansible_job_id }}'
+  vars: *async_vars
+  register: dsc3_async_original_status
+  until: dsc3_async_original_status.finished | default(false)
+  retries: 30
+  delay: 1
+  ignore_errors: true
+  no_log: true
+  when: >-
+    dsc3_async_phase == 'original' and
+    not (dsc3_async_case.local_rejection | default(false))
+
+- name: Select complete status or the original pre-transfer action failure
+  ansible.builtin.set_fact:
+    dsc3_async_result: >-
+      {{ dsc3_async_launch if dsc3_async_case.local_rejection | default(false)
+         else (dsc3_async_native_status if dsc3_async_phase == 'native'
+               else dsc3_async_original_status) }}
+  no_log: true
+
+- name: Independently observe completed operation and protected siblings
+  sustainablelobster.legacy_windows.win_command:
+    argv: ['{{ ansible_python_interpreter }}', '-',
+           '{{ dsc3_workspace.path }}', observe]
+    stdin: '{{ dsc3_fixture }}'
+  register: dsc3_async_after
+  changed_when: false
+  no_log: true
+
+- name: Keep every raw launch and complete public status before assertions
+  ansible.builtin.set_fact:
+    dsc3_async_records: >-
+      {{ dsc3_async_records | default([]) + [{
+        'case': dsc3_async_case.name, 'phase': dsc3_async_phase,
+        'request': dsc3_async_case.params, 'check_mode': false,
+        'before': dsc3_async_before.stdout | from_json,
+        'after': dsc3_async_after.stdout | from_json,
+        'result': dsc3_async_result, 'validated': false} |
+        combine({} if dsc3_async_case.local_rejection | default(false) else {
+          'launch': dsc3_async_launch})] }}
+  no_log: true
+
+- name: Require expected public success failure and no local-file job creation
+  ansible.builtin.assert:
+    that:
+      - dsc3_async_result.changed == dsc3_async_case.changed
+      - >-
+        (dsc3_async_result is failed) == (dsc3_async_case.error is defined)
+      - >-
+        dsc3_async_case.error is not defined or
+        dsc3_async_result.msg == dsc3_async_case.error
+      - >-
+        dsc3_async_case.local_rejection | default(false) or
+        dsc3_async_result.rc == dsc3_async_case.rc | default(0)
+      - >-
+        not (dsc3_async_case.local_rejection | default(false)) or
+        (dsc3_async_result.ansible_job_id is not defined and
+        dsc3_async_result.rc is not defined)
+      - >-
+        dsc3_async_case.local_rejection | default(false) or
+        (dsc3_async_result.started and dsc3_async_result.finished)
+      - dsc3_async_result.warnings | default([]) == []
+  no_log: true
+
+- name: Mark only the literal request whose declared behavior passed
+  ansible.builtin.set_fact:
+    dsc3_async_records: >-
+      {{ dsc3_async_records[:-1] +
+         [dsc3_async_records[-1] | combine({'validated': true})] }}
+  no_log: true

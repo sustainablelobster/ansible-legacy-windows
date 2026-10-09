@@ -1,0 +1,209 @@
+---
+acl_guest_sid: S-1-5-32-546
+acl_targets: [directory, file, registry]
+# Each expected entry is [ACE type, native flags, native access mask].
+acl_cases:
+  directory:
+    - name: Remove a rule that is not present
+      rights: Write
+      state: absent
+      changed: false
+      entries: {}
+    - name: Predict an inheritable allow rule
+      rights: Write
+      check: true
+      changed: true
+      entries: {}
+    - name: Add an inheritable allow rule
+      rights: Write
+      changed: true
+      entries: &directory_write
+        parent: [[0, 3, 1048854]]
+        directory: [[0, 19, 1048854]]
+        file: [[0, 16, 1048854]]
+    - name: Repeat the exact allow rule
+      rights: Write
+      changed: false
+      entries: *directory_write
+    - name: Merge additional rights into the existing rule
+      rights: Read
+      changed: true
+      entries: &directory_read_write
+        parent: [[0, 3, 1180063]]
+        directory: [[0, 19, 1180063]]
+        file: [[0, 16, 1180063]]
+    - name: Repeat a subset of the merged rights
+      rights: Read
+      changed: true
+      entries: *directory_read_write
+    - name: Removal requires an exact rights match
+      rights: Write
+      state: absent
+      changed: false
+      entries: *directory_read_write
+    - name: Remove the complete merged rule
+      rights: Read,Write
+      state: absent
+      changed: true
+      entries: {}
+    - name: Limit propagation to immediate child directories
+      rights: Read
+      inherit: ContainerInherit
+      propagation: NoPropagateInherit
+      changed: true
+      entries: &directory_read
+        parent: [[0, 6, 1179785]]
+        directory: [[0, 16, 1179785]]
+    - name: Predict removal without changing permissions
+      rights: Read
+      inherit: ContainerInherit
+      propagation: NoPropagateInherit
+      state: absent
+      check: true
+      changed: true
+      entries: *directory_read
+    - name: Remove the limited propagation rule
+      rights: Read
+      inherit: ContainerInherit
+      propagation: NoPropagateInherit
+      state: absent
+      changed: true
+      entries: {}
+    - name: Deny writes only in descendant directories
+      rights: Write
+      type: deny
+      inherit: ContainerInherit
+      propagation: InheritOnly
+      changed: true
+      entries: &directory_deny
+        parent: [[1, 10, 278]]
+        directory: [[1, 18, 278]]
+    - name: Repeat the exact deny rule
+      rights: Write
+      type: deny
+      inherit: ContainerInherit
+      propagation: InheritOnly
+      changed: false
+      entries: *directory_deny
+    - name: Remove the deny rule
+      rights: Write
+      type: deny
+      inherit: ContainerInherit
+      propagation: InheritOnly
+      state: absent
+      changed: true
+      entries: {}
+    - name: Propagate only to files
+      rights: Read
+      inherit: ObjectInherit
+      changed: true
+      entries:
+        parent: [[0, 1, 1179785]]
+        directory: [[0, 25, 1179785]]
+        file: [[0, 16, 1179785]]
+    - name: Remove the file inheritance rule
+      rights: Read
+      inherit: ObjectInherit
+      state: absent
+      changed: true
+      entries: {}
+  file:
+    - name: Predict file permissions while ignoring inheritance
+      rights: Write
+      inherit: invalid
+      check: true
+      changed: true
+      entries: {}
+    - name: Add file permissions while ignoring inheritance
+      rights: Write
+      inherit: invalid
+      changed: true
+      entries: &file_write
+        file: [[0, 0, 1048854]]
+    - name: Repeat file permissions with explicit null inheritance
+      rights: Write
+      inherit: null
+      changed: false
+      entries: *file_write
+    - name: Add a deny rule alongside the allow rule
+      rights: Write
+      type: deny
+      changed: true
+      entries:
+        file: [[1, 0, 278], [0, 0, 1048854]]
+    - name: Remove the file deny rule
+      rights: Write
+      type: deny
+      state: absent
+      changed: true
+      entries: *file_write
+    - name: Remove the file allow rule
+      rights: Write
+      state: absent
+      changed: true
+      entries: {}
+    - name: Repeat removal of the file allow rule
+      rights: Write
+      state: absent
+      changed: false
+      entries: {}
+  registry:
+    - name: Predict registry write permissions
+      rights: WriteKey
+      check: true
+      changed: true
+      entries: {}
+    - name: Add registry write permissions
+      rights: WriteKey
+      changed: true
+      entries: &registry_write
+        parent: [[0, 3, 131078]]
+        key: [[0, 19, 131078]]
+    - name: Repeat registry write permissions
+      rights: WriteKey
+      changed: false
+      entries: *registry_write
+    - name: Merge registry read permissions
+      rights: ReadKey
+      changed: true
+      entries: &registry_read_write
+        parent: [[0, 3, 131103]]
+        key: [[0, 19, 131103]]
+    - name: Require an exact registry match before removal
+      rights: WriteKey
+      state: absent
+      changed: false
+      entries: *registry_read_write
+    - name: Remove the combined registry rule
+      rights: ReadKey,WriteKey
+      state: absent
+      changed: true
+      entries: {}
+    - name: Deny setting values without inheritance
+      rights: SetValue
+      type: deny
+      inherit: None
+      changed: true
+      entries: &registry_deny
+        parent: [[1, 0, 2]]
+    - name: Repeat the registry deny rule
+      rights: SetValue
+      type: deny
+      inherit: None
+      changed: false
+      entries: *registry_deny
+    - name: Predict removing the registry deny rule
+      rights: SetValue
+      type: deny
+      inherit: None
+      state: absent
+      check: true
+      changed: true
+      entries: *registry_deny
+    - name: Remove the registry deny rule
+      rights: SetValue
+      type: deny
+      inherit: None
+      state: absent
+      changed: true
+      entries: {}

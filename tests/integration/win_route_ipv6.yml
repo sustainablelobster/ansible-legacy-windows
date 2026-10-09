@@ -1,0 +1,138 @@
+---
+- name: Verify one native persistent IPv6 route and the pinned existence quirks
+  hosts: legacy_windows
+  gather_facts: false
+  vars:
+    route_ipv6_script: >-
+      {{ lookup('ansible.builtin.file', playbook_dir ~
+      '/fixtures/win_route_ipv6.py', rstrip=false) }}
+    route_ipv6_cases:
+      - {name: create preview, changed: true, check: true, count: 0}
+      - {name: create, changed: true, count: 1}
+      - name: repeat preserves pinned IPv4-lookup failure
+        changed: false
+        failed: true
+        count: 1
+      - {name: repeat preview, changed: true, check: true, count: 1}
+      - name: absent preview preserves pinned IPv4-lookup no-op
+        changed: false
+        check: true
+        state: absent
+        count: 1
+      - name: absent preserves pinned IPv4-lookup no-op
+        changed: false
+        state: absent
+        count: 1
+      - name: reject the actual unscoped link-local selection
+        changed: false
+        failed: true
+        gateway: fe80::2
+        count: 1
+      - name: reject an address-family mismatch before writes
+        changed: false
+        failed: true
+        gateway: 192.0.2.1
+        count: 1
+  tasks:
+    - name: Require a real installed gateway and observed interface
+      ansible.builtin.assert:
+        that:
+          - route_ipv6_gateway is defined
+          - route_ipv6_interface is defined
+          - route_evidence_dir is defined
+    - name: Observe original staging outside the staged payload
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import glob,json,os,tempfile;
+        roots={tempfile.gettempdir(),os.path.join(os.environ['WINDIR'],'Temp')};
+        print(json.dumps(sorted(p for root in roots
+        for p in glob.glob(os.path.join(root,'ansible-tmp-*')))))""
+      register: route_ipv6_staging_before
+      changed_when: false
+    - name: Initialize private public outcome records
+      ansible.builtin.set_fact:
+        route_ipv6_results: []
+    - name: Allocate and exercise only the owned IPv6 prefix
+      block:
+        - name: Allocate the private recovery workspace
+          sustainablelobster.legacy_windows.win_tempfile:
+            state: directory
+            prefix: legacy-windows-route-ipv6-
+          register: route_ipv6_workspace
+        - name: Journal the original full native IPv6 state before public writes
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}', '-',
+                   '{{ route_ipv6_workspace.path }}', setup,
+                   '{{ route_ipv6_gateway }}', '{{ route_ipv6_interface }}']
+            stdin: '{{ route_ipv6_script }}'
+          register: route_ipv6_setup
+          changed_when: false
+        - name: Retain the verified owned prefix and original native observation
+          ansible.builtin.set_fact:
+            route_ipv6_record: '{{ route_ipv6_setup.stdout | from_json }}'
+            route_ipv6_previous: >-
+              {{ (route_ipv6_setup.stdout | from_json).initial }}
+        - name: Exercise the public interface against the installed stack
+          ansible.builtin.include_tasks: tasks/win_route_ipv6_case.yml
+          loop: '{{ route_ipv6_cases }}'
+          loop_control:
+            loop_var: route_ipv6_case
+            label: '{{ route_ipv6_case.name }}'
+      always:
+        - name: Independently recover and compare the full original native state
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}', '-',
+                   '{{ route_ipv6_workspace.path }}', cleanup]
+            stdin: '{{ route_ipv6_script }}'
+          register: route_ipv6_cleanup
+          changed_when: false
+          when: route_ipv6_workspace.path is defined
+        - name: Require exact restoration before deleting the owned workspace
+          ansible.builtin.assert:
+            that:
+              - (route_ipv6_cleanup.stdout | from_json).restored
+          when: route_ipv6_workspace.path is defined
+        - name: Delete only the verified empty owned workspace
+          sustainablelobster.legacy_windows.win_file:
+            path: '{{ route_ipv6_workspace.path }}'
+            state: absent
+          when: route_ipv6_workspace.path is defined
+        - name: Observe final staging outside the staged payload
+          ansible.builtin.raw: >-
+            cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+            "import glob,json,os,sys,tempfile;
+            assert not os.path.exists(sys.argv[1]);
+            roots={tempfile.gettempdir(),os.path.join(os.environ['WINDIR'],'Temp')};
+            print(json.dumps(sorted(p for root in roots
+            for p in glob.glob(os.path.join(root,'ansible-tmp-*')))))"
+            "{{ route_ipv6_workspace.path }}""
+          register: route_ipv6_staging_after
+          changed_when: false
+          when: route_ipv6_workspace.path is defined
+        - name: Retain raw public and native recovery evidence
+          ansible.builtin.copy:
+            dest: '{{ route_evidence_dir }}/ipv6-results.json'
+            mode: '0600'
+            content: >-
+              {{ dict(results=route_ipv6_results,
+              setup=route_ipv6_setup | default(none),
+              cleanup=route_ipv6_cleanup | default(none),
+              workspace=route_ipv6_workspace | default(none),
+              staging_before=route_ipv6_staging_before,
+              staging_after=route_ipv6_staging_after | default(none)) |
+              to_nice_json }}
+          delegate_to: localhost
+          vars:
+            ansible_connection: local
+            ansible_shell_type: sh
+            ansible_python_interpreter: '{{ ansible_playbook_python }}'
+          changed_when: false
+        - name: Require original staging and all declared public cases
+          ansible.builtin.assert:
+            that:
+              - (route_ipv6_staging_before.stdout | from_json) ==
+                (route_ipv6_staging_after.stdout | from_json)
+              - route_ipv6_results | length == route_ipv6_cases | length
+              - >-
+                route_ipv6_results | rejectattr('validated') |
+                list | length == 0

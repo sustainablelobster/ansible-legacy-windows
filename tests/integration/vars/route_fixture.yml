@@ -1,0 +1,185 @@
+---
+route_fixture: |
+  # Copyright 2026 Joe Lustri
+  # SPDX-License-Identifier: GPL-3.0-or-later
+  """Journal unused documentation destinations and verify route recovery."""
+
+  import ipaddress
+  import json
+  import os
+  import subprocess
+  import sys
+  import uuid
+  import winreg
+
+  assert sys.version_info[:3] == (3, 4, 4)
+  WORKSPACE, OPERATION, ADDRESS = sys.argv[1:4]
+  JOURNAL = os.path.join(WORKSPACE, "route-recovery.json")
+  KEY = r"SYSTEM\CurrentControlSet\Services\Tcpip\Parameters\PersistentRoutes"
+  MODERN = sys.getwindowsversion().major >= 6
+
+
+  def ordered(rows):
+      return sorted(rows, key=lambda row: json.dumps(row, sort_keys=True))
+
+
+  def registry():
+      try:
+          key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, KEY)
+      except FileNotFoundError:
+          return None
+      with key:
+          values = []
+          for index in range(winreg.QueryInfoKey(key)[1]):
+              values.append(list(winreg.EnumValue(key, index)))
+          return sorted(values)
+
+
+  def observe():
+      with WmiConnection() as connection:
+          active = connection.query("SELECT * FROM Win32_IP4RouteTable", [
+              "Destination", "Mask", "NextHop", "InterfaceIndex", "Metric1",
+              "Type", "Protocol"])
+          persistent = connection.query(
+              "SELECT * FROM Win32_IP4PersistedRouteTable",
+              ["Destination", "Mask", "NextHop", "Metric1"])
+      modern = None
+      if MODERN:
+          with WmiConnection(r"ROOT\StandardCimv2") as connection:
+              modern = ordered(connection.query("SELECT * FROM MSFT_NetRoute", [
+                  "DestinationPrefix", "NextHop", "InterfaceIndex",
+                  "RouteMetric", "Protocol", "Publish"]))
+      return {"active": ordered(active), "persistent": ordered(persistent),
+              "registry": registry(), "modern": modern}
+
+
+  def save(state, mode):
+      with open(JOURNAL, mode, encoding="utf-8") as stream:
+          json.dump(state, stream, sort_keys=True)
+          stream.flush()
+          os.fsync(stream.fileno())
+
+
+  def load():
+      with open(JOURNAL, "r", encoding="utf-8") as stream:
+          state = json.load(stream)
+      assert state["address"] == ADDRESS and state["workspace"] == WORKSPACE
+      assert all(ipaddress.ip_address(item) in ipaddress.ip_network(
+          "192.0.2.0/24") for item in state["destinations"])
+      assert not any(row["Destination"] in state["destinations"]
+                     for row in
+                     state["initial"]["active"] +
+                     state["initial"]["persistent"])
+      assert not any(value[0].split(",")[0] in state["destinations"]
+                     for value in state["initial"]["registry"] or [])
+      network = ipaddress.ip_network(state["ipv6"])
+      assert network.prefixlen == 128 and network.network_address in (
+          ipaddress.ip_network("2001:db8::/32"))
+      assert state["initial"]["modern"] is None or all(
+          row["DestinationPrefix"] != state["ipv6"] for row in
+          state["initial"]["modern"])
+      return state
+
+
+  def backup():
+      initial = observe()
+      used = {row["Destination"] for row in initial["active"] +
+              initial["persistent"]}
+      used.update(value[0].split(",")[0] for value in initial["registry"] or [])
+      with WmiConnection() as connection:
+          adapters = connection.query(
+              "SELECT * FROM Win32_NetworkAdapterConfiguration "
+              "WHERE IPEnabled=TRUE",
+              ["IPAddress", "DefaultIPGateway"])
+      adapter = [row for row in adapters if ADDRESS in row["IPAddress"]]
+      assert len(adapter) == 1 and adapter[0]["DefaultIPGateway"]
+      gateway = adapter[0]["DefaultIPGateway"][0]
+      default = [row for row in initial["active"]
+                 if row["Destination"] == "0.0.0.0"
+                 and row["NextHop"] == gateway]
+      assert len(default) == 1, "SSH adapter must identify one default route"
+      seed = uuid.uuid4().int
+      destinations = []
+      for offset in range(1, 255):
+          candidate = "192.0.2." + str((seed + offset) % 254 + 1)
+          if candidate not in used:
+              destinations.append(candidate)
+          if len(destinations) == 2:
+              break
+      assert len(destinations) == 2
+      # Also own the canonical /24 destination if host-bit parsing regresses.
+      assert "192.0.2.0" not in used, (
+          "Documentation network base must be unused")
+      destinations.append("192.0.2.0")
+      ipv6 = "2001:db8:{0:x}::{1:x}/128".format(
+          (seed >> 16) & 65535, seed & 65535)
+      assert not MODERN or all(row["DestinationPrefix"] != ipv6
+                              for row in initial["modern"])
+      state = {"address": ADDRESS, "workspace": WORKSPACE, "initial": initial,
+               "destinations": destinations, "ipv6": ipv6,
+               "gateway": gateway,
+               "interface": default[0]["InterfaceIndex"], "restored": False}
+      save(state, "x")
+      assert load() == state and observe() == initial
+      return state
+
+
+  def command(arguments):
+      process = subprocess.Popen(arguments, stdout=subprocess.PIPE,
+                                 stderr=subprocess.STDOUT)
+      output = process.communicate()[0]
+      return {"argv": arguments, "status": process.returncode,
+              "output": output.decode("mbcs", errors="replace")}
+
+
+  def cleanup(state):
+      assert load() == state
+      effects = []
+      current = observe()
+      for destination in state["destinations"]:
+          if any(row["Destination"] == destination for row in
+                 current["active"] + current["persistent"]):
+              effects.append(command([os.path.join(os.environ["SystemRoot"],
+                  "System32", "route.exe"), "delete", destination]))
+      # Rejected persistence entries can survive without an active route.
+      owned_values = [value[0] for value in registry() or []
+                      if value[0].split(",")[0] in state["destinations"]]
+      if owned_values:
+          with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, KEY, 0,
+                              winreg.KEY_SET_VALUE) as key:
+              for name in owned_values:
+                  winreg.DeleteValue(key, name)
+      if MODERN:
+          for row in current["modern"]:
+              if row["DestinationPrefix"] == state["ipv6"]:
+                  effects.append(command([os.path.join(os.environ["SystemRoot"],
+                      "System32", "netsh.exe"), "interface", "ipv6", "delete",
+                      "route", "prefix=" + state["ipv6"],
+                      "interface=" + str(row["InterfaceIndex"]),
+                      "nexthop=" + row["NextHop"], "store=persistent"]))
+      if state["initial"]["registry"] is None and registry() == []:
+          winreg.DeleteKey(winreg.HKEY_LOCAL_MACHINE, KEY)
+      final = observe()
+      assert final == state["initial"], "Complete route snapshot not restored"
+      state["restored"] = True
+      save(state, "w")
+      return {"restored": True, "initial": state["initial"], "final": final,
+              "effects": effects}
+
+
+  if OPERATION == "setup":
+      record = backup()
+      result = {"state": record, "observation": record["initial"]}
+  elif OPERATION == "observe":
+      load()
+      result = observe()
+  elif OPERATION == "cleanup":
+      if os.path.exists(JOURNAL):
+          result = cleanup(load())
+      else:
+          # backup() never writes routes; only empty-workspace cleanup is safe.
+          assert os.listdir(WORKSPACE) == []
+          result = {"restored": True, "mutations_started": False}
+  else:
+      raise ValueError("Unknown route fixture operation")
+  print(json.dumps(result, sort_keys=True))

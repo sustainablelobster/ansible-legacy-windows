@@ -1,0 +1,150 @@
+---
+- name: Establish the exact owned native prerequisite
+  sustainablelobster.legacy_windows.win_command:
+    argv: ['{{ ansible_python_interpreter }}', '-',
+           '{{ package_msp_workspace.path }}',
+           prepare, '{{ package_msp_case.initial }}']
+    stdin: '{{ package_msp_program }}'
+  register: package_msp_before
+  changed_when: false
+  no_log: true
+
+- name: Observe complete native public patch result
+  block:
+    - name: Request native patch behavior  # noqa: args[module]
+      sustainablelobster.legacy_windows.win_package: >-
+        {{ package_msp_case.params }}
+      register: package_msp_native
+      check_mode: '{{ package_msp_case.check | default(false) }}'
+  rescue:
+    - name: Retain the native failure unchanged
+      ansible.builtin.debug:
+        msg: Native patch failure retained.
+
+- name: Observe native complete patch and protected state
+  sustainablelobster.legacy_windows.win_command:
+    argv: ['{{ ansible_python_interpreter }}', '-',
+           '{{ package_msp_workspace.path }}', observe]
+    stdin: '{{ package_msp_program }}'
+  register: package_msp_after_native
+  changed_when: false
+  no_log: true
+
+- name: Establish the identical owned source prerequisite
+  when: package_compare | bool
+  sustainablelobster.legacy_windows.win_command:
+    argv: ['{{ ansible_python_interpreter }}', '-',
+           '{{ package_msp_workspace.path }}',
+           prepare, '{{ package_msp_case.initial }}']
+    stdin: '{{ package_msp_program }}'
+  register: package_msp_before_original
+  changed_when: false
+  no_log: true
+
+- name: Observe complete untouched released patch result
+  when: package_compare | bool
+  block:
+    - name: Request original patch behavior
+      ansible.windows.win_package: '{{ package_msp_case.params }}'
+      register: package_msp_original
+      check_mode: '{{ package_msp_case.check | default(false) }}'
+      vars:
+        ansible_shell_type: cmd
+        ansible_remote_tmp: '{{ package_msp_workspace.path }}'
+  rescue:
+    - name: Retain the source failure unchanged
+      ansible.builtin.debug:
+        msg: Original patch failure retained.
+
+- name: Observe source complete patch and protected state
+  when: package_compare | bool
+  sustainablelobster.legacy_windows.win_command:
+    argv: ['{{ ansible_python_interpreter }}', '-',
+           '{{ package_msp_workspace.path }}', observe]
+    stdin: '{{ package_msp_program }}'
+  register: package_msp_after_original
+  changed_when: false
+  no_log: true
+
+- name: Retain raw observations before any assertion
+  ansible.builtin.set_fact:
+    package_msp_results: >-
+      {{ package_msp_results + [{'name': package_msp_case.name,
+      'request': package_msp_case.params,
+      'expected': package_msp_case,
+      'native': package_msp_native,
+      'original': package_msp_original | default(none),
+      'before': package_msp_before,
+      'before_original': package_msp_before_original | default(none),
+      'after_native': package_msp_after_native,
+      'after_original': package_msp_after_original | default(none),
+      'validated': false}] }}
+
+- name: Persist raw patch observation
+  ansible.builtin.copy:
+    content: >-
+      {{ {'results': package_msp_results, 'journal': package_msp_journal,
+      'setup': package_msp_setup} | to_nice_json }}
+    dest: '{{ package_msp_capture.path }}'
+    mode: '0600'
+  delegate_to: localhost
+  vars: &controller
+    ansible_connection: local
+    ansible_shell_type: sh
+    ansible_python_interpreter: '{{ ansible_playbook_python }}'
+  changed_when: false
+  no_log: true
+
+- name: Require expected native public flags and actual installed bytes
+  vars:
+    after: '{{ package_msp_after_native.stdout | from_json }}'
+    owned_patches: >-
+      {{ after.patches |
+      selectattr("product", "equalto", package_msp_product) | list }}
+    applied: '{{ owned_patches | selectattr("state", "equalto", 1) | list }}'
+  ansible.builtin.assert:
+    that:
+      - >-
+        (package_msp_native is failed) ==
+        (package_msp_case.failed | default(false))
+      - >-
+        package_msp_native.changed ==
+        (package_msp_case.changed | default(false))
+      - not package_msp_native.reboot_required | default(false)
+      - after.state == (-1 if package_msp_case.expected == 'absent' else 5)
+      - applied | length == (1 if package_msp_case.expected == 'patched' else 0)
+      - >-
+        after.outputs | length ==
+        (0 if package_msp_case.expected == 'absent' else 1)
+      - >-
+        package_msp_case.expected == 'absent' or
+        after.outputs['Sample.txt'].bytes.raw_bytes ==
+        (('This is version 1.1' if package_msp_case.expected == 'patched' else
+        'This is version 1.0') | b64encode)
+
+- name: Compare whole typed source results and literal state
+  when: package_compare | bool
+  vars:
+    native_public: >-
+      {{ package_msp_native | dict2items |
+      rejectattr('key', 'in', ['invocation', 'exception']) | items2dict }}
+    original_public: >-
+      {{ package_msp_original | dict2items |
+      rejectattr('key', 'in', ['invocation', 'exception']) | items2dict }}
+  ansible.builtin.assert:
+    that:
+      - >-
+        (native_public | to_json(sort_keys=true)) ==
+        (original_public | to_json(sort_keys=true))
+      - >-
+        (package_msp_before.stdout | from_json) ==
+        (package_msp_before_original.stdout | from_json)
+      - >-
+        (package_msp_after_native.stdout | from_json) ==
+        (package_msp_after_original.stdout | from_json)
+
+- name: Mark only fully passing patch observations
+  ansible.builtin.set_fact:
+    package_msp_results: >-
+      {{ package_msp_results[:-1] +
+      [package_msp_results[-1] | combine({'validated': true})] }}

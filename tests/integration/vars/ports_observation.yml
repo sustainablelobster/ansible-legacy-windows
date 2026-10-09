@@ -1,0 +1,155 @@
+---
+# SPDX-License-Identifier: GPL-3.0-or-later
+ports_observation_code: |
+  import ctypes, datetime, json, socket, subprocess, sys
+  assert sys.version_info[:3] == (3, 4, 4)
+  port = int(sys.argv[1])
+  kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+  security = ctypes.WinDLL('advapi32', use_last_error=True)
+  pointer = ctypes.c_void_p
+  dword = ctypes.c_uint32
+  kernel.GetUserDefaultLCID.restype = dword
+  # The recorded fixture uses English names for the default UFormat check.
+  assert kernel.GetUserDefaultLCID() == 0x0409
+  kernel.GetLocaleInfoW.argtypes = [dword, dword, ctypes.c_wchar_p,
+                                   ctypes.c_int]
+  kernel.GetLocaleInfoW.restype = ctypes.c_int
+  calendar_id = ctypes.create_unicode_buffer(16)
+  assert kernel.GetLocaleInfoW(0x400, 0x1009, calendar_id, len(calendar_id))
+  assert calendar_id.value == '1', 'Fixture requires the Gregorian calendar'
+  kernel.GetCalendarInfoW.argtypes = [dword, dword, dword,
+      ctypes.c_wchar_p, ctypes.c_int, ctypes.POINTER(dword)]
+  kernel.GetCalendarInfoW.restype = ctypes.c_int
+  locale_fields = {}
+  for field, operation, arguments in [
+          ('short_time', kernel.GetLocaleInfoW, (0x400, 0x79, None, 0)),
+          ('month_day', kernel.GetCalendarInfoW,
+              (0x400, 1, 0x38, None, 0, None)),
+          ('month_genitive', kernel.GetCalendarInfoW,
+              (0x400, 1, 0x10000015, None, 0, None))]:
+      locale_fields[field] = bool(operation(*arguments))
+      if not locale_fields[field]:
+          # Old NLS rejects unsupported flags or parameter values.
+          assert ctypes.get_last_error() in (87, 1004)
+  output = subprocess.check_output(['netstat.exe', '-ano']).decode('ascii')
+  listeners = []
+  for line in output.splitlines():
+      fields = line.split()
+      if len(fields) == 5 and fields[0] == 'TCP':
+          address, local_port = fields[1].rsplit(':', 1)
+          if int(local_port) == port and fields[3] == 'LISTENING':
+              listeners.append({'address': address.strip('[]'),
+                                'port': port, 'pid': int(fields[4])})
+  pids = set(row['pid'] for row in listeners)
+  assert len(pids) == 1, 'Fixture needs one SSH server process'
+  pid = pids.pop()
+
+  class ProcessEntry(ctypes.Structure):
+      _fields_ = [('size', dword), ('usage', dword), ('pid', dword),
+                  ('heap', ctypes.c_size_t), ('module', dword),
+                  ('threads', dword), ('parent', dword),
+                  ('priority', ctypes.c_int32), ('flags', dword),
+                  ('name', ctypes.c_wchar * 260)]
+
+  kernel.CloseHandle.argtypes = [pointer]
+  kernel.CloseHandle.restype = ctypes.c_int
+  kernel.CreateToolhelp32Snapshot.argtypes = [dword, dword]
+  kernel.CreateToolhelp32Snapshot.restype = pointer
+  for operation in ('Process32FirstW', 'Process32NextW'):
+      function = getattr(kernel, operation)
+      function.argtypes = [pointer, ctypes.POINTER(ProcessEntry)]
+      function.restype = ctypes.c_int
+  snapshot = kernel.CreateToolhelp32Snapshot(2, 0)
+  if snapshot == pointer(-1).value:
+      raise ctypes.WinError(ctypes.get_last_error())
+  name = None
+  try:
+      entry = ProcessEntry()
+      entry.size = ctypes.sizeof(entry)
+      present = kernel.Process32FirstW(snapshot, ctypes.byref(entry))
+      while present:
+          if entry.pid == pid:
+              name = entry.name
+              break
+          present = kernel.Process32NextW(snapshot, ctypes.byref(entry))
+      assert name is not None
+  finally:
+      assert kernel.CloseHandle(snapshot)
+
+  kernel.OpenProcess.argtypes = [dword, ctypes.c_int, dword]
+  kernel.OpenProcess.restype = pointer
+  access = 0x1000 if sys.getwindowsversion().major >= 6 else 0x400
+  process = kernel.OpenProcess(access, False, pid)
+  if not process:
+      raise ctypes.WinError(ctypes.get_last_error())
+  token = pointer()
+  try:
+      tick_pointer = ctypes.POINTER(ctypes.c_uint64)
+      kernel.GetProcessTimes.argtypes = [pointer] + [tick_pointer] * 4
+      kernel.GetProcessTimes.restype = ctypes.c_int
+      created, exited = ctypes.c_uint64(), ctypes.c_uint64()
+      system, user = ctypes.c_uint64(), ctypes.c_uint64()
+      if not kernel.GetProcessTimes(process, ctypes.byref(created),
+                                    ctypes.byref(exited), ctypes.byref(system),
+                                    ctypes.byref(user)):
+          raise ctypes.WinError(ctypes.get_last_error())
+      kernel.FileTimeToLocalFileTime.argtypes = [tick_pointer, tick_pointer]
+      kernel.FileTimeToLocalFileTime.restype = ctypes.c_int
+      local = ctypes.c_uint64()
+      if not kernel.FileTimeToLocalFileTime(ctypes.byref(created),
+                                           ctypes.byref(local)):
+          raise ctypes.WinError(ctypes.get_last_error())
+      date = datetime.datetime(1601, 1, 1) + datetime.timedelta(
+          microseconds=local.value // 10)
+      # The fixture's SSH process began in the current timezone-bias period.
+      stime = date.strftime('%a %b ') + str(date.day).rjust(2)
+      stime += date.strftime(' %H:%M:%S %Y')
+
+      security.OpenProcessToken.argtypes = [pointer, dword,
+                                           ctypes.POINTER(pointer)]
+      security.OpenProcessToken.restype = ctypes.c_int
+      if not security.OpenProcessToken(process, 8, ctypes.byref(token)):
+          raise ctypes.WinError(ctypes.get_last_error())
+      security.GetTokenInformation.argtypes = [pointer, ctypes.c_int, pointer,
+                                              dword, ctypes.POINTER(dword)]
+      security.GetTokenInformation.restype = ctypes.c_int
+      needed = dword()
+      security.GetTokenInformation(token, 1, None, 0, ctypes.byref(needed))
+      assert ctypes.get_last_error() == 122
+      buffer = ctypes.create_string_buffer(needed.value)
+      if not security.GetTokenInformation(token, 1, buffer, len(buffer),
+                                          ctypes.byref(needed)):
+          raise ctypes.WinError(ctypes.get_last_error())
+      sid = pointer.from_buffer(buffer).value
+      security.LookupAccountSidW.argtypes = [ctypes.c_wchar_p, pointer,
+          ctypes.c_wchar_p, ctypes.POINTER(dword), ctypes.c_wchar_p,
+          ctypes.POINTER(dword), ctypes.POINTER(dword)]
+      security.LookupAccountSidW.restype = ctypes.c_int
+      account_size, domain_size, kind = dword(), dword(), dword()
+      security.LookupAccountSidW(None, sid, None, ctypes.byref(account_size),
+          None, ctypes.byref(domain_size), ctypes.byref(kind))
+      assert ctypes.get_last_error() == 122
+      account = ctypes.create_unicode_buffer(account_size.value)
+      domain = ctypes.create_unicode_buffer(domain_size.value)
+      if not security.LookupAccountSidW(None, sid, account,
+          ctypes.byref(account_size), domain, ctypes.byref(domain_size),
+          ctypes.byref(kind)):
+          raise ctypes.WinError(ctypes.get_last_error())
+      owner = domain.value + '\\' + account.value
+  finally:
+      if token:
+          assert kernel.CloseHandle(token)
+      assert kernel.CloseHandle(process)
+
+  for row in listeners:
+      row.update(name=name, protocol='tcp', stime=stime, user=owner)
+  print(json.dumps({'python': list(sys.version_info[:3]),
+                    'ssh_listeners': listeners, 'creation_year': str(date.year),
+                    'creation_json': '/Date({0})/'.format(
+                        (created.value - 116444736000000000) // 10000),
+                    'locale_fields': locale_fields,
+                    'composite_dates': {
+                        'short_time': date.strftime('%I:%M %p').lstrip('0'),
+                        'month_day': date.strftime('%B ') + str(date.day),
+                        'month_genitive': date.strftime('%B ') + str(date.day)},
+                    'default_lcid': kernel.GetUserDefaultLCID()}))

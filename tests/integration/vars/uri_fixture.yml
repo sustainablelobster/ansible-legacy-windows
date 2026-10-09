@@ -1,0 +1,135 @@
+---
+# Reuse Get URL's maintained process-identity journal and recovery dispatcher.
+# This server adds body/JSON observations needed by the public URI interface.
+get_url_server: |
+  # SPDX-License-Identifier: GPL-3.0-or-later
+  import base64, ctypes, http.server, json, os, socketserver, sys, threading
+  import socket, time
+  assert sys.version_info[:3] == (3, 4, 4)
+  root, token = sys.argv[1:3]
+  api = ctypes.WinDLL('kernel32', use_last_error=True)
+  api.GetCurrentProcess.restype = ctypes.c_void_p
+  api.GetProcessTimes.argtypes = [ctypes.c_void_p] * 5
+  api.GetProcessTimes.restype = ctypes.c_int32
+  times = [(ctypes.c_uint32 * 2)() for _ in range(4)]
+  assert api.GetProcessTimes(api.GetCurrentProcess(),
+      *[ctypes.byref(value) for value in times])
+  payloads = {
+      'object': b'{"name":"fixture","number":7}',
+      'null': b'null', 'false': b'false', 'zero': b'0',
+      'empty-list': b'[]', 'empty-object': b'{}', 'empty-string': b'""',
+      'one-false': b'[false]', 'one-number': b'[7]', 'invalid': b'{oops',
+  }
+  payload = b'legacy download fixture\x00\xff\n'
+  lock = threading.Lock()
+
+  class Server(socketserver.ThreadingMixIn, http.server.HTTPServer):
+      daemon_threads = True
+
+  class Handler(http.server.BaseHTTPRequestHandler):
+      protocol_version = 'HTTP/1.1'
+
+      def log_message(self, *_args):
+          pass
+
+      def date_time_string(self, _timestamp=None):
+          return 'Sat, 01 Jan 2000 00:00:00 GMT'
+
+      def respond(self):
+          length = int(self.headers.get('Content-Length', 0))
+          assert 0 <= length <= 65536
+          request_body = self.rfile.read(length)
+          record = {'method': self.command, 'path': self.path,
+                    'headers': dict(self.headers),
+                    'header_pairs': list(self.headers.items()),
+                    'body_base64': base64.b64encode(request_body)
+                                         .decode('ascii')}
+          with lock:
+              with open(os.path.join(root, 'requests.jsonl'), 'a',
+                        encoding='utf-8') as stream:
+                  stream.write(json.dumps(record, sort_keys=True) + '\n')
+          status, content_type, location = 200, None, None
+          if self.path == '/health/' + token:
+              body, content_type = token.encode('ascii'), 'text/plain'
+          elif self.path.startswith('/json/'):
+              body = payloads[self.path[len('/json/'):]]
+              content_type = 'application/json; charset=utf-8'
+          elif self.path == '/echo':
+              body = json.dumps({key: record[key] for key in
+                  ('method', 'headers', 'body_base64')},
+                  sort_keys=True).encode('utf-8')
+              content_type = 'application/json'
+          elif self.path.startswith('/status/'):
+              status = int(self.path[len('/status/'):])
+              body = b'fixture status'
+          elif self.path.startswith('/redirect/'):
+              status = int(self.path[len('/redirect/'):])
+              body, location = b'redirect', '/echo'
+          elif self.path == '/custom':
+              body, content_type = b'fixture', 'text/plain; charset=iso-8859-1'
+          else:
+              body = payload
+          slow_body = self.path.startswith('/slow-body/')
+          if slow_body:
+              mode = self.path.rsplit('/', 1)[-1]
+              assert mode in ('http10', 'close', 'keep-alive')
+              if mode == 'http10':
+                  self.protocol_version = 'HTTP/1.0'
+              if mode != 'keep-alive':
+                  self.close_connection = True
+          self.send_response(status)
+          self.send_header('Content-Length', str(len(body)))
+          if slow_body and mode == 'close':
+              self.send_header('Connection', 'close')
+          if content_type is not None:
+              self.send_header('Content-Type', content_type)
+          self.send_header('Last-Modified', 'Sat, 01 Jan 2000 00:00:00 GMT')
+          if location is not None:
+              self.send_header('Location', location)
+          if self.path == '/custom':
+              self.send_header('X-Test-Value', 'first')
+              self.send_header('X-Test-Value', 'second')
+              self.send_header('ETag', '"fixture"')
+              self.send_header('Set-Cookie', 'fixture=value; Path=/')
+          self.end_headers()
+          if self.command != 'HEAD':
+              if slow_body:
+                  self.wfile.flush()
+                  time.sleep(1.3)
+              self.wfile.write(body)
+
+      do_GET = do_HEAD = do_POST = do_PUT = do_PATCH = do_OPTIONS = respond
+
+  # Echo bodies include Host; a five-digit owned port preserves response byte
+  # lengths when modern observations are mapped to XP's smaller ephemeral range.
+  server = Server(('127.0.0.1', 52771), Handler)
+  enable_ipv6 = False
+  ipv6_server = None
+  if enable_ipv6:
+      class IPv6Server(Server):
+          address_family = socket.AF_INET6
+
+      ipv6_server = IPv6Server(('::1', 80), Handler)
+      ipv6_thread = threading.Thread(target=ipv6_server.serve_forever)
+      ipv6_thread.daemon = True
+      ipv6_thread.start()
+  try:
+      info = {'pid': os.getpid(), 'creation': times[0][0] | (times[0][1] << 32),
+              'token': token, 'port': server.server_address[1]}
+      temporary = os.path.join(root, 'server.json.tmp')
+      with open(temporary, 'w', encoding='utf-8') as stream:
+          json.dump(info, stream, sort_keys=True)
+          stream.flush()
+          os.fsync(stream.fileno())
+      os.replace(temporary, os.path.join(root, 'server.json'))
+      timer = threading.Timer(1200, server.shutdown)
+      timer.daemon = True
+      timer.start()
+      server.serve_forever(poll_interval=.1)
+  finally:
+      server.server_close()
+      if ipv6_server is not None:
+          ipv6_server.shutdown()
+          ipv6_thread.join(5)
+          ipv6_server.server_close()
+          assert not ipv6_thread.is_alive()

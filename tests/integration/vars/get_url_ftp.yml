@@ -1,0 +1,65 @@
+---
+get_url_ftp_cases:
+  - name: Anonymous FTP download
+    changed: true
+  - name: Repeated FTP content remains unchanged
+    fixture_payload: true
+  - name: FTP check mode does not create destination
+    check: true
+    changed: true
+  - name: FTP metadata skips older remote content
+    contents: old content
+    params: {force: false}
+  - name: FTP metadata downloads newer remote content
+    contents: old content
+    mtime: 946684799
+    params: {force: false}
+    changed: true
+  - name: FTP SHA256 checksum URL
+    params:
+      checksum_algorithm: sha256
+      checksum_url: '{{ get_url_ftp_setup_data.ftp }}/checksum.sha256'
+    changed: true
+  - name: Missing FTP resource preserves existing content
+    contents: old content
+    params: {url: '{{ get_url_ftp_setup_data.ftp }}/missing.bin'}
+    failed: true
+  - name: Missing FTP metadata preserves existing content
+    contents: old content
+    params: {url: '{{ get_url_ftp_setup_data.ftp }}/missing.bin', force: false}
+    failed: true
+  - name: Named FTP credentials download
+    params: {url_username: fixture, url_password: secret}
+    changed: true
+  - name: Incorrect FTP password preserves destination
+    contents: old content
+    params: {url_username: fixture, url_password: incorrect}
+    failed: true
+  - name: Unsupported FTP method fails before transfer
+    params: {url_method: GET}
+    failed: true
+    setter_failure: true
+  - name: Explicit FTP RETR method preserves the 125 reply
+    params:
+      url_method: RETR
+      url: '{{ get_url_ftp_setup_data.ftp }}/preliminary-125.bin'
+    changed: true
+  - name: URI FTP credentials download
+    params: {url: 'ftp://fixture:secret@127.0.0.1:2121/payload.bin'}
+    changed: true
+  - name: Explicit FTP credentials override incorrect URI credentials
+    params:
+      url: ftp://fixture:incorrect@127.0.0.1:2121/payload.bin
+      url_username: fixture
+      url_password: secret
+    changed: true
+  - name: Explicit empty FTP password does not inherit URI password
+    params:
+      url: ftp://fixture:secret@127.0.0.1:2121/payload.bin
+      url_username: fixture
+      url_password: ''
+    failed: true
+  - name: Read-only FTP server rejects rename source
+    contents: old content
+    params: {url_method: RENAME}
+    failed: true

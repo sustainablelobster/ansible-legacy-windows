@@ -1,0 +1,170 @@
+---
+# SPDX-License-Identifier: GPL-3.0-or-later
+- name: Verify native legacy SYSTEM identity and ephemeral resource recovery
+  hosts: legacy_windows
+  gather_facts: false
+  vars:
+    legacy_system_body: 'AAH/AApib2R5IM67'
+    legacy_system_environment: 'literal λ %PATH% !text! & | < > ^'
+    legacy_system_observer: >-
+      {{ lookup('ansible.builtin.file',
+      playbook_dir + '/fixtures/runas_observer.py', rstrip=false) }}
+    legacy_system_resources: |
+      import glob
+      import json
+      import os
+      import subprocess
+      import sys
+      import tempfile
+      import winreg
+      assert sys.version_info[:3] == (3, 4, 4)
+      prefix = 'legacy_windows_system_'
+      services = []
+      with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,
+                          r'SYSTEM\CurrentControlSet\Services') as key:
+          for index in range(winreg.QueryInfoKey(key)[0]):
+              name = winreg.EnumKey(key, index)
+              if name.startswith(prefix):
+                  services.append(name)
+      query = "Name='python.exe' and CommandLine like '%" + prefix + "%'"
+      processes = subprocess.check_output([
+          'wmic.exe', 'process', 'where', query,
+          'get', 'ProcessId,CommandLine', '/format:csv'])
+      print(json.dumps(dict(
+          python=list(sys.version_info[:3]),
+          windows=list(sys.getwindowsversion()),
+          interpreter=sys.executable,
+          services=sorted(services),
+          directories=sorted(glob.glob(os.path.join(
+              tempfile.gettempdir(), prefix + '*'))),
+          processes=sorted(line.strip() for line in
+              processes.decode('mbcs').splitlines() if prefix in line))))
+  tasks:
+    - name: Allocate private controller evidence
+      ansible.builtin.tempfile:
+        state: file
+        path: '{{ legacy_system_evidence_dir }}'
+        prefix: 'legacy-system-{{ inventory_hostname }}-'
+        suffix: .json
+      delegate_to: localhost
+      vars: &legacy_system_controller
+        ansible_connection: local
+        ansible_shell_type: sh
+        ansible_python_interpreter: '{{ ansible_playbook_python }}'
+      register: legacy_system_capture
+      changed_when: false
+
+    - name: Observe original connection identity
+      sustainablelobster.legacy_windows.win_whoami:
+      register: legacy_system_original
+
+    - name: Read original Ansible staging outside a staged payload
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import glob,json,os,tempfile;
+        print(json.dumps(sorted(glob.glob(os.path.join(
+        tempfile.gettempdir(),'ansible-tmp-*')))))""
+      register: legacy_system_staging_before
+      changed_when: false
+
+    - name: Read native preexisting service process and directory resources
+      sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+        argv: ['{{ ansible_python_interpreter }}', '-']
+        stdin: '{{ legacy_system_resources }}'
+      register: legacy_system_before
+      changed_when: false
+
+    - name: Verify public native SYSTEM execution
+      block:
+        - name: Observe real SYSTEM command identity input and environment
+          sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - '-'
+              - '{{ legacy_system_body }}'
+            stdin: '{{ legacy_system_observer }}'
+          become: true
+          become_method: ansible.builtin.runas
+          become_user: 'NT AUTHORITY\SYSTEM'
+          environment:
+            LEGACY_WINDOWS_RUNAS_TEST: '{{ legacy_system_environment }}'
+          register: legacy_system_command
+          changed_when: false
+
+        - name: Require minimum-runtime SYSTEM identity and literal command data
+          vars:
+            actual: '{{ legacy_system_command.stdout | from_json }}'
+          ansible.builtin.assert:
+            that:
+              - legacy_system_command.rc == 0
+              - legacy_system_command.stderr == ''
+              - actual.sid == 'S-1-5-18'
+              - actual.python == [3, 4, 4]
+              - actual.body_base64 == legacy_system_body
+              - actual.environment == legacy_system_environment
+
+        - name: Read SYSTEM through a separate public module
+          sustainablelobster.legacy_windows.win_whoami:
+          become: true
+          become_method: ansible.builtin.runas
+          become_user: 'NT AUTHORITY\SYSTEM'
+          register: legacy_system_identity
+
+        - name: Require public SYSTEM identity without a mutation
+          ansible.builtin.assert:
+            that:
+              - legacy_system_identity is not changed
+              - legacy_system_identity.account.sid == 'S-1-5-18'
+      always:
+        - name: Observe restored connection identity
+          sustainablelobster.legacy_windows.win_whoami:
+          register: legacy_system_final
+
+        - name: Read final native service process and directory resources
+          sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+            argv: ['{{ ansible_python_interpreter }}', '-']
+            stdin: '{{ legacy_system_resources }}'
+          register: legacy_system_after
+          changed_when: false
+
+        - name: Read final Ansible staging outside a staged payload
+          ansible.builtin.raw: >-
+            cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+            "import glob,json,os,tempfile;
+            print(json.dumps(sorted(glob.glob(os.path.join(
+            tempfile.gettempdir(),'ansible-tmp-*')))))""
+          register: legacy_system_staging_after
+          changed_when: false
+
+        - name: Retain public and native observations before final assertions
+          ansible.builtin.copy:
+            content: >-
+              {{ dict(command=legacy_system_command | default(none),
+              identity=legacy_system_identity | default(none),
+              original=legacy_system_original, final=legacy_system_final,
+              before=legacy_system_before, after=legacy_system_after,
+              staging_before=legacy_system_staging_before,
+              staging_after=legacy_system_staging_after) |
+              to_nice_json }}
+            dest: '{{ legacy_system_capture.path }}'
+            mode: '0600'
+          delegate_to: localhost
+          vars: *legacy_system_controller
+          changed_when: false
+          no_log: true
+
+        - name: Require exact resources and original identity after execution
+          ansible.builtin.assert:
+            that:
+              - >-
+                (legacy_system_before.stdout | from_json) ==
+                (legacy_system_after.stdout | from_json)
+              - >-
+                (legacy_system_staging_before.stdout | from_json) ==
+                (legacy_system_staging_after.stdout | from_json)
+              - >-
+                (legacy_system_original | dict2items |
+                rejectattr('key', 'in', ['invocation', 'exception']) |
+                items2dict) == (legacy_system_final | dict2items |
+                rejectattr('key', 'in', ['invocation', 'exception']) |
+                items2dict)

@@ -1,0 +1,42 @@
+---
+- name: Prepare the private local evidence destination before guest mutation
+  hosts: localhost
+  gather_facts: false
+  connection: local
+  vars:
+    ansible_shell_type: sh
+    ansible_python_interpreter: '{{ ansible_playbook_python }}'
+  tasks:
+    - name: Create the bounded local capture directory
+      ansible.builtin.file:
+        path: '{{ playbook_dir }}/../../tmp/codex/evidence'
+        state: directory
+        mode: '0700'
+
+- name: Verify the existing zone contract on the installed classic DNS facility
+  ansible.builtin.import_playbook: win_dns_zone.yml
+  vars:
+    dns_zone_case_tasks: tasks/win_dns_zone_legacy_case.yml
+    dns_zone_compare_released: false
+    dns_zone_master_server: '192.0.2.53'
+    dns_zone_second_master: '192.0.2.54'
+    dns_zone_recovery_reboot_authorized: true
+    dns_zone_capture: >-
+      {{ playbook_dir }}/../../tmp/codex/evidence/dns-zone-classic-v2.json
+    dns_zone_expected_failures:
+      - update-primary
+      - require-secondary-servers
+      - require-stub-servers
+      - require-forwarder-servers
+      - unsupported-stub-conversion
+      - unsupported-forwarder-conversion
+      - reject-file-to-ad
+    dns_zone_expected_unchanged:
+      - repeat-primary
+      - preview-primary
+      - repeat-forwarder
+      - preview-forwarder
+      - repeat-secondary
+      - repeat-stub
+      - preview-removal
+      - absent-missing

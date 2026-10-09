@@ -1,0 +1,207 @@
+---
+route_cases:
+  - name: Predict creating a persistent route
+    destination: '{{ route_state.destinations[0] }}/32'
+    check: true
+    changed: true
+    msg: Route added
+    count: 0
+  - name: Create a persistent route with a supplied metric
+    destination: '{{ route_state.destinations[0] }}/32'
+    metric: 37
+    changed: true
+    msg: Route added
+    count: 1
+    metric_expected: 0
+  - name: Repeat the route request
+    destination: '{{ route_state.destinations[0] }}/32'
+    metric: 37
+    changed: false
+    msg: Static route already exists
+    count: 1
+  - name: Preserve existing destination regardless of gateway metric and prefix
+    destination: '{{ route_state.destinations[0] }}/24'
+    gateway: invalid-gateway
+    metric: -5
+    changed: false
+    msg: Static route already exists
+    count: 1
+  - name: Predict removing the route
+    destination: '{{ route_state.destinations[0] }}/32'
+    state: absent
+    check: true
+    changed: true
+    msg: Route removed
+    count: 1
+  - name: Reject a different removal prefix instead of deleting the stored route
+    destination: '{{ route_state.destinations[0] }}/24'
+    state: absent
+    changed: false
+    error: 'Failed to remove the requested route:'
+    count: 1
+  - name: Remove the complete prefix regardless of supplied gateway
+    destination: '{{ route_state.destinations[0] }}/32'
+    gateway: invalid-gateway
+    state: absent
+    changed: true
+    msg: Route removed
+    count: 0
+  - name: Repeat removal
+    destination: '{{ route_state.destinations[0] }}/32'
+    state: absent
+    changed: false
+    msg: No route to remove
+  - name: Preserve absent invalid prefix without write validation
+    destination: '{{ route_state.destinations[0] }}/99'
+    state: absent
+    changed: false
+    msg: No route to remove
+  - name: Reject an invalid gateway in check mode
+    destination: '{{ route_state.destinations[0] }}/32'
+    gateway: invalid-gateway
+    check: true
+    changed: false
+    error: 'Failed to create a new route:'
+  - name: Reject an invalid gateway without writing
+    destination: '{{ route_state.destinations[0] }}/32'
+    gateway: invalid-gateway
+    changed: false
+    error: 'Failed to create a new route:'
+  - name: Create an on-link route with the default gateway value
+    destination: '{{ route_state.destinations[0] }}/32'
+    gateway: '0.0.0.0'
+    modern: true
+    changed: true
+    msg: Route added
+    count: 1
+    metric_expected: 0
+  - name: Remove the on-link route
+    destination: '{{ route_state.destinations[0] }}/32'
+    state: absent
+    modern: true
+    changed: true
+    msg: Route removed
+    count: 0
+  - name: Predict an on-link request without invoking the legacy write
+    destination: '{{ route_state.destinations[0] }}/32'
+    gateway: '0.0.0.0'
+    legacy: true
+    check: true
+    changed: true
+    msg: Route added
+    count: 0
+  - name: Reject actual on-link creation on the legacy native stack
+    destination: '{{ route_state.destinations[0] }}/32'
+    gateway: '0.0.0.0'
+    legacy: true
+    changed: false
+    error: 'Failed to create a new route:'
+    count: 0
+  - name: Preserve absence after the rejected legacy on-link request
+    destination: '{{ route_state.destinations[0] }}/32'
+    legacy: true
+    state: absent
+    changed: false
+    msg: No route to remove
+    count: 0
+  - name: Reject an unreachable IPv6 gateway in check mode
+    destination: '{{ route_state.ipv6 }}'
+    gateway: '::'
+    modern: true
+    check: true
+    changed: false
+    error: 'Failed to create a new route:'
+  - name: Reject an unreachable IPv6 gateway without writing
+    destination: '{{ route_state.ipv6 }}'
+    gateway: '::'
+    modern: true
+    changed: false
+    error: 'Failed to create a new route:'
+  - name: Predict creating a modern IPv6 route
+    destination: '{{ route_state.ipv6 }}'
+    gateway: '::1'
+    modern: true
+    check: true
+    changed: true
+    msg: Route added
+  - name: Reject a loopback IPv6 next hop on actual creation
+    destination: '{{ route_state.ipv6 }}'
+    gateway: '::1'
+    modern: true
+    changed: false
+    error: 'Failed to create a new route:'
+  - name: Predict an IPv6 route through the connected link-local interface
+    destination: '{{ route_state.ipv6 }}'
+    gateway: 'fe80::2'
+    modern: true
+    check: true
+    changed: true
+    msg: Route added
+  - name: Create an IPv6 route through the connected link-local interface
+    destination: '{{ route_state.ipv6 }}'
+    gateway: 'fe80::2'
+    modern: true
+    changed: true
+    msg: Route added
+  - name: Reject repeated IPv6 creation through the pinned IPv4 lookup
+    destination: '{{ route_state.ipv6 }}'
+    gateway: 'fe80::2'
+    modern: true
+    changed: false
+    error: 'Failed to create a new route:'
+  - name: Preserve IPv6 on removal because the pinned IPv4 lookup cannot find it
+    destination: '{{ route_state.ipv6 }}'
+    state: absent
+    modern: true
+    changed: false
+    msg: No route to remove
+  - name: Reject an invalid prefix in check mode
+    destination: '{{ route_state.destinations[0] }}/99'
+    modern: true
+    check: true
+    changed: false
+    error: 'Failed to create a new route:'
+  - name: Reject the invalid prefix on actual creation
+    destination: '{{ route_state.destinations[0] }}/99'
+    modern: true
+    changed: false
+    error: 'Failed to create a new route:'
+  - name: Predict a valid prefix containing host bits
+    destination: '{{ route_state.destinations[0] }}/24'
+    modern: true
+    check: true
+    changed: true
+    msg: Route added
+    count: 0
+  - name: Reject actual host-bit creation without normalizing the write
+    destination: '{{ route_state.destinations[0] }}/24'
+    modern: true
+    changed: false
+    error: 'Failed to create a new route:'
+    count: 0
+  - name: Reject dotted netmask prefix syntax in check mode
+    destination: '{{ route_state.destinations[-1] }}/255.255.255.0'
+    modern: true
+    check: true
+    changed: false
+    error: 'Failed to create a new route:'
+    count: 0
+  - name: Reject dotted netmask prefix syntax without writing
+    destination: '{{ route_state.destinations[-1] }}/255.255.255.0'
+    modern: true
+    changed: false
+    error: 'Failed to create a new route:'
+    count: 0
+  - name: Reject dotted hostmask prefix syntax in check mode
+    destination: '{{ route_state.destinations[-1] }}/0.0.0.255'
+    modern: true
+    check: true
+    changed: false
+    error: 'Failed to create a new route:'
+    count: 0
+  - name: Reject dotted hostmask prefix syntax without writing
+    destination: '{{ route_state.destinations[-1] }}/0.0.0.255'
+    modern: true
+    changed: false
+    error: 'Failed to create a new route:'
+    count: 0

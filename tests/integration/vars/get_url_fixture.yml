@@ -1,0 +1,568 @@
+---
+get_url_server: |
+  # SPDX-License-Identifier: GPL-3.0-or-later
+  import base64, ctypes, hashlib, http.server, json, os, socketserver, ssl
+  import sys, threading, time
+  from urllib.parse import urlsplit
+  root, token = sys.argv[1:3]
+  body = b'legacy download fixture\x00\xff\n'
+  dword, pointer = ctypes.c_uint32, ctypes.c_void_p
+  api = ctypes.WinDLL('kernel32', use_last_error=True)
+  api.GetCurrentProcess.restype = pointer
+  api.GetProcessTimes.argtypes = [pointer] + [pointer] * 4
+  api.GetProcessTimes.restype = ctypes.c_int32
+  times = [(dword * 2)() for _ in range(4)]
+  assert api.GetProcessTimes(api.GetCurrentProcess(),
+      *[ctypes.byref(value) for value in times])
+  creation = times[0][0] | (times[0][1] << 32)
+  lock = threading.Lock()
+
+  class Server(socketserver.ThreadingMixIn, http.server.HTTPServer):
+      daemon_threads = True
+
+      def get_request(self):
+          try:
+              connection, address = http.server.HTTPServer.get_request(self)
+          except OSError as error:
+              if isinstance(self.socket, ssl.SSLSocket):
+                  self.record_tls({'event': 'failure', 'errno': error.errno,
+                      'library': getattr(error, 'library', None),
+                      'reason': getattr(error, 'reason', None),
+                      'message': str(error)})
+              raise
+          if isinstance(connection, ssl.SSLSocket):
+              # Python 3.4 lacks SSLSocket.version(); this context accepts one
+              # chosen protocol, so a completed handshake proves that version.
+              peer = connection.getpeercert(binary_form=True)
+              self.record_tls({'event': 'success',
+                  'version': 'TLSv1' if os.path.exists(os.path.join(
+                      root, 'legacy-tls.flag')) else 'TLSv1.2',
+                  'cipher': connection.cipher(),
+                  'client_sha1': hashlib.sha1(peer).hexdigest()
+                  if peer else None})
+          return connection, address
+
+      def record_tls(self, entry):
+          with lock:
+              with open(os.path.join(root, 'tls.jsonl'), 'a',
+                        encoding='utf-8') as stream:
+                  stream.write(json.dumps(entry) + '\n')
+
+  class Handler(http.server.BaseHTTPRequestHandler):
+      protocol_version = 'HTTP/1.1'
+
+      def log_message(self, *args):
+          pass
+
+      def handle_request(self):
+          peer = (self.connection.getpeercert(binary_form=True)
+                  if hasattr(self.connection, 'getpeercert') else None)
+          with lock:
+              with open(os.path.join(root, 'requests.jsonl'), 'a',
+                        encoding='utf-8') as stream:
+                  stream.write(json.dumps({'method': self.command,
+                      'path': self.path, 'headers': dict(self.headers),
+                      'client_sha1': hashlib.sha1(peer).hexdigest()
+                      if peer else None}) + '\n')
+          request_path = self.path
+          if request_path.startswith('http://'):
+              request_path = urlsplit(request_path).path
+              if request_path == '/proxy-auth':
+                  expected = 'Basic ' + base64.b64encode(
+                      b'fixture:secret').decode()
+                  if self.headers.get('Proxy-Authorization') != expected:
+                      self.send_response(407)
+                      self.send_header('Proxy-Authenticate',
+                                       'Basic realm="fixture-proxy"')
+                      self.send_header('Content-Length', '0')
+                      self.end_headers()
+                      return
+          if self.path == '/health/' + token:
+              data, status = token.encode('ascii'), 200
+          elif self.path == '/client':
+              data, status = (body, 200) if peer else (b'client required', 403)
+          elif self.path.startswith('/status/'):
+              data, status = b'fixture status', int(self.path.rsplit('/', 1)[1])
+          elif self.path.startswith('/redirect/'):
+              remaining = int(self.path.rsplit('/', 1)[1])
+              self.send_response(302)
+              self.send_header('Location', '/redirect/' + str(remaining-1)
+                  if remaining > 1 else '/payload.bin')
+              self.send_header('Content-Length', '0')
+              self.end_headers()
+              return
+          elif self.path.startswith('/redirect-status/'):
+              status = int(self.path.rsplit('/', 1)[1])
+              self.send_response(status)
+              self.send_header('Location', '/payload.bin')
+              self.send_header('Content-Length', '0')
+              self.end_headers()
+              return
+          elif self.path == '/redirect-missing-location':
+              self.send_response(302)
+              self.send_header('Content-Length', '0')
+              self.end_headers()
+              return
+          elif self.path == '/redirect-delay':
+              time.sleep(.75)
+              self.send_response(302)
+              self.send_header('Location', '/delay/0.75')
+              self.send_header('Content-Length', '0')
+              self.end_headers()
+              return
+          elif self.path.startswith('/auth'):
+              expected = 'Basic ' + base64.b64encode(b'fixture:secret').decode()
+              if self.headers.get('Authorization') != expected:
+                  self.send_response(
+                      404 if self.path == '/auth-hidden' else 401)
+                  if self.path != '/auth-hidden':
+                      self.send_header('WWW-Authenticate',
+                                       'Basic realm="fixture"')
+                  self.send_header('Content-Length', '0')
+                  self.end_headers()
+                  return
+              data, status = body, 200
+          elif self.path.startswith('/delay/'):
+              time.sleep(float(self.path.rsplit('/', 1)[1]))
+              data, status = body, 200
+          elif self.path == '/headers':
+              data, status = json.dumps(dict(self.headers),
+                  sort_keys=True).encode('utf-8'), 200
+          elif self.path.startswith('/checksum/'):
+              algorithm = self.path.rsplit('/', 1)[1]
+              data, status = (hashlib.new(algorithm, body).hexdigest() +
+                  '  ./payload.bin\n').encode('ascii'), 200
+          elif self.path == '/checksum-missing':
+              data, status = b'123  other.bin\n', 200
+          else:
+              data, status = body, 200
+          self.send_response(status)
+          self.send_header('Content-Length', str(len(data)))
+          if request_path != '/no-last-modified':
+              self.send_header('Last-Modified', 'Sat, 01 Jan 2000 00:00:00 GMT')
+          self.end_headers()
+          if self.command != 'HEAD':
+              try:
+                  self.wfile.write(data)
+              except (BrokenPipeError, ConnectionResetError):
+                  pass
+
+      do_GET = handle_request
+      do_HEAD = handle_request
+      do_POST = handle_request
+      do_PUT = handle_request
+
+  server = Server(('127.0.0.1', 0), Handler)
+  tls_server, tls_started = None, False
+  try:
+      info = {'pid': os.getpid(), 'creation': creation, 'token': token,
+              'port': server.server_address[1]}
+      certificate = os.path.join(root, 'server-cert.pem')
+      key = os.path.join(root, 'server-key.pem')
+      if os.path.exists(certificate) or os.path.exists(key):
+          assert os.path.isfile(certificate) and os.path.isfile(key)
+          protocol = (ssl.PROTOCOL_TLSv1 if os.path.exists(
+              os.path.join(root, 'legacy-tls.flag')) else ssl.PROTOCOL_TLSv1_2)
+          context = ssl.SSLContext(protocol)
+          context.load_cert_chain(certificate, key)
+          client_ca = os.path.join(root, 'client-ca.pem')
+          if os.path.exists(client_ca):
+              context.load_verify_locations(client_ca)
+              context.verify_mode = ssl.CERT_OPTIONAL
+          tls_server = Server(('127.0.0.1', 0), Handler)
+          tls_server.socket = context.wrap_socket(tls_server.socket,
+                                                  server_side=True)
+          tls_thread = threading.Thread(target=tls_server.serve_forever,
+                                        kwargs={'poll_interval': .1})
+          tls_thread.daemon = True
+          tls_thread.start()
+          tls_started = True
+          info['tls_port'] = tls_server.server_address[1]
+      metadata = os.path.join(root, 'server.json')
+      with open(metadata + '.tmp', 'w', encoding='utf-8') as stream:
+          json.dump(info, stream)
+          stream.flush()
+          os.fsync(stream.fileno())
+      os.replace(metadata + '.tmp', metadata)
+      # A bounded child never survives an abandoned lab run indefinitely.
+      timer = threading.Timer(1200, server.shutdown)
+      timer.daemon = True
+      timer.start()
+      server.serve_forever(poll_interval=.1)
+  finally:
+      if tls_server is not None:
+          if tls_started:
+              tls_server.shutdown()
+          tls_server.server_close()
+      server.server_close()
+
+get_url_program: |
+  # SPDX-License-Identifier: GPL-3.0-or-later
+  import base64, binascii, ctypes, hashlib, json, os, socket, subprocess
+  import sys, tempfile, time, uuid
+  from urllib.request import urlopen
+  assert sys.version_info[:3] == (3, 4, 4)
+  workspace, operation = os.path.abspath(sys.argv[1]), sys.argv[2]
+  journal_path = os.path.join(workspace, 'get-url-journal.json')
+  output = os.path.join(workspace, 'output')
+  sentinel = os.path.join(workspace, 'preserved.bin')
+  payload = b'legacy download fixture\x00\xff\n'
+  dword, pointer = ctypes.c_uint32, ctypes.c_void_p
+  api = ctypes.WinDLL('kernel32', use_last_error=True)
+  api.GetFileAttributesW.argtypes = [ctypes.c_wchar_p]
+  api.GetFileAttributesW.restype = dword
+  api.OpenProcess.argtypes = [dword, ctypes.c_int32, dword]
+  api.OpenProcess.restype = pointer
+  api.GetProcessTimes.argtypes = [pointer] + [pointer] * 4
+  api.GetProcessTimes.restype = ctypes.c_int32
+  api.TerminateProcess.argtypes = [pointer, dword]
+  api.TerminateProcess.restype = ctypes.c_int32
+  api.WaitForSingleObject.argtypes = [pointer, dword]
+  api.WaitForSingleObject.restype = dword
+  api.CloseHandle.argtypes = [pointer]
+  api.CloseHandle.restype = ctypes.c_int32
+  api.GetLongPathNameW.argtypes = [ctypes.c_wchar_p, ctypes.c_wchar_p, dword]
+  api.GetLongPathNameW.restype = dword
+
+  def canonical(path):
+      size = api.GetLongPathNameW(path, None, 0)
+      assert size
+      buffer = ctypes.create_unicode_buffer(size)
+      length = api.GetLongPathNameW(path, buffer, size)
+      assert 0 < length < size
+      return os.path.normcase(buffer.value)
+
+  assert os.path.basename(workspace).startswith('legacy-windows-get-url-')
+  assert canonical(os.path.dirname(workspace)) == canonical(
+      tempfile.gettempdir())
+  assert not api.GetFileAttributesW(workspace) & 0x400
+
+  def tree(path):
+      if not os.path.exists(path):
+          return None
+      attributes = api.GetFileAttributesW(path)
+      assert attributes != 0xffffffff and not attributes & 0x400
+      if os.path.isdir(path):
+          return {'attributes': attributes, 'children': {
+              name: tree(os.path.join(path, name))
+              for name in sorted(os.listdir(path))}}
+      with open(path, 'rb') as stream:
+          content = binascii.hexlify(stream.read()).decode('ascii')
+      return {'attributes': attributes, 'hex': content,
+              'mtime': os.stat(path).st_mtime}
+
+  def write(record):
+      descriptor, temporary = tempfile.mkstemp(prefix='.get-url-journal-',
+                                               dir=workspace)
+      try:
+          with os.fdopen(descriptor, 'w', encoding='utf-8') as stream:
+              json.dump(record, stream, sort_keys=True)
+              stream.flush()
+              os.fsync(stream.fileno())
+          os.replace(temporary, journal_path)
+      finally:
+          if os.path.exists(temporary):
+              os.remove(temporary)
+
+  def journal():
+      with open(journal_path, encoding='utf-8') as stream:
+          record = json.load(stream)
+      assert record['workspace'] == workspace
+      assert tree(sentinel) == record['sentinel']
+      assert tree(os.path.join(workspace, 'source.bin')) == record['source']
+      if 'tls_materials' in record:
+          assert {'server-cert.pem', 'server-key.pem'}.issubset(
+              record['tls_materials'])
+          assert set(record['tls_materials']).issubset({
+              'server-cert.pem', 'server-key.pem', 'client-ca.pem',
+              'client.pfx', 'trust-ca.pem', 'legacy-tls.flag'})
+          for name, original in record['tls_materials'].items():
+              assert tree(os.path.join(workspace, name)) == original
+      return record
+
+  def server_info(record):
+      with open(os.path.join(workspace, 'server.json'),
+                encoding='utf-8') as stream:
+          info = json.load(stream)
+      assert info['token'] == record['token']
+      assert info['pid'] == record['process']['pid']
+      if record['process']['creation'] is None:
+          assert record.get('child_stopped') is True
+      else:
+          assert info['creation'] == record['process']['creation']
+      assert ('tls_port' in info) == ('tls_materials' in record)
+      return info
+
+  def clear_output():
+      assert os.path.isdir(output)
+      assert not api.GetFileAttributesW(output) & 0x400
+      assert set(os.listdir(output)).issubset({'result.bin', 'payload.bin'})
+      for name in os.listdir(output):
+          path = os.path.join(output, name)
+          if tree(path).get('children') is not None:
+              assert name == 'nested' and not os.listdir(path)
+              os.rmdir(path)
+          else:
+              os.chmod(path, 0o666)
+              os.remove(path)
+
+  def request_history():
+      path = os.path.join(workspace, 'requests.jsonl')
+      with open(path, encoding='utf-8') as stream:
+          return [json.loads(line) for line in stream]
+
+  def tls_history():
+      path = os.path.join(workspace, 'tls.jsonl')
+      if not os.path.exists(path):
+          return []
+      with open(path, encoding='utf-8') as stream:
+          return [json.loads(line) for line in stream]
+
+  def prepare(case):
+      record = journal()
+      clear_output()
+      if 'contents' in case or case.get('fixture_payload'):
+          target = os.path.join(output, 'result.bin')
+          with open(target, 'wb') as stream:
+              stream.write(payload if case.get('fixture_payload') else
+                           case['contents'].encode('utf-8'))
+          os.utime(target, (case.get('mtime', 946684801),) * 2)
+      record['prepared_at'] = time.time()
+      record['prepared_requests'] = len(request_history())
+      record['prepared_tls'] = len(tls_history())
+      write(record)
+      return {'output': tree(output), 'sentinel': tree(sentinel),
+              'source': tree(os.path.join(workspace, 'source.bin')),
+              'time': time.time()}
+
+  if operation in ('cleanup', 'finalize') and not os.path.exists(journal_path):
+      # Without a journal, only a still-empty owned workspace is attributable.
+      assert not os.listdir(workspace)
+      result = {'restored': True, 'server_stopped': True, 'finalized': True,
+                'empty_owned_workspace': True}
+  elif operation == 'setup':
+      assert not os.listdir(workspace)
+      assert os.path.basename(workspace).startswith('legacy-windows-get-url-')
+      assert canonical(os.path.dirname(workspace)) == canonical(
+          tempfile.gettempdir())
+      materials = None
+      if len(sys.argv) > 3:
+          materials = json.loads(base64.b64decode(sys.argv[3]).decode('utf-8'))
+          assert (isinstance(materials, dict) and
+                  {'cert', 'key'}.issubset(materials) and
+                  set(materials).issubset(
+                      {'cert', 'key', 'client_ca', 'client_pfx', 'trust_ca',
+                       'legacy_tls'}))
+          legacy_tls = materials.pop('legacy_tls', False)
+          assert isinstance(legacy_tls, bool)
+          materials = {name: base64.b64decode(value, validate=True)
+                       for name, value in materials.items()}
+          if legacy_tls:
+              materials['legacy_tls'] = b'TLSv1\n'
+      os.mkdir(output)
+      for path, content in ((sentinel, b'protected sibling\x00\xff'),
+                            (os.path.join(workspace, 'source.bin'), payload)):
+          with open(path, 'wb') as stream:
+              stream.write(content)
+          os.utime(path, (946684800,) * 2)
+      record = {'workspace': workspace, 'token': uuid.uuid4().hex,
+                'sentinel': tree(sentinel),
+                'source': tree(os.path.join(workspace, 'source.bin')),
+                'initial_output': tree(output), 'verified': False}
+      if materials is not None:
+          record['tls_materials'] = {}
+          names = {'cert': 'server-cert.pem', 'key': 'server-key.pem',
+                   'client_ca': 'client-ca.pem', 'client_pfx': 'client.pfx',
+                   'trust_ca': 'trust-ca.pem',
+                   'legacy_tls': 'legacy-tls.flag'}
+          for kind, content in materials.items():
+              name = names[kind]
+              path = os.path.join(workspace, name)
+              with open(path, 'wb') as stream:
+                  stream.write(content)
+              os.utime(path, (946684800,) * 2)
+              record['tls_materials'][name] = tree(path)
+      write(record)
+      script = os.path.join(workspace, 'server.py')
+      with open(script, 'w', encoding='utf-8') as stream:
+          stream.write({{ get_url_server | to_json }})
+      # Python3.4 permits close_fds=True without stdio redirects on Windows.
+      # A detached child must not retain the SSH task's inherited pipe handles.
+      # Break away from the SSH job, which otherwise kills its child processes.
+      # If breakaway is forbidden, fail without changing the job's policy.
+      try:
+          process = subprocess.Popen([sys.executable, script, workspace,
+              record['token']], creationflags=0x1000000 | 8 | 512,
+              close_fds=True)
+      except OSError as error:
+          record['spawn_error'] = error.winerror
+          write(record)
+          raise
+      record['process'] = {'pid': process.pid, 'creation': None}
+      try:
+          times = [(dword * 2)() for _ in range(4)]
+          # This owned handle cannot identify a reused PID, even after exit.
+          assert api.GetProcessTimes(int(process._handle),
+              *[ctypes.byref(value) for value in times])
+          record['process']['creation'] = times[0][0] | (times[0][1] << 32)
+          write(record)
+      except BaseException:
+          # Do not leak a child if identity capture or its durable write fails.
+          status = api.WaitForSingleObject(int(process._handle), 0)
+          assert status in (0, 0x102)
+          if status == 0x102:
+              assert api.TerminateProcess(int(process._handle), 0)
+              assert api.WaitForSingleObject(int(process._handle), 5000) == 0
+          record['child_stopped'] = True
+          write(record)
+          raise
+      for attempt in range(100):
+          if os.path.exists(os.path.join(workspace, 'server.json')):
+              info = server_info(record)
+              with urlopen('http://127.0.0.1:{0}/health/{1}'.format(
+                      info['port'], record['token']), timeout=2) as response:
+                  assert response.read().decode('ascii') == record['token']
+              break
+          if process.poll() is not None:
+              raise ValueError('Owned HTTP fixture exited before readiness')
+          time.sleep(.05)
+      else:
+          raise ValueError('Owned HTTP fixture did not become ready')
+      result = {'server': info, 'before': record,
+                'http': 'http://127.0.0.1:' + str(info['port']),
+                'file': ('file:///' + workspace.replace('\\', '/') +
+                         '/source.bin'),
+                'hashes': {kind: hashlib.new(kind, payload).hexdigest()
+                    for kind in ('md5', 'sha1', 'sha256', 'sha384', 'sha512')}}
+      if 'tls_port' in info:
+          result['https'] = 'https://127.0.0.1:' + str(info['tls_port'])
+  elif operation == 'connect_probe':
+      record = journal()
+      info = server_info(record)
+      handle = api.OpenProcess(0x400 | 0x100000, False, info['pid'])
+      assert handle
+      try:
+          times = [(dword * 2)() for _ in range(4)]
+          assert api.GetProcessTimes(handle,
+              *[ctypes.byref(value) for value in times])
+          assert times[0][0] | (times[0][1] << 32) == info['creation']
+          assert api.WaitForSingleObject(handle, 0) == 0x102
+      finally:
+          api.CloseHandle(handle)
+      host = 'legacy-windows-http-zero.invalid'
+      try:
+          socket.getaddrinfo(host, 80, type=socket.SOCK_STREAM)
+      except socket.gaierror as error:
+          assert error.errno == 11001
+          dns_error = error.errno
+      else:
+          raise AssertionError(
+              'Reserved .invalid fixture name unexpectedly resolved')
+      with socket.socket() as connection:
+          connection.settimeout(5)
+          refused_error = connection.connect_ex(
+              ('127.0.0.1', info['refused_port']))
+      assert refused_error == 10061, refused_error
+      result = {'dns_host': host, 'dns_error': dns_error,
+                'refused_host': '127.0.0.1',
+                'refused_port': info['refused_port'],
+                'refused_error': refused_error,
+                'process': record['process'],
+                'time': time.time()}
+  elif operation == 'prepare':
+      case = json.loads(base64.b64decode(sys.argv[3]).decode('utf-8'))
+      result = prepare(case)
+  elif operation == 'observe':
+      record = journal()
+      observed = tree(output)
+      history = request_history()[record['prepared_requests']:]
+      comparable = {'attributes': observed['attributes'], 'children': {
+          name: {key: value for key, value in entry.items() if key != 'mtime'}
+          for name, entry in observed['children'].items()}}
+      result = {'output': tree(output), 'sentinel': tree(sentinel),
+                'source': tree(os.path.join(workspace, 'source.bin')),
+                'time': time.time(), 'portable_output': comparable,
+                'requests': history,
+                'tls': tls_history()[record['prepared_tls']:],
+                'request_methods': [entry['method'] for entry in history],
+                'request_path': history[-1]['path'] if history else None,
+                'request_headers': {name.lower(): value
+                    for name, value in history[-1]['headers'].items()}
+                    if history else {},
+                'authorization_after_first': any(
+                    name.lower() == 'authorization'
+                    for entry in history[1:] for name in entry['headers']),
+                'modified_in_request': all(
+                    record['prepared_at'] <= entry['mtime']
+                    <= time.time() for entry in observed['children'].values())}
+  elif operation == 'cleanup':
+      record = journal()
+      metadata = os.path.join(workspace, 'server.json')
+      info = server_info(record) if os.path.exists(metadata) else None
+      if info is None:
+          assert ('process' in record or
+                  record.get('spawn_error') is not None)
+          info = record.get('process')
+      handle = (api.OpenProcess(0x400 | 1 | 0x100000, False, info['pid'])
+                if info is not None and not record.get('child_stopped')
+                else None)
+      if handle:
+          try:
+              times = [(dword * 2)() for _ in range(4)]
+              assert api.GetProcessTimes(handle,
+                  *[ctypes.byref(value) for value in times])
+              assert times[0][0] | (times[0][1] << 32) == info['creation']
+              status = api.WaitForSingleObject(handle, 0)
+              assert status in (0, 0x102)
+              if status == 0x102:
+                  assert api.TerminateProcess(handle, 0)
+                  assert api.WaitForSingleObject(handle, 5000) == 0
+          finally:
+              api.CloseHandle(handle)
+      elif info is not None and not record.get('child_stopped'):
+          assert ctypes.get_last_error() == 87
+      if info is not None:
+          for name in ('port', 'tls_port', 'refused_port'):
+              if name in info:
+                  with socket.socket() as connection:
+                      assert connection.connect_ex(
+                          ('127.0.0.1', info[name])) != 0
+          if 'refused_port' in info:
+              # Refusal alone cannot exclude a bound, non-listening socket;
+              # rebinding also proves that this endpoint is available again.
+              with socket.socket() as connection:
+                  connection.bind(('127.0.0.1', info['refused_port']))
+      clear_output()
+      assert tree(output) == record['initial_output']
+      requests = []
+      requests_path = os.path.join(workspace, 'requests.jsonl')
+      if os.path.exists(requests_path):
+          with open(requests_path, encoding='utf-8') as stream:
+              requests = [json.loads(line) for line in stream]
+      record['verified'] = True
+      write(record)
+      result = {'restored': True, 'before': record,
+                'output': tree(output), 'sentinel': tree(sentinel),
+                'source': tree(os.path.join(workspace, 'source.bin')),
+                'server_stopped': True, 'requests': requests,
+                'tls': tls_history()}
+      if info is not None and 'refused_port' in info:
+          result['refused_port_closed'] = True
+  elif operation == 'finalize':
+      record = journal()
+      assert record['verified'] and tree(output) == record['initial_output']
+      allowed = {'output', 'preserved.bin', 'source.bin', 'server.py',
+          'get-url-journal.json'}
+      allowed.update(record.get('tls_materials', {}))
+      for name in ('server.json', 'requests.jsonl', 'server.json.tmp'):
+          if os.path.exists(os.path.join(workspace, name)):
+              assert 'process' in record
+              allowed.add(name)
+      if os.path.exists(os.path.join(workspace, 'tls.jsonl')):
+          assert 'process' in record and 'tls_materials' in record
+          allowed.add('tls.jsonl')
+      assert set(os.listdir(workspace)) == allowed
+      result = {'finalized': True}
+  else:
+      raise ValueError('Unknown fixture operation')
+  print(json.dumps(result, sort_keys=True))

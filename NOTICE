@@ -1,0 +1,48 @@
+sustainablelobster.legacy_windows
+Copyright (c) 2026 Joe Lustri for original contributions.
+The collection and project contributions are licensed under
+GPL-3.0-or-later; see LICENSE.
+
+This collection reimplements and adapts functionality from ansible.windows
+3.8.0, commit ff0ac96011ee196742901f34c0dd134acddbe89a:
+https://github.com/ansible-collections/ansible.windows/tree/3.8.0
+Upstream material is licensed under GNU GPL version 3 or later; its verbatim
+COPYING is included as LICENSES/ansible-windows-GPL-3.0-or-later.txt.
+
+The restart warning in plugins/action/win_reboot.py and the PowerShell exit-code
+handling in plugins/module_utils/legacy_windows_reboot_request.py incorporate
+portions of upstream plugins/plugin_utils/_reboot.py. The update-loop diagnostic
+in plugins/action/win_updates.py incorporates portions of upstream
+plugins/action/win_updates.py.
+Copyright (c) 2021 Ansible Project for these upstream portions.
+The Python implementations, compatibility adaptations, and licensing notices
+were modified by Joe Lustri; the licensing notices were updated on 2026-10-09.
+These adaptations are not the original upstream implementation.
+
+The Hebrew calendar postponement calculation in
+plugins/module_utils/legacy_windows_calendar.py adapts convertdate 2.4.0,
+commit 5bccce4c5329340e09594ab8405c953d83130bb5:
+https://github.com/fitnr/convertdate/blob/v2.4.0/src/convertdate/hebrew.py
+Copyright (c) 2014-2022 Neil Freeman; source copyright (c) 2016, fitnr.
+This adapted portion is MIT-licensed; see LICENSES/convertdate-MIT.txt.
+The collection does not import convertdate or its dependencies.
+
+The wildcard range casing table and expansion in
+plugins/module_utils/legacy_windows_find_match.py adapt RegexCharClass.cs from
+Microsoft .NET Framework Reference Source,
+commit ec9fa9ae770d522a5b5f0607898044b7478574a3:
+https://github.com/microsoft/referencesource/blob/ec9fa9ae770d522a5b5f0607898044b7478574a3/System/regex/system/text/regularexpressions/RegexCharClass.cs
+Copyright (c) Microsoft Corporation.
+This adapted portion is MIT-licensed;
+see LICENSES/microsoft-referencesource-MIT.txt.
+The collection does not import or require the .NET runtime.
+
+The Unicode 8.0.0 Basic Multilingual Plane category ranges in
+plugins/module_utils/legacy_windows_regex_categories.py derive from
+https://www.unicode.org/Public/8.0.0/ucd/UnicodeData.txt
+SHA256: 38b17e1118206489a7e0ab5d29d7932212d38838df7d3ec025ecb58e8798ec20
+Copyright (c) 1991-2015 Unicode, Inc.
+This derived data is licensed under Unicode-3.0; see LICENSES/Unicode-3.0.txt.
+Original regex translation and generation code is GPL-3.0-or-later.
+The collection uses Python's standard-library re engine, not a .NET runtime
+or a third-party regex dependency.

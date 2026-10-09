@@ -1,0 +1,274 @@
+---
+- name: Verify isolated user profiles and exact original-state recovery
+  hosts: legacy_windows
+  gather_facts: false
+  vars_files:
+    - vars/user_profile.yml
+    - vars/user_profile_fixture.yml
+  vars:
+    # Ansible re-escapes Jinja string literals; keep this separator as data.
+    user_profile_separator: '\'
+    user_profile_capture:
+      observation_scope: >-
+        Complete ProfileList keys/values and local account name/SID identities,
+        profile-root entry names/attributes, and owned profile paths/attributes.
+        Registry security descriptors and recursive profile contents are not
+        part of this observation scope. Recovery uses native DeleteProfileW,
+        never recursive Python deletion through profile junctions.
+      results: '{{ user_profile_results }}'
+      original_only: '{{ user_profile_original_only | default(false) | bool }}'
+      retained_comparison: >-
+        {{ user_profile_retained_comparison | default(false) | bool }}
+      original_expected_count: >-
+        {{ user_profile_original_expected_count | default(50) }}
+      workspace: '{{ user_profile_workspace.path | default(none) }}'
+      setup: '{{ user_profile_setup.stdout | default("") }}'
+      original_context: '{{ user_profile_original_context | default(none) }}'
+      cleanup: '{{ user_profile_cleanup | default({}) }}'
+      staging_before: '{{ user_profile_staging_before.stdout | default("") }}'
+      staging_after: '{{ user_profile_staging_after.stdout | default("") }}'
+  tasks:
+    - name: Allocate private controller evidence
+      ansible.builtin.tempfile:
+        state: file
+        prefix: user-profile-{{ inventory_hostname }}-
+        suffix: .json
+        path: '{{ playbook_dir }}/../../tmp'
+      register: user_profile_capture_file
+      delegate_to: localhost
+      vars: &local
+        ansible_connection: local
+        ansible_shell_type: sh
+        ansible_python_interpreter: '{{ ansible_playbook_python }}'
+      changed_when: false
+      check_mode: false
+
+    - name: Record private evidence location
+      ansible.builtin.debug:
+        msg: 'User Profile evidence: {{ user_profile_capture_file.path }}'
+
+    - name: Initialize retained profile results
+      ansible.builtin.set_fact:
+        user_profile_results: []
+
+    - name: Require actual Python 3.4.4 and read existing staging
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import glob,json,os,sys,tempfile;
+        assert sys.version_info[:3] == (3,4,4);
+        print(json.dumps(sorted(glob.glob(os.path.join(tempfile.gettempdir(),
+        'ansible-tmp-*')) + glob.glob(os.path.join(tempfile.gettempdir(),
+        'legacy-windows-user-profile-*')))))""
+      register: user_profile_staging_before
+      changed_when: false
+
+    - name: Exercise only initially absent journal-owned profiles
+      block:
+        - name: Allocate an owned native recovery workspace
+          sustainablelobster.legacy_windows.win_tempfile: # noqa: args[module]
+            state: directory
+            prefix: legacy-windows-user-profile-demo-
+          register: user_profile_workspace
+          check_mode: false
+
+        - name: Journal original profile keys accounts and directory entries
+          sustainablelobster.legacy_windows.win_command: # noqa: args[module]
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - '-'
+              - '{{ user_profile_workspace.path }}'
+              - setup
+            stdin: '{{ user_profile_program }}'
+          register: user_profile_setup
+          check_mode: false
+
+        - name: Require a flushed journal before public profile operations
+          ansible.builtin.assert:
+            that: [(user_profile_setup.stdout | from_json).journaled]
+
+        - name: Retain unique owned account identities
+          ansible.builtin.set_fact:
+            user_profile_names: >-
+              {{ (user_profile_setup.stdout | from_json).context }}
+
+        - name: Require a modern original provider for the fixture continuation
+          ansible.builtin.assert:
+            that:
+              - >-
+                not (user_profile_original_only | default(false) | bool) or
+                user_profile_names.create_available
+
+        - name: Load only owned legacy fixture profiles with restored privileges
+          sustainablelobster.legacy_windows.win_command: # noqa: args[module]
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - '-'
+              - '{{ user_profile_workspace.path }}'
+              - seed-legacy
+            stdin: '{{ user_profile_program }}'
+          when: not user_profile_names.create_available
+          register: user_profile_legacy_seed
+          check_mode: false
+
+        - name: Validate native bindings and profile lifecycle
+          ansible.builtin.include_tasks: tasks/win_user_profile_case.yml
+          loop: >-
+            {{ user_profile_native_cases | default(user_profile_binding_cases +
+            user_profile_review_cases +
+            (user_profile_lifecycle_cases if user_profile_names.create_available
+            else user_profile_legacy_cases)) }}
+          loop_control:
+            loop_var: user_profile_case
+            label: '{{ user_profile_case.name }}'
+          vars:
+            user_profile_engine: native
+          when: not (user_profile_original_only | default(false) | bool)
+
+        - name: Compare unchanged original on CreateProfile-capable Windows
+          when: user_profile_names.create_available
+          block:
+            - name: Remove owned profiles before original # noqa: args[module]
+              sustainablelobster.legacy_windows.win_command:
+                argv:
+                  - '{{ ansible_python_interpreter }}'
+                  - '-'
+                  - '{{ user_profile_workspace.path }}'
+                  - prepare-original
+                stdin: '{{ user_profile_program }}'
+              register: user_profile_original_preparation
+              check_mode: false
+              when: >-
+                not (user_profile_retained_comparison | default(false) | bool)
+
+            - name: Retain replay identities without public result substitution
+              ansible.builtin.set_fact:
+                user_profile_names: >-
+                  {{ user_profile_original_preparation.stdout | from_json }}
+              when: >-
+                not (user_profile_retained_comparison | default(false) | bool)
+
+            - name: Record exact original continuation identities
+              ansible.builtin.set_fact:
+                user_profile_original_context: '{{ user_profile_names }}'
+
+            - name: Validate unchanged original using the same owned names
+              ansible.builtin.include_tasks: tasks/win_user_profile_case.yml
+              loop: >-
+                {{ user_profile_original_cases |
+                default(user_profile_binding_cases + user_profile_review_cases +
+                user_profile_lifecycle_cases) }}
+              loop_control:
+                loop_var: user_profile_case
+                label: '{{ user_profile_case.name }}'
+              vars:
+                user_profile_engine: original
+
+            - name: Require every original case and its independent validation
+              vars:
+                original_rows: >-
+                  {{ user_profile_results | selectattr('engine', 'equalto',
+                  'original') | list }}
+              ansible.builtin.assert:
+                that:
+                  - original_rows | length ==
+                    (user_profile_original_expected_count | default(50) | int)
+                  - >-
+                    original_rows | selectattr('validated') |
+                    list | length ==
+                    (user_profile_original_expected_count | default(50) | int)
+
+            - name: Compare literally every public field from both engines
+              vars:
+                native: >-
+                  {{ user_profile_results | selectattr('engine', 'equalto',
+                  'native') | map(attribute='result') | list }}
+                original: >-
+                  {{ user_profile_results | selectattr('engine', 'equalto',
+                  'original') | map(attribute='result') | list }}
+              ansible.builtin.assert:
+                that: [native == original, native | length == 50]
+              when:
+                - not (user_profile_original_only | default(false) | bool)
+                - not (user_profile_retained_comparison | default(false) | bool)
+      always:
+        - name: Recover and retain exact cleanup evidence
+          block:
+            - name: Recover journal-owned resources # noqa: args[module]
+              sustainablelobster.legacy_windows.win_command:
+                argv:
+                  - '{{ ansible_python_interpreter }}'
+                  - '-'
+                  - '{{ user_profile_workspace.path }}'
+                  - cleanup
+                stdin: '{{ user_profile_program }}'
+              when: user_profile_workspace.path is defined
+              register: user_profile_cleanup
+              check_mode: false
+
+            - name: Save cleanup before equality assertions
+              ansible.builtin.copy:
+                content: '{{ user_profile_capture | to_nice_json }}'
+                dest: '{{ user_profile_capture_file.path }}'
+                mode: '0600'
+              delegate_to: localhost
+              vars: *local
+              changed_when: false
+
+            - name: Require exact original state before deleting workspace
+              vars:
+                cleanup: '{{ user_profile_cleanup.stdout | from_json }}'
+              ansible.builtin.assert:
+                that:
+                  - cleanup.restored
+                  - >-
+                    cleanup.journal_absent | default(false) or
+                    cleanup.before.registry == cleanup.after.registry
+                  - >-
+                    cleanup.journal_absent | default(false) or
+                    cleanup.before.accounts == cleanup.after.accounts
+                  - >-
+                    cleanup.journal_absent | default(false) or
+                    cleanup.before.directories == cleanup.after.directories
+                  - >-
+                    cleanup.journal_absent | default(false) or
+                    cleanup.after.owned_profiles.values() |
+                    select('ne', none) | list | length == 0
+              when: user_profile_workspace.path is defined
+
+            - name: Remove only the verified owned recovery workspace
+              sustainablelobster.legacy_windows.win_file: # noqa: args[module]
+                path: '{{ user_profile_workspace.path }}'
+                state: absent
+              when: user_profile_workspace.path is defined
+              check_mode: false
+
+            - name: Independently verify workspace journal and staging absence
+              ansible.builtin.raw: >-
+                cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+                "import glob,json,os,sys,tempfile;
+                assert not os.path.exists(sys.argv[1]);
+                print(json.dumps(sorted(glob.glob(os.path.join(
+                tempfile.gettempdir(),'ansible-tmp-*')) + glob.glob(
+                os.path.join(tempfile.gettempdir(),
+                'legacy-windows-user-profile-*')))))"
+                "{{ user_profile_workspace.path }}""
+              when: user_profile_workspace.path is defined
+              register: user_profile_staging_after
+              changed_when: false
+              check_mode: false
+
+            - name: Require original staging equality
+              ansible.builtin.assert:
+                that:
+                  - user_profile_staging_after.stdout | from_json ==
+                    user_profile_staging_before.stdout | from_json
+              when: user_profile_workspace.path is defined
+          always:
+            - name: Preserve all observations even if recovery fails
+              ansible.builtin.copy:
+                content: '{{ user_profile_capture | to_nice_json }}'
+                dest: '{{ user_profile_capture_file.path }}'
+                mode: '0600'
+              delegate_to: localhost
+              vars: *local
+              changed_when: false

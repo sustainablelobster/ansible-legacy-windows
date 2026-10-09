@@ -1,0 +1,11 @@
+---
+setup_parallel_program: |
+  WMI_SOURCE = {{ lookup('ansible.builtin.file',
+    playbook_dir + '/../../plugins/module_utils/legacy_windows_wmi.py')
+    | to_json }}
+  SETUP_SOURCE = {{ lookup('ansible.builtin.file',
+    playbook_dir + '/fixtures/setup.py') | to_json }}
+  ASYNC_SOURCE = {{ lookup('ansible.builtin.file',
+    playbook_dir + '/fixtures/native_async.py') | to_json }}
+  {{ lookup('ansible.builtin.file',
+    playbook_dir + '/fixtures/setup_parallel.py') }}

@@ -1,0 +1,42 @@
+{
+  "provenance": {
+    "upstream": "ansible.windows 3.8.0",
+    "upstream_commit": "ff0ac96011ee196742901f34c0dd134acddbe89a",
+    "observed_on": "2026-09-29",
+    "powershell": "5.1.26100.7462",
+    "scope": "Synthetic enum and getter observations only; no service configuration or private connection data.",
+    "serialization": "Explicit ConvertTo-Json -InputObject $object -Depth 99 -Compress, captured as a string before win_powershell output normalization.",
+    "enum": "None=0, Restart=1, Reboot=2, RunCommand=3; undefined values are created with Enum.ToObject.",
+    "switches": "Compare an inline enum switch, a variable assigned its result, and a variable assigned a switch on the enum's ToString result.",
+    "getters": "Description throws Win32Exception(2); FailureActions, DependedBy and Account throw Win32Exception(5). Values follow the module's property accesses and failure-action array construction."
+  },
+  "switches": [
+    {
+      "input": 0,
+      "inline": {"type": "none"},
+      "assigned": {"type": "none"},
+      "assigned_string": {"type": "none"}
+    },
+    {
+      "input": 4,
+      "inline": {"type": {}},
+      "assigned": {"type": {}},
+      "assigned_string": {"type": {}}
+    },
+    {
+      "input": 99,
+      "inline": {"type": {}},
+      "assigned": {"type": {}},
+      "assigned_string": {"type": {}}
+    }
+  ],
+  "getters": {
+    "description": null,
+    "failure_actions": [],
+    "failure_command": null,
+    "failure_reboot_msg": null,
+    "failure_reset_period_sec": null,
+    "dependency_of": null,
+    "username": null
+  }
+}

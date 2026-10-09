@@ -1,0 +1,403 @@
+---
+hotfix_helper_sources:
+  - - legacy_windows_regex
+    - >-
+      {{ lookup('file', playbook_dir +
+      '/../../plugins/module_utils/legacy_windows_regex.py') | b64encode }}
+  - - legacy_windows_find_match
+    - >-
+      {{ lookup('file', playbook_dir +
+      '/../../plugins/module_utils/legacy_windows_find_match.py') | b64encode }}
+  - - legacy_windows_wmi
+    - >-
+      {{ lookup('file', playbook_dir +
+      '/../../plugins/module_utils/legacy_windows_wmi.py') | b64encode }}
+  - - legacy_windows_service
+    - >-
+      {{ lookup('file', playbook_dir +
+      '/../../plugins/module_utils/legacy_windows_service.py') | b64encode }}
+  - - legacy_windows_hotfix_command
+    - >-
+      {{ lookup('file', playbook_dir +
+      '/../../plugins/module_utils/legacy_windows_hotfix_command.py') |
+      b64encode }}
+  - - legacy_windows_hotfix
+    - >-
+      {{ lookup('file', playbook_dir +
+      '/../../plugins/module_utils/legacy_windows_hotfix.py') | b64encode }}
+hotfix_program: |
+  {{ hotfix_fixture }}
+hotfix_fixture: |
+  # SPDX-License-Identifier: GPL-3.0-or-later
+  import base64
+  import binascii
+  import ctypes
+  import hashlib
+  import json
+  import os
+  import re
+  import subprocess
+  import sys
+  import tempfile
+  import types
+  import winreg
+
+  assert sys.version_info[:3] == (3, 4, 4)
+  SOURCE = "{{ hotfix_helper_sources | to_json | b64encode }}"
+  for name, source in json.loads(base64.b64decode(SOURCE).decode("utf-8")):
+      helper = types.ModuleType(name)
+      sys.modules[name] = helper
+      exec(
+          compile(base64.b64decode(source), name + ".py", "exec"),
+          helper.__dict__,
+      )
+  import legacy_windows_hotfix as hotfix
+  import legacy_windows_service as service
+
+  WORKSPACE, OPERATION = sys.argv[1:3]
+  JOURNAL = os.path.join(WORKSPACE, "hotfix-journal.json")
+  ROOT = os.environ["SystemRoot"]
+  PENDING = (
+      (r"SOFTWARE\Microsoft\Windows\CurrentVersion"
+       r"\Component Based Servicing\RebootPending"),
+      (r"SOFTWARE\Microsoft\Windows\CurrentVersion"
+       r"\WindowsUpdate\Auto Update\RebootRequired"),
+  )
+
+
+  def validate_workspace():
+      api = ctypes.WinDLL("kernel32", use_last_error=True)
+      api.GetLongPathNameW.argtypes = [
+          ctypes.c_wchar_p,
+          ctypes.c_wchar_p,
+          ctypes.c_uint32,
+      ]
+      api.GetLongPathNameW.restype = ctypes.c_uint32
+      paths = []
+      for path in (WORKSPACE, tempfile.gettempdir()):
+          size = api.GetLongPathNameW(os.path.abspath(path), None, 0)
+          if not size:
+              raise ctypes.WinError(ctypes.get_last_error())
+          buffer = ctypes.create_unicode_buffer(size)
+          assert (
+              0
+              < api.GetLongPathNameW(os.path.abspath(path), buffer, size)
+              < size
+          )
+          paths.append(os.path.normcase(buffer.value))
+      assert os.path.dirname(paths[0]) == paths[1]
+      assert os.path.basename(paths[0]).startswith(
+          "legacy-windows-hotfix-test-"
+      )
+
+
+  def write(record):
+      with open(JOURNAL, "w", encoding="utf-8") as stream:
+          json.dump(record, stream, sort_keys=True)
+          stream.flush()
+          os.fsync(stream.fileno())
+
+
+  def read():
+      with open(JOURNAL, encoding="utf-8") as stream:
+          record = json.load(stream)
+      assert record["workspace"] == WORKSPACE
+      return record
+
+
+  def services():
+      with hotfix.WmiConnection() as connection:
+          rows = connection.query(
+              "SELECT * FROM Win32_Service",
+              [
+                  "Name",
+                  "DisplayName",
+                  "StartMode",
+                  "State",
+                  "PathName",
+                  "StartName",
+              ],
+          )
+      for row in rows:
+          if (
+              row["Name"] != "TrustedInstaller"
+              and "bvsshserver" not in (row["PathName"] or "").lower()
+          ):
+              del row["State"]
+      return {row["Name"]: row for row in rows}
+
+
+  def pending():
+      result = {}
+      for path in PENDING:
+          try:
+              key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, path)
+          except FileNotFoundError:
+              result[path] = None
+              continue
+          with key:
+              values = {}
+              for index in range(winreg.QueryInfoKey(key)[1]):
+                  name, value, kind = winreg.EnumValue(key, index)
+                  if isinstance(value, bytes):
+                      value = {"hex": binascii.hexlify(value).decode("ascii")}
+                  values[name] = [value, kind]
+              result[path] = values
+      return result
+
+
+  def hotfixes():
+      with hotfix.WmiConnection() as connection:
+          return connection.query(
+              "SELECT HotFixID FROM Win32_QuickFixEngineering", ["HotFixID"]
+          )
+
+
+  def temporary():
+      names = os.listdir(tempfile.gettempdir())
+      return sorted(
+          name
+          for name in names
+          if name.startswith("legacy-windows-hotfix-")
+          or re.match(
+              r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+              name,
+          )
+      )
+
+
+  def protected_files(paths):
+      api = ctypes.WinDLL("kernel32", use_last_error=True)
+      api.GetFileAttributesW.argtypes = [ctypes.c_wchar_p]
+      api.GetFileAttributesW.restype = ctypes.c_uint32
+      result = {}
+      for path in paths:
+          with open(path, "rb") as source:
+              digest = hashlib.sha256(source.read()).hexdigest()
+          attributes = api.GetFileAttributesW(path)
+          assert attributes != 0xFFFFFFFF
+          result[path] = {
+              "sha256": digest,
+              "mtime": os.stat(path).st_mtime,
+              "attributes": attributes,
+          }
+      return result
+
+
+  def catalogue():
+      with hotfix.HotfixSession() as session:
+          return {
+              "visible": session.catalogue(),
+              "native": session.native_catalogue(),
+          }
+
+
+  def snapshot(record):
+      inventory = catalogue() if record["supported"] else None
+      return {
+          "packages": inventory,
+          "hotfixes": hotfixes(),
+          "pending": pending(),
+          "files": protected_files(record["protected_paths"]),
+          "temporary": temporary(),
+          "services": services(),
+      }
+
+
+  def cabinet(files, destination):
+      folder = os.path.dirname(destination)
+      os.makedirs(folder, exist_ok=True)
+      ddf = os.path.join(folder, "cabinet.ddf")
+      with open(ddf, "w", encoding="ascii") as stream:
+          stream.write(
+              ".OPTION EXPLICIT\n.Set Cabinet=on\n.Set Compress=on\n"
+              ".Set MaxDiskSize=0\n"
+          )
+          stream.write(
+              ".Set CabinetNameTemplate="
+              + os.path.basename(destination)
+              + "\n"
+          )
+          stream.write(".Set DiskDirectoryTemplate=" + folder + "\n")
+          for source, name in files:
+              stream.write('"' + source + '" ' + name + "\n")
+      with subprocess.Popen(
+          [os.path.join(ROOT, "System32", "makecab.exe"), "/F", ddf],
+          cwd=folder,
+          stdout=subprocess.PIPE,
+          stderr=subprocess.PIPE,
+      ) as process:
+          output, error = process.communicate()
+      assert process.returncode == 0, (
+          output.decode("mbcs"),
+          error.decode("mbcs"),
+      )
+      assert os.path.isfile(destination)
+
+
+  def setup():
+      assert not os.path.exists(JOURNAL)
+      record = {
+          "workspace": WORKSPACE,
+          "supported": False,
+          "protected_paths": [],
+          "before": {
+              "packages": None,
+              "hotfixes": hotfixes(),
+              "pending": pending(),
+              "files": {},
+              "temporary": temporary(),
+              "services": services(),
+          },
+          "complete": False,
+      }
+      write(record)
+      try:
+          with hotfix.HotfixSession() as session:
+              inventory = {
+                  "visible": session.catalogue(),
+                  "native": session.native_catalogue(),
+              }
+              record["supported"] = True
+              record["before"]["packages"] = inventory
+              selected = None
+              for row in record["before"]["hotfixes"]:
+                  value = hotfix.metadata_from_kb(session, row["HotFixID"])
+                  if value["state"] == "Installed" and isinstance(
+                      value["name"], str
+                  ):
+                      selected = value
+                      break
+      except OSError as error:
+          if str(error) != hotfix._PREREQUISITE:
+              raise
+          selected = None
+      if record["supported"]:
+          assert selected is not None
+          record["selected"] = selected
+          base = os.path.join(ROOT, "servicing", "Packages", selected["name"])
+          paths = [base + ".mum", base + ".cat"]
+          assert all(os.path.isfile(path) for path in paths)
+          record["protected_paths"] = paths
+          record["before"]["files"] = protected_files(paths)
+          write(record)
+          package = os.path.join(WORKSPACE, "cab", "package.cab")
+          cabinet(
+              [(paths[0], "update.mum"), (paths[1], "update.cat")], package
+          )
+          with hotfix.HotfixSession() as session:
+              value = session.information(package, True)
+          # Never pass a constructed package to normal installation unless the
+          # exact official package is already installed and reported applicable.
+          assert (
+              value["name"] == selected["name"]
+              and value["state"] == "Installed"
+          )
+          assert value["applicable"] is True
+          metadata = os.path.join(WORKSPACE, "metadata.xml")
+          properties = os.path.join(WORKSPACE, "properties.txt")
+          with open(metadata, "w", encoding="utf-8") as stream:
+              stream.write(
+                  '<unattend xmlns="urn:schemas-microsoft-com:unattend">'
+                  '<servicing><package action="install">'
+                  '<source location="package.cab"/></package>'
+                  "</servicing></unattend>"
+              )
+          with open(properties, "w", encoding="ascii") as stream:
+              stream.write('KB Article Number="' + selected["kb"][2:] + '"\n')
+          cabinet(
+              [
+                  (package, "package.cab"),
+                  (metadata, "metadata.xml"),
+                  (properties, "properties.txt"),
+              ],
+              os.path.join(WORKSPACE, "present", "installed.msu"),
+          )
+          cabinet(
+              [(properties, "properties.txt")],
+              os.path.join(WORKSPACE, "missing", "metadata.msu"),
+          )
+      record["complete"] = True
+      write(record)
+      return {
+          "supported": record["supported"],
+          "before": record["before"],
+          "selected": selected,
+          "installed_source": os.path.join(
+              WORKSPACE, "present", "installed.msu"
+          ),
+          "missing_xml_source": os.path.join(
+              WORKSPACE, "missing", "metadata.msu"
+          ),
+      }
+
+
+  def restore_service(before):
+      current = services()
+      original = before.get("TrustedInstaller")
+      if current.get("TrustedInstaller") == original:
+          return
+      assert (
+          original is not None and current.get("TrustedInstaller") is not None
+      )
+      assert original["State"] == "Stopped"
+      assert current["TrustedInstaller"]["State"] == "Running"
+      assert {
+          k: v for k, v in current["TrustedInstaller"].items() if k != "State"
+      } == {k: v for k, v in original.items() if k != "State"}
+      service.control("TrustedInstaller", "stopped")
+
+
+  def cleanup():
+      if not os.path.exists(JOURNAL):
+          # An unknown partial workspace is not adopted after an early failure.
+          assert not os.listdir(WORKSPACE)
+          return {"restored": True, "journal_absent": True}
+      record = read()
+      final = snapshot(record)
+      for key in ("hotfixes", "pending", "files", "temporary"):
+          assert final[key] == record["before"][key], key
+      if record["supported"]:
+          assert final["packages"] == record["before"]["packages"]
+      restore_service(record["before"]["services"])
+      final["services"] = services()
+      assert final["services"] == record["before"]["services"]
+      record["verified"] = True
+      write(record)
+      return {
+          "restored": True,
+          "before": record["before"],
+          "after": final,
+          "complete": record["complete"],
+      }
+
+
+  def finalize():
+      if not os.path.exists(JOURNAL):
+          assert not os.listdir(WORKSPACE)
+          return {"finalized": True, "journal_absent": True}
+      record = read()
+      assert record.get("verified") is True
+      assert services() == record["before"]["services"]
+      assert pending() == record["before"]["pending"]
+      assert (
+          protected_files(record["protected_paths"])
+          == record["before"]["files"]
+      )
+      assert temporary() == record["before"]["temporary"]
+      os.remove(JOURNAL)
+      return {"finalized": True}
+
+
+  validate_workspace()
+  if OPERATION == "setup":
+      result = setup()
+  elif OPERATION == "observe":
+      result = snapshot(read())
+  elif OPERATION == "cleanup":
+      result = cleanup()
+  elif OPERATION == "finalize":
+      result = finalize()
+  else:
+      raise ValueError("Unknown hotfix fixture operation")
+  print(json.dumps(result, sort_keys=True))

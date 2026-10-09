@@ -1,0 +1,103 @@
+---
+package_compare: false
+package_raw_msi_arguments: false
+package_install_arguments: >-
+  {{ 'INSTALLDIR="' + package_workspace.path + '\\application"'
+     if package_raw_msi_arguments | bool else
+     ['INSTALLDIR=' + package_workspace.path + '\\application'] }}
+package_case_start: 0
+package_case_end: 18
+package_selected_cases: >-
+  {{ package_case_indices |
+  default(range(package_case_start | int, package_case_end | int) | list) |
+  map('extract', package_cases) | list }}
+package_controller_source: '{{ playbook_dir }}/../../tmp'
+package_product_id: '{223D9A13-653B-4231-A365-EDDC30B4F226}'
+package_cases:
+  - name: Missing installation source
+    params: {}
+    failed: true
+  - name: Missing removal selector
+    params: {state: absent}
+    failed: true
+  - name: Missing local installation file
+    params: {path: '{{ package_workspace.path }}\missing.msi'}
+    failed: true
+  - name: Missing local installation file preview
+    params: {path: '{{ package_workspace.path }}\missing.msi'}
+    check: true
+    changed: true
+  - name: Absent MSI removal
+    params: {product_id: '{{ package_product_id }}', state: absent}
+  - name: Absent MSI removal preview
+    params: {product_id: '{{ package_product_id }}', state: absent}
+    check: true
+  - name: MSI installation preview
+    params:
+      path: '{{ package_workspace.path }}\good.msi'
+      arguments: '{{ package_install_arguments }}'
+    check: true
+    changed: true
+  - name: MSI installation
+    params:
+      path: '{{ package_workspace.path }}\good.msi'
+      arguments: '{{ package_install_arguments }}'
+    changed: true
+    installed: true
+  - name: Installed MSI idempotence
+    initial: present
+    params: {path: '{{ package_workspace.path }}\good.msi'}
+    installed: true
+  - name: Installed MSI idempotence preview
+    initial: present
+    params: {path: '{{ package_workspace.path }}\good.msi'}
+    installed: true
+    check: true
+  - name: Installed MSI removal preview
+    initial: present
+    params: {product_id: '{{ package_product_id }}', state: absent}
+    installed: true
+    changed: true
+    check: true
+  - name: Installed MSI removal
+    initial: present
+    params: {product_id: '{{ package_product_id }}', state: absent}
+    changed: true
+  - name: MSI removal by source identity
+    initial: present
+    params:
+      path: '{{ package_workspace.path }}\good.msi'
+      product_id: ignored-product-id
+      provider: msi
+      state: absent
+    changed: true
+  - name: Checksum mismatch before installation
+    params:
+      path: '{{ package_workspace.path }}\good.msi'
+      checksum: invalid
+      arguments: '{{ package_install_arguments }}'
+    failed: true
+  - name: MSI installation with explicit SHA256 checksum
+    params:
+      path: '{{ package_workspace.path }}\good.msi'
+      checksum_algorithm: sha256
+      checksum: >-
+        6736380c8c81d6bf1cc9bb6f59a6fc4713ad276eeff434fc6b35e443cafbae55
+      arguments: '{{ package_install_arguments }}'
+    changed: true
+    installed: true
+  - name: Installed creates_path guard
+    initial: present
+    params:
+      path: '{{ package_workspace.path }}\good.msi'
+      creates_path: '{{ package_workspace.path }}\application\moo.exe'
+    installed: true
+  - name: Existing creates_service guard
+    params:
+      path: '{{ package_workspace.path }}\good.msi'
+      creates_service: BvSshServer
+  - name: Missing creates_version prerequisite
+    params:
+      path: '{{ package_workspace.path }}\good.msi'
+      creates_version: 1.0.0.0
+    failed: true

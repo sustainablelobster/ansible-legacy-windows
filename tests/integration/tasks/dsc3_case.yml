@@ -1,0 +1,116 @@
+---
+- name: Reset only the journal-owned registry key to declared prerequisites
+  sustainablelobster.legacy_windows.win_command: # noqa: args[module]
+    argv:
+      - "{{ ansible_python_interpreter }}"
+      - "-"
+      - "{{ dsc3_workspace.path }}"
+      - reset
+      - "{{ dsc3_case.seed | default(none) | to_json }}"
+    stdin: "{{ dsc3_fixture }}"
+  register: dsc3_case_before
+  changed_when: true
+  no_log: true
+
+- name: "Apply configuration - {{ dsc3_case.name ~ ' / ' ~ dsc3_phase }}"
+  block:
+    - name: Execute native Python DSC payload
+      sustainablelobster.legacy_windows.dsc3: # noqa: args[module]
+        config: "{{ dsc3_case.params.config | default(omit) }}"
+        config_file: "{{ dsc3_case.params.config_file | default(omit) }}"
+        remote_config_file: >-
+          {{ dsc3_case.params.remote_config_file | default(omit) }}
+        parameters: "{{ dsc3_case.params.parameters | default(omit) }}"
+        trace_level: "{{ dsc3_case.params.trace_level | default(omit) }}"
+      environment:
+        PATH: >-
+          {{ dsc3_engine + ';' + dsc3_path_env
+             if dsc3_case.engine | default(true) else dsc3_path_env }}
+        DSC_RESOURCE_PATH: "{{ dsc3_engine }}"
+      check_mode: "{{ dsc3_case.check | default(false) }}"
+      diff: true
+      register: dsc3_native_result
+      when: dsc3_phase == 'native'
+
+    - name: Execute untouched released upstream DSC implementation
+      ansible.windows.dsc3:
+        config: "{{ dsc3_case.params.config | default(omit) }}"
+        config_file: "{{ dsc3_case.params.config_file | default(omit) }}"
+        remote_config_file: >-
+          {{ dsc3_case.params.remote_config_file | default(omit) }}
+        parameters: "{{ dsc3_case.params.parameters | default(omit) }}"
+        trace_level: "{{ dsc3_case.params.trace_level | default(omit) }}"
+      environment:
+        PATH: >-
+          {{ dsc3_engine + ';' + dsc3_path_env
+             if dsc3_case.engine | default(true) else dsc3_path_env }}
+        DSC_RESOURCE_PATH: "{{ dsc3_engine }}"
+      check_mode: "{{ dsc3_case.check | default(false) }}"
+      diff: true
+      register: dsc3_original_result
+      when: dsc3_phase == 'original'
+  rescue:
+    - name: Retain module failures before their expected behavior is checked
+      ansible.builtin.set_fact:
+        dsc3_case_failure: true
+
+- name: Select complete executed public result
+  ansible.builtin.set_fact:
+    dsc3_case_result: >-
+      {{ dsc3_native_result if dsc3_phase == 'native'
+         else dsc3_original_result }}
+
+- name: Independently observe key and protected siblings after execution
+  sustainablelobster.legacy_windows.win_command: # noqa: args[module]
+    argv:
+      - "{{ ansible_python_interpreter }}"
+      - "-"
+      - "{{ dsc3_workspace.path }}"
+      - observe
+    stdin: "{{ dsc3_fixture }}"
+  register: dsc3_case_after
+  changed_when: false
+  no_log: true
+
+- name: Keep complete raw request result and bounded target observations
+  ansible.builtin.set_fact:
+    dsc3_results: >-
+      {{ dsc3_results | default([]) + [{
+         'case': dsc3_case.name, 'phase': dsc3_phase,
+         'request': dsc3_case.params,
+         'check_mode': dsc3_case.check | default(false),
+         'result': dsc3_case_result,
+         'before': dsc3_case_before.stdout | from_json,
+         'after': dsc3_case_after.stdout | from_json,
+         'validated': false}] }}
+
+- name: Require declared result and preview or failure nonmutation
+  ansible.builtin.assert:
+    that:
+      - dsc3_case_result.changed == dsc3_case.changed
+      - (dsc3_case_result is failed) == (dsc3_case.error is defined)
+      - dsc3_case.error is not defined or
+        dsc3_case_result.msg == dsc3_case.error
+      - dsc3_case.no_child | default(false) or
+        dsc3_case_result.rc == dsc3_case.rc | default(0)
+      - not dsc3_case.no_child | default(false) or
+        dsc3_case_result.rc is not defined
+      - >-
+        not (dsc3_case.check | default(false) or dsc3_case.error is defined) or
+        (dsc3_results[-1].before | dict2items |
+         rejectattr('key', 'equalto', 'utc') | items2dict) ==
+        (dsc3_results[-1].after | dict2items |
+         rejectattr('key', 'equalto', 'utc') | items2dict)
+      - >-
+        dsc3_case.expected_value is not defined or
+        dsc3_results[-1].after['values'] ==
+        [['message', dsc3_case.expected_value, 1]]
+      - not dsc3_case.expected_absent | default(false) or
+        not dsc3_results[-1].after.key_present
+      - dsc3_case_result.warnings | default([]) == []
+
+- name: Mark only the request whose behavior and observation passed
+  ansible.builtin.set_fact:
+    dsc3_results: >-
+      {{ dsc3_results[:-1] +
+         [dsc3_results[-1] | combine({'validated': true})] }}

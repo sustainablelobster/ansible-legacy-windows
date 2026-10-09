@@ -1,0 +1,112 @@
+---
+- name: Observe complete native prerequisites before request
+  sustainablelobster.legacy_windows.win_command:
+    argv: ['{{ ansible_python_interpreter }}', '-',
+           '{{ hotfix_workspace.path }}', observe]
+    stdin: '{{ hotfix_program }}'
+  register: hotfix_before
+  changed_when: false
+  no_log: true
+
+- name: Capture native public result without overriding its failure flag
+  block:
+    - name: Request native hotfix behavior  # noqa: args[module]
+      sustainablelobster.legacy_windows.win_hotfix: '{{ hotfix_case.params }}'
+      register: hotfix_native
+      check_mode: '{{ hotfix_case.check | default(false) }}'
+  rescue:
+    - name: Retain expected native failure for literal comparison
+      ansible.builtin.debug:
+        msg: Native result retained.
+
+- name: Observe complete state after native request
+  sustainablelobster.legacy_windows.win_command:
+    argv: ['{{ ansible_python_interpreter }}', '-',
+           '{{ hotfix_workspace.path }}', observe]
+    stdin: '{{ hotfix_program }}'
+  register: hotfix_after_native
+  changed_when: false
+  no_log: true
+
+- name: Capture untouched released module result
+  when: hotfix_compare | bool
+  block:
+    - name: Request original hotfix behavior
+      ansible.windows.win_hotfix: '{{ hotfix_case.params }}'
+      register: hotfix_original
+      check_mode: '{{ hotfix_case.check | default(false) }}'
+      vars:
+        ansible_shell_type: cmd
+        ansible_remote_tmp: '{{ hotfix_workspace.path }}'
+  rescue:
+    - name: Retain expected original failure for literal comparison
+      ansible.builtin.debug:
+        msg: Original result retained.
+
+- name: Observe complete state after original request
+  sustainablelobster.legacy_windows.win_command:
+    argv: ['{{ ansible_python_interpreter }}', '-',
+           '{{ hotfix_workspace.path }}', observe]
+    stdin: '{{ hotfix_program }}'
+  register: hotfix_after_original
+  changed_when: false
+  no_log: true
+
+- name: Append raw unvalidated evidence
+  ansible.builtin.set_fact:
+    hotfix_results: >-
+      {{ hotfix_results + [{'name':hotfix_case.name,'params':hotfix_case.params,
+        'check':hotfix_case.check | default(false),'native':hotfix_native,
+        'original':hotfix_original | default(none),'before':hotfix_before,
+        'after_native':hotfix_after_native,'after_original':hotfix_after_original,
+        'validated':false}] }}
+
+- name: Persist raw results before assertions
+  ansible.builtin.copy:
+    content: >-
+      {{ {"results": hotfix_results, "setup": hotfix_setup} | to_nice_json }}
+    dest: '{{ hotfix_capture.path }}'
+    mode: '0600'
+  delegate_to: localhost
+  vars: &controller
+    ansible_connection: local
+    ansible_shell_type: sh
+    ansible_python_interpreter: '{{ ansible_playbook_python }}'
+  changed_when: false
+  no_log: true
+
+- name: Require declared public behavior and literal nonmutation
+  ansible.builtin.assert:
+    that:
+      - (hotfix_native is failed) == (hotfix_case.failed | default(false))
+      - hotfix_native.changed == (hotfix_case.changed | default(false))
+      - not hotfix_native.reboot_required | default(false)
+      - >-
+        hotfix_case.msg is not defined or hotfix_native.msg == hotfix_case.msg
+      - >-
+        (hotfix_before.stdout | from_json) ==
+        (hotfix_after_native.stdout | from_json)
+      - >-
+        (hotfix_before.stdout | from_json) ==
+        (hotfix_after_original.stdout | from_json)
+
+- name: Compare all public fields and JSON types
+  when: hotfix_compare | bool
+  vars:
+    native_public: >-
+      {{ hotfix_native | dict2items |
+      rejectattr('key', 'in', ['invocation', 'exception']) | items2dict }}
+    original_public: >-
+      {{ hotfix_original | dict2items |
+      rejectattr('key', 'in', ['invocation', 'exception']) | items2dict }}
+  ansible.builtin.assert:
+    that:
+      - >-
+        (native_public | to_json(sort_keys=true)) ==
+        (original_public | to_json(sort_keys=true))
+
+- name: Mark only the completely validated record
+  ansible.builtin.set_fact:
+    hotfix_results: >-
+      {{ hotfix_results[:-1] +
+      [hotfix_results[-1] | combine({'validated': true})] }}

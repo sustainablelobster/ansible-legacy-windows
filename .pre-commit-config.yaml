@@ -22,6 +22,9 @@ repos:
         language: unsupported
       - id: check-shebang-scripts-are-executable
         language: unsupported
+        # Ansible invokes these through Python, not as standalone executables.
+        exclude: >-
+          ^plugins/modules/[^/]+\.py$|^plugins/module_utils/legacy_windows_async_wrapper\.py$
       - id: check-symlinks
         language: unsupported
       - id: destroyed-symlinks
@@ -42,6 +45,8 @@ repos:
         language: unsupported
       - id: end-of-file-fixer
         language: unsupported
+        # Preserve the final blank line in the verbatim upstream GPL copies.
+        exclude: ^(LICENSE|LICENSES/ansible-windows-GPL-3\.0-or-later\.txt)$
       - id: mixed-line-ending
         language: unsupported
         args: [--fix=lf]
@@ -65,7 +70,8 @@ repos:
         alias: black-target
         name: Format Windows target Python
         language: unsupported
-        files: ^plugins/(modules|module_utils)/.*\.py$
+        # Windows fixtures, including win_powershell.py, share the target floor.
+        files: ^(plugins/(modules|module_utils)|tests/integration/fixtures)/
         args: [--target-version, py34]
       - id: black
         alias: black-controller
@@ -78,6 +84,7 @@ repos:
         name: Format development Python
         language: unsupported
         files: ^(scripts|tests)/.*\.py$
+        exclude: ^tests/integration/fixtures/
 
   - repo: https://github.com/PyCQA/pylint
     rev: v4.0.5
@@ -86,7 +93,7 @@ repos:
         alias: pylint-target
         name: Lint Windows target Python
         language: unsupported
-        files: ^plugins/(modules|module_utils)/.*\.py$
+        files: ^(plugins/(modules|module_utils)|tests/integration/fixtures)/
         args: [--py-version, '3.4']
       - id: pylint
         alias: pylint-controller
@@ -99,6 +106,7 @@ repos:
         name: Lint development Python
         language: unsupported
         files: ^(scripts|tests)/.*\.py$
+        exclude: ^tests/integration/fixtures/
 
   - repo: https://github.com/pre-commit/mirrors-mypy
     rev: v1.20.1
@@ -114,6 +122,7 @@ repos:
         name: Type-check development Python
         language: unsupported
         files: ^(scripts|tests)/.*\.py$
+        exclude: ^tests/integration/fixtures/
         args: []
 
   - repo: https://github.com/netromdk/vermin
@@ -122,7 +131,7 @@ repos:
       - id: vermin
         name: Check Windows target Python compatibility
         language: unsupported
-        files: ^plugins/(modules|module_utils)/.*\.py$
+        files: ^(plugins/(modules|module_utils)|tests/integration/fixtures)/
         args: [-t=3.4-, --violations]
 
   - repo: https://github.com/adrienverge/yamllint
@@ -137,10 +146,17 @@ repos:
     hooks:
       - id: ansible-lint
         language: unsupported
-        # Use Nix's executable wrapper and its installed dependencies.
-        entry: ansible-lint
+        # Refresh the checkout's local installation before offline linting.
+        entry: just _ansible-lint
         args: [--offline]
         additional_dependencies: []
+        # Documentation and unit-test-only edits do not change
+        # Ansible interfaces.
+        always_run: false
+        files: '(^plugins/|\.ya?ml$|^justfile$)'
+        # GitHub workflow YAML is checked by actionlint, not Ansible-lint.
+        exclude: ^\.github/workflows/[^/]+\.ya?ml$
+        require_serial: true
 
   - repo: https://github.com/rvben/rumdl-pre-commit
     rev: v0.1.94
@@ -157,6 +173,12 @@ repos:
 
   - repo: local
     hooks:
+      - id: actionlint
+        name: Check GitHub Actions workflows
+        entry: actionlint
+        language: unsupported
+        files: ^\.github/workflows/[^/]+\.ya?ml$
+        require_serial: true
       - id: justfile
         name: Check Justfile format and syntax
         entry: just _lint-justfile

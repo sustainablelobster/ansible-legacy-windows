@@ -1,0 +1,90 @@
+---
+hostname_empty_error: >-
+  Failed to rename computer to '': Cannot validate argument on parameter
+  'NewName'. The argument is null or empty. Provide an argument that is not
+  null or empty, and then try the command again.
+hostname_cases:
+  - name: Keep the original hostname unchanged
+    request: '{{ hostname_original_name }}'
+    changed: false
+    reboot_required: false
+  - name: Compare the original hostname without case sensitivity
+    request: '{{ hostname_original_name.swapcase() }}'
+    changed: false
+    reboot_required: false
+  - name: Reject an omitted name before reading or changing the hostname
+    changed: false
+    reboot_required: false
+    early_error: true
+    error: 'missing required arguments: name'
+  - name: Reject a null name in check mode
+    request: null
+    check: true
+    changed: false
+    reboot_required: false
+    error: '{{ hostname_empty_error }}'
+  - name: Reject an empty name without changing state
+    request: ''
+    changed: false
+    reboot_required: false
+    error: '{{ hostname_empty_error }}'
+  - name: Predict a nonempty invalid name without provider validation
+    request: invalid/name
+    check: true
+    changed: true
+    reboot_required: true
+  - name: Reject an invalid name during the real provider call
+    request: invalid/name
+    changed: false
+    reboot_required: false
+    error: >-
+      Failed to rename computer to 'invalid/name': Fail to rename computer
+      '{{ hostname_previous_snapshot.names.native.dns_hostname }}' to
+      'invalid/name' due to the following exception: The parameter is incorrect.
+  - name: Predict the owned test hostname
+    request: '{{ hostname_test_name }}'
+    check: true
+    changed: true
+    reboot_required: true
+  - name: Request the owned test hostname
+    request: '{{ hostname_test_name }}'
+    changed: true
+    reboot_required: true
+    pending: '{{ hostname_test_name }}'
+  - name: Repeat the request before reboot while the active name is unchanged
+    request: '{{ hostname_test_name }}'
+    changed: true
+    reboot_required: true
+    pending: '{{ hostname_test_name }}'
+  - name: Request the active original name without cancelling the pending rename
+    request: '{{ hostname_original_name }}'
+    changed: false
+    reboot_required: false
+    pending: '{{ hostname_test_name }}'
+  - name: Reboot to activate the owned test hostname
+    reboot: true
+    active: '{{ hostname_test_name }}'
+  - name: Repeat the activated hostname without requesting another reboot
+    request: '{{ hostname_test_name }}'
+    changed: false
+    reboot_required: false
+    pending: '{{ hostname_test_name }}'
+  - name: Compare the activated hostname without case sensitivity
+    request: '{{ hostname_test_name | lower }}'
+    changed: false
+    reboot_required: false
+  - name: Predict the original hostname without undoing the activated name
+    request: '{{ hostname_original_name }}'
+    check: true
+    changed: true
+    reboot_required: true
+    pending: '{{ hostname_test_name }}'
+  - name: Reject an empty name after the real reboot
+    request: ''
+    changed: false
+    reboot_required: false
+    error: '{{ hostname_empty_error }}'
+  - name: Recover after failure with the activated hostname
+    request: '{{ hostname_test_name }}'
+    changed: false
+    reboot_required: false

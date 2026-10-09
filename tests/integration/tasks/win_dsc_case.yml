@@ -1,0 +1,182 @@
+---
+- name: Bind one complete schema-discovered DSC request
+  ansible.builtin.set_fact:
+    win_dsc_params: >-
+      {{ {'resource_name': 'File'} |
+         combine({'DestinationPath': win_dsc_workspace.path + '\\' +
+           ('managed-dir' if win_dsc_case.directory | default(false)
+            else 'managed.txt')}
+           if win_dsc_case.destination | default(true) else {}) |
+         combine({'SourcePath': win_dsc_workspace.path + '\\source.txt'}
+           if win_dsc_case.source | default(false) else {}) |
+         combine(win_dsc_case.params) }}
+
+- name: Prepare exact owned native baseline  # noqa: args[module]
+  sustainablelobster.legacy_windows.win_command:
+    argv: ['{{ ansible_python_interpreter }}', '-',
+           '{{ win_dsc_workspace.path }}',
+           prepare, '{{ win_dsc_case | to_json | b64encode }}']
+    stdin: '{{ win_dsc_program }}'
+  register: win_dsc_before_native
+  changed_when: false
+  no_log: true
+
+- name: Retain the complete native result including expected failures
+  block:
+    - name: Execute the public classic DSC interface  # noqa: args[module]
+      sustainablelobster.legacy_windows.win_dsc: '{{ win_dsc_params }}'
+      check_mode: '{{ win_dsc_case.check | default(false) }}'
+      register: win_dsc_native
+  rescue:
+    - name: Keep the literal native failure
+      ansible.builtin.debug:
+        msg: Native DSC failure retained for comparison.
+
+- name: Observe native owned file effects  # noqa: args[module]
+  sustainablelobster.legacy_windows.win_command:
+    argv: ['{{ ansible_python_interpreter }}', '-',
+           '{{ win_dsc_workspace.path }}', observe]
+    stdin: '{{ win_dsc_program }}'
+  register: win_dsc_after_native
+  changed_when: false
+  no_log: true
+
+- name: Compare the unchanged released module on the same owned baseline
+  when: win_dsc_compare | bool
+  block:
+    - name: Prepare exact owned source baseline  # noqa: args[module]
+      sustainablelobster.legacy_windows.win_command:
+        argv: ['{{ ansible_python_interpreter }}', '-',
+               '{{ win_dsc_workspace.path }}',
+               prepare, '{{ win_dsc_case | to_json | b64encode }}']
+        stdin: '{{ win_dsc_program }}'
+      register: win_dsc_before_original
+      changed_when: false
+      no_log: true
+
+    - name: Retain the complete source result including expected failures
+      block:
+        - name: Execute untouched source classic DSC  # noqa: args[module]
+          ansible.windows.win_dsc: '{{ win_dsc_params }}'
+          check_mode: '{{ win_dsc_case.check | default(false) }}'
+          register: win_dsc_original
+      rescue:
+        - name: Keep the literal source failure
+          ansible.builtin.debug:
+            msg: Released DSC failure retained for comparison.
+
+    - name: Observe source owned file effects  # noqa: args[module]
+      sustainablelobster.legacy_windows.win_command:
+        argv: ['{{ ansible_python_interpreter }}', '-',
+               '{{ win_dsc_workspace.path }}', observe]
+        stdin: '{{ win_dsc_program }}'
+      register: win_dsc_after_original
+      changed_when: false
+      no_log: true
+
+- name: Retain a raw unvalidated record before every parity assertion
+  ansible.builtin.set_fact:
+    win_dsc_record:
+      name: '{{ win_dsc_case.name }}'
+      params: '{{ win_dsc_params }}'
+      case: '{{ win_dsc_case }}'
+      native: '{{ win_dsc_native }}'
+      original: '{{ win_dsc_original | default(none) }}'
+      before_native: '{{ win_dsc_before_native }}'
+      after_native: '{{ win_dsc_after_native }}'
+      before_original: '{{ win_dsc_before_original | default(none) }}'
+      after_original: '{{ win_dsc_after_original | default(none) }}'
+      validated: false
+
+- name: Append the retained raw request
+  ansible.builtin.set_fact:
+    win_dsc_records: '{{ win_dsc_records + [win_dsc_record] }}'
+
+- name: Persist whole results before validation
+  ansible.builtin.copy:
+    content: >-
+      {{ {"results": win_dsc_records, "workspace": win_dsc_workspace} |
+         to_nice_json }}
+    dest: '{{ win_dsc_capture.path }}'
+    mode: '0600'
+  delegate_to: localhost
+  vars: &local
+    ansible_connection: local
+    ansible_shell_type: sh
+    ansible_python_interpreter: '{{ ansible_playbook_python }}'
+  changed_when: false
+  no_log: true
+
+- name: Require the declared public behavior and nonmutation on previews
+  vars:
+    before: '{{ win_dsc_before_native.stdout | from_json }}'
+    after: '{{ win_dsc_after_native.stdout | from_json }}'
+  ansible.builtin.assert:
+    that:
+      - win_dsc_native.changed == (win_dsc_case.changed | default(false))
+      - (win_dsc_native is failed) == (win_dsc_case.failed | default(false))
+      - after.protected == before.protected
+      - >-
+        (not win_dsc_case.check | default(false) and win_dsc_native.changed) or
+        after.output == before.output
+
+- name: Compare complete public fields and independently bounded DSC clocks
+  when: win_dsc_compare | bool
+  ansible.builtin.command:
+    argv:
+      - '{{ ansible_playbook_python }}'
+      - '{{ playbook_dir }}/../../scripts/verify_win_dsc_capture.py'
+      - '{{ win_dsc_capture.path }}'
+      - --last
+  delegate_to: localhost
+  vars: *local
+  changed_when: false
+
+- name: Compare literal resulting bytes attributes and owner group DACL
+  when: win_dsc_compare | bool
+  vars:
+    native: '{{ (win_dsc_after_native.stdout | from_json).output }}'
+    original: '{{ (win_dsc_after_original.stdout | from_json).output }}'
+    native_file: >-
+      {{ native['managed.txt'] | dict2items |
+         rejectattr('key', 'in', ['mtime', 'ctime']) | items2dict
+         if native['managed.txt'] is not none else none }}
+    original_file: >-
+      {{ original['managed.txt'] | dict2items |
+         rejectattr('key', 'in', ['mtime', 'ctime']) | items2dict
+         if original['managed.txt'] is not none else none }}
+    native_directory: >-
+      {{ native['managed-dir'] | dict2items |
+         rejectattr('key', 'in', ['mtime', 'ctime']) | items2dict
+         if native['managed-dir'] is not none else none }}
+    original_directory: >-
+      {{ original['managed-dir'] | dict2items |
+         rejectattr('key', 'in', ['mtime', 'ctime']) | items2dict
+         if original['managed-dir'] is not none else none }}
+  ansible.builtin.assert:
+    that:
+      - >-
+        native_file | to_json(sort_keys=true) ==
+        original_file | to_json(sort_keys=true)
+      - >-
+        native_directory | to_json(sort_keys=true) ==
+        original_directory | to_json(sort_keys=true)
+
+- name: Require source previews and unchanged requests to preserve
+    exact file metadata
+  when: win_dsc_compare | bool
+  vars:
+    before: '{{ (win_dsc_before_original.stdout | from_json).output }}'
+    after: '{{ (win_dsc_after_original.stdout | from_json).output }}'
+  ansible.builtin.assert:
+    that:
+      - >-
+        (not win_dsc_case.check | default(false) and
+         win_dsc_original.changed) or
+        after == before
+
+- name: Mark only the fully verified raw case
+  ansible.builtin.set_fact:
+    win_dsc_records: >-
+      {{ win_dsc_records[:-1] +
+         [win_dsc_record | combine({'validated': true})] }}

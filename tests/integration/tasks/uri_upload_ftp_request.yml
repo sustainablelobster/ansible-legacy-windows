@@ -1,0 +1,93 @@
+---
+# Copyright 2026 Joe Lustri
+# SPDX-License-Identifier: GPL-3.0-or-later
+- name: Prepare identical upload bytes through the existing ownership journal
+  ansible.builtin.command:
+    argv: ['{{ ansible_playbook_python }}', '-',
+           '{{ get_url_ftp_workspace.path }}', prepare_upload,
+           '{{ get_url_ftp_controller_parent }}',
+           "{{ {'filename': uri_upload_case.filename | default('upload.bin'),
+                 'baseline': uri_upload_case.baseline | default(none)} |
+               to_json }}"]
+    stdin: '{{ uri_upload_ftp_program }}'
+  delegate_to: localhost
+  vars: &local
+    ansible_connection: local
+    ansible_shell_type: sh
+    ansible_python_interpreter: '{{ ansible_playbook_python }}'
+    ansible_become: false
+  changed_when: false
+  no_log: true
+
+- name: Observe the released FTP upload result
+  when: uri_upload_engine == 'upstream'
+  ansible.windows.win_uri: &request
+    url: >-
+      {{ 'ftp://127.0.0.1:2121/' +
+         ('' if uri_upload_case.unique | default(false) else
+          (uri_upload_case.filename | default('upload.bin'))) }}
+    method: '{{ uri_upload_case.method }}'
+    body: '{{ uri_upload_case.body | default(omit) }}'
+    status_code: '{{ uri_upload_case.accepted_status | default([226]) }}'
+    return_content: true
+    use_proxy: false
+    url_username: fixture
+    url_password: '{{ uri_upload_case.password | default("secret") }}'
+    url_timeout: '{{ uri_upload_case.timeout | default(10) }}'
+  vars:
+    ansible_shell_type: cmd
+    ansible_remote_tmp: '{{ uri_upload_workspace.path }}'
+  check_mode: '{{ uri_upload_case.check | default(false) }}'
+  register: uri_upload_upstream
+  ignore_errors: true
+  no_log: true
+
+- name: Observe the native FTP upload result
+  when: uri_upload_engine == 'native'
+  sustainablelobster.legacy_windows.win_uri: *request
+  check_mode: '{{ uri_upload_case.check | default(false) }}'
+  register: uri_upload_native
+  ignore_errors: true
+  no_log: true
+
+- name: Read uploaded bytes and wire replies independently of the module result
+  ansible.builtin.command:
+    argv: ['{{ ansible_playbook_python }}', '-',
+           '{{ get_url_ftp_workspace.path }}', observe_upload,
+           '{{ get_url_ftp_controller_parent }}']
+    stdin: '{{ uri_upload_ftp_program }}'
+  register: uri_upload_observation
+  delegate_to: localhost
+  vars: *local
+  changed_when: false
+  no_log: true
+
+- name: Read the uploaded file back through the public native URI module
+  when: >-
+    (uri_upload_observation.stdout | from_json).uploads | length == 1
+  sustainablelobster.legacy_windows.win_uri:
+    url: >-
+      {{ 'ftp://127.0.0.1:2121/' +
+         ((uri_upload_observation.stdout | from_json).uploads.keys() |
+          list | first) }}
+    method: RETR
+    status_code: [226]
+    return_content: true
+    use_proxy: false
+    url_username: fixture
+    url_password: secret
+    url_timeout: 10
+  register: uri_upload_readback
+  ignore_errors: true
+  no_log: true
+
+- name: Retain the full public result and independent server observation
+  ansible.builtin.set_fact:
+    uri_upload_results: >-
+      {{ uri_upload_results + [{'protocol': 'ftp', 'case': uri_upload_case,
+          'engine': uri_upload_engine,
+          'result': (uri_upload_native if uri_upload_engine == 'native'
+                     else uri_upload_upstream),
+          'observation': uri_upload_observation.stdout | from_json,
+          'readback': uri_upload_readback}] }}
+  no_log: true

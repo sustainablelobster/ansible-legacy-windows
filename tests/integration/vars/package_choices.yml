@@ -1,0 +1,27 @@
+---
+package_case_start: 0
+package_case_end: 3
+package_cases:
+  - name: Uppercase MSI provider dispatch installation
+    params:
+      path: '{{ package_workspace.path }}\good.msi'
+      provider: MSI
+      arguments: '{{ package_install_arguments }}'
+    changed: true
+    installed: true
+  - name: Uppercase present state preserves required MSI installation
+    params:
+      path: '{{ package_workspace.path }}\good.msi'
+      state: PRESENT
+      arguments: '{{ package_install_arguments }}'
+    changed: true
+    installed: true
+  - name: Uppercase SHA256 choice preserves complete MSI checksum
+    params:
+      path: '{{ package_workspace.path }}\good.msi'
+      checksum_algorithm: SHA256
+      checksum: >-
+        6736380c8c81d6bf1cc9bb6f59a6fc4713ad276eeff434fc6b35e443cafbae55
+      arguments: '{{ package_install_arguments }}'
+    changed: true
+    installed: true

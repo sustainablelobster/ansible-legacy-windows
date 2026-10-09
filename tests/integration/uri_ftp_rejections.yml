@@ -1,0 +1,30 @@
+---
+# SPDX-License-Identifier: GPL-3.0-or-later
+- name: Bind only the named rejection cases before the reused FTP play
+  hosts: legacy_windows
+  gather_facts: false
+  vars_files:
+    - vars/uri_ftp_rejections.yml
+  tasks:
+    - name: Override the reused play's ordinary case defaults without guest I/O
+      tags: [uri_ftp_rejection_selection]
+      ansible.builtin.set_fact:
+        uri_ftp_cases: '{{ uri_ftp_rejection_cases }}'
+        uri_ftp_capture_verifier: verify_uri_ftp_rejections.py
+        uri_ftp_expected_case_names:
+          - size_rejected
+          - size_accepted_error
+          - missing_rejected
+          - missing_accepted_error
+          - login_rejected
+
+    - name: Require exactly the five named rejection cases before allocation
+      tags: [uri_ftp_rejection_selection]
+      ansible.builtin.assert:
+        that:
+          - >-
+            uri_ftp_cases | map(attribute='name') | list ==
+            uri_ftp_expected_case_names
+
+- name: Compare complete FTP rejection response properties and cleanup
+  ansible.builtin.import_playbook: uri_ftp.yml

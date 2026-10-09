@@ -1,0 +1,92 @@
+---
+- name: '{{ route_case.name }}'
+  block:
+    - name: Apply or predict the route request  # noqa: args[module]
+      sustainablelobster.legacy_windows.win_route:
+        destination: '{{ route_case.destination }}'
+        gateway: '{{ route_case.gateway | default(route_state.gateway) }}'
+        metric: '{{ route_case.metric | default(omit) }}'
+        state: '{{ route_case.state | default("present") }}'
+      register: route_result
+      check_mode: '{{ route_case.check | default(false) }}'
+      diff: true
+  rescue:
+    - name: Require the declared failure
+      ansible.builtin.assert:
+        that:
+          - route_case.error is defined
+          - route_result is failed
+          - route_case.error in route_result.msg
+          - not route_result.changed
+
+- name: Observe complete routes independently after the public request
+  sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+    argv:
+      - '{{ ansible_python_interpreter }}'
+      - '-'
+      - '{{ route_workspace.path }}'
+      - observe
+      - '{{ ansible_host }}'
+    stdin: '{{ route_script }}'
+  register: route_observation
+  changed_when: false
+  check_mode: false
+
+- name: Retain public results and observations before assertions
+  ansible.builtin.set_fact:
+    route_results: >-
+      {{ route_results + [{'name': route_case.name, 'result': route_result,
+          'before': route_previous,
+          'after': route_observation.stdout | from_json}] }}
+
+- name: Save private evidence before validating the public result
+  ansible.builtin.copy:
+    content: '{{ route_results | to_nice_json }}'
+    dest: '{{ route_capture_file.path }}'
+    mode: '0600'
+  delegate_to: localhost
+  vars:
+    ansible_connection: local
+    ansible_shell_type: sh
+    ansible_python_interpreter: '{{ ansible_playbook_python }}'
+  changed_when: false
+
+- name: Verify public results and route nonmutation
+  vars:
+    observation: '{{ route_observation.stdout | from_json }}'
+    destination: '{{ route_state.destinations[0] }}'
+    persisted: >-
+      {{ (observation.persistent |
+      selectattr('Destination', 'equalto', destination) | list)
+      if route_modern else (observation.registry | default([], true) |
+      selectattr('0', 'match', '^' ~ (destination | regex_escape) ~ ',') |
+      list) }}
+  ansible.builtin.assert:
+    that:
+      - route_result.changed == route_case.changed
+      - (route_result is failed) == (route_case.error is defined)
+      - route_result.diff is not defined
+      - route_case.msg is not defined or route_result.msg == route_case.msg
+      - >-
+        route_case.changed and not (route_case.check | default(false))
+        or observation == route_previous
+      - >-
+        route_case.count is not defined or
+        (persisted | length) == route_case.count
+      - >-
+        route_case.metric_expected is not defined or
+        ((persisted | map(attribute='Metric1') | list)
+        if route_modern else [persisted[0][0].split(',')[-1] | int])
+        == [route_case.metric_expected]
+      - >-
+        (observation.active | rejectattr('Destination', 'in',
+        route_state.destinations) | list) == (route_state.initial.active |
+        rejectattr('Destination', 'in', route_state.destinations) | list)
+      - >-
+        (observation.persistent | rejectattr('Destination', 'in',
+        route_state.destinations) | list) == (route_state.initial.persistent |
+        rejectattr('Destination', 'in', route_state.destinations) | list)
+
+- name: Retain the observation for the next request
+  ansible.builtin.set_fact:
+    route_previous: '{{ route_observation.stdout | from_json }}'

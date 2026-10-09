@@ -1,0 +1,23 @@
+---
+- name: Exercise record requests from identical journal-owned zone states
+  ansible.builtin.include_tasks: win_dns_record_run.yml
+  loop: [native, released]
+  loop_control:
+    loop_var: dns_zone_implementation
+
+- name: Retain typed literal public and independently observed record parity
+  ansible.builtin.set_fact:
+    dns_zone_comparisons: >-
+      {{ dns_zone_comparisons + [{'case': dns_zone_case,
+      'native': dns_record_case_results.native,
+      'released': dns_record_case_results.released,
+      'equal': (dns_record_case_results.native | to_json(sort_keys=true)) ==
+      (dns_record_case_results.released | to_json(sort_keys=true)),
+      'expected':
+      (dns_record_case_results.native.result.failed | default(false) | bool) ==
+      (dns_zone_case.failed | default(false) | bool) and
+      (dns_record_case_results.released.result.failed |
+      default(false) | bool) ==
+      (dns_zone_case.failed | default(false) | bool)}]
+      }}
+  no_log: true

@@ -1,0 +1,452 @@
+---
+# SPDX-License-Identifier: GPL-3.0-or-later
+- name: Verify isolated local groups on Windows Python 3.4.4
+  hosts: legacy_windows
+  gather_facts: false
+  vars_files:
+    - vars/local_groups.yml
+  vars:
+    fixture: '{{ setup.stdout | from_json }}'
+    prefix: '{{ fixture.prefix }}'
+    primary: '{{ prefix }}primary'
+    partial: '{{ prefix }}partial'
+    initial_description: 'Initial 雪'
+  tasks:
+    - name: Require Python 3.4.4 and record initial task directories
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import glob, json, os, sys, tempfile;
+        assert sys.version_info[:3] == (3, 4, 4);
+        print(json.dumps(sorted(glob.glob(os.path.join(tempfile.gettempdir(),
+        'ansible-tmp-*')))))""
+      register: task_directories_before
+      changed_when: false
+      check_mode: false
+
+    - name: Allocate absent group names and verify the existing local accounts
+      sustainablelobster.legacy_windows.win_command:
+        argv:
+          - '{{ ansible_python_interpreter }}'
+          - -c
+          - '{{ fixture_code }}'
+          - allocate
+      register: setup
+      changed_when: false
+
+    - name: Exercise owned local groups and recovery
+      block:
+        - name: Read the built-in Administrators identity without changing it
+          sustainablelobster.legacy_windows.win_group:
+            name: '{{ fixture.builtin_name }}'
+            state: present
+          check_mode: true
+          register: builtin_identity
+
+        - name: Verify the built-in SID resolves on every target
+          ansible.builtin.assert:
+            that:
+              - not builtin_identity.changed
+              - builtin_identity.sid == 'S-1-5-32-544'
+
+        - name: Preview creation without resolving a nonexistent member
+          sustainablelobster.legacy_windows.win_group:
+            name: '{{ prefix }}preview'
+            members:
+              set: ['{{ prefix }}missing_account']
+          check_mode: true
+          diff: true
+          register: creation_preview
+
+        - name: Inspect group absence after the creation preview
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - '{{ fixture_code }}'
+              - inspect
+              - '{{ prefix }}'
+          register: after_creation_preview
+          changed_when: false
+
+        - name: Verify creation preview skipped resolution and writes
+          ansible.builtin.assert:
+            that:
+              - creation_preview.changed
+              - creation_preview.sid == 'S-1-5-0000'
+              - creation_preview.diff.before is none
+              - creation_preview.diff.after.description is none
+              - creation_preview.diff.after.members == []
+              - (after_creation_preview.stdout | from_json).preview is none
+              - (after_creation_preview.stdout | from_json).primary is none
+              - (after_creation_preview.stdout | from_json).partial is none
+
+        - name: Create a group with a Unicode description
+          sustainablelobster.legacy_windows.win_group:
+            name: '{{ primary }}'
+            description: '{{ initial_description }}'
+          diff: true
+          register: created
+
+        - name: Repeat creation with unchanged values
+          sustainablelobster.legacy_windows.win_group:
+            name: '{{ primary }}'
+            description: '{{ initial_description }}'
+          register: repeated
+
+        - name: Request case-only name and description changes
+          sustainablelobster.legacy_windows.win_group:
+            name: '{{ primary | upper }}'
+            description: '{{ initial_description | lower }}'
+          diff: true
+          register: case_only
+
+        - name: Inspect the exact created SID description and empty membership
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - '{{ fixture_code }}'
+              - inspect
+              - '{{ prefix }}'
+          register: before_preview
+          changed_when: false
+
+        - name: Preview description and membership replacement
+          sustainablelobster.legacy_windows.win_group:
+            name: '{{ primary }}'
+            description: Preview
+            members:
+              set: ['{{ fixture.current_sid }}', '{{ fixture.guest_sid }}']
+          check_mode: true
+          diff: true
+          register: replacement_preview
+
+        - name: Preview deletion of the existing group
+          sustainablelobster.legacy_windows.win_group:
+            name: '{{ primary }}'
+            state: absent
+          check_mode: true
+          diff: true
+          register: deletion_preview
+
+        - name: Inspect existing groups after previews
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - '{{ fixture_code }}'
+              - inspect
+              - '{{ prefix }}'
+          register: after_preview
+          changed_when: false
+
+        - name: Verify idempotence exact spelling and check-mode nonmutation
+          ansible.builtin.assert:
+            that:
+              - created.changed
+              - not repeated.changed
+              - not case_only.changed
+              - case_only.diff.after.name == primary | upper
+              - case_only.diff.after.description == initial_description | lower
+              - (before_preview.stdout | from_json).primary.sid == created.sid
+              - >-
+                (before_preview.stdout | from_json).primary.description ==
+                initial_description
+              - (before_preview.stdout | from_json).primary.members == []
+              - replacement_preview.changed
+              - replacement_preview.sid == created.sid
+              - replacement_preview.diff.after.description == 'Preview'
+              - >-
+                replacement_preview.diff.after.members | sort ==
+                [fixture.current_name, fixture.guest_name] | sort
+              - deletion_preview.changed
+              - deletion_preview.sid is none
+              - deletion_preview.diff.after is none
+              - >-
+                (before_preview.stdout | from_json) ==
+                (after_preview.stdout | from_json)
+
+        - name: Add the current local account by its qualified name
+          sustainablelobster.legacy_windows.win_group:
+            name: '{{ primary }}'
+            members:
+              add: ['.\{{ fixture.username }}']
+          diff: true
+          register: added
+
+        - name: Repeat the same membership through SID and account aliases
+          sustainablelobster.legacy_windows.win_group:
+            name: '{{ primary }}'
+            members:
+              add: ['{{ fixture.current_sid }}', '{{ fixture.current_name }}']
+          register: add_repeated
+
+        - name: Set membership to the two existing accounts
+          sustainablelobster.legacy_windows.win_group:
+            name: '{{ primary }}'
+            members:
+              set: ['{{ fixture.current_sid }}', '{{ fixture.guest_sid }}']
+          diff: true
+          register: membership_set
+
+        - name: Remove only the current account
+          sustainablelobster.legacy_windows.win_group:
+            name: '{{ primary }}'
+            members:
+              remove: ['{{ fixture.current_sid }}']
+          diff: true
+          register: member_removed
+
+        - name: Add and remove the initially absent current account
+          sustainablelobster.legacy_windows.win_group:
+            name: '{{ primary }}'
+            members:
+              add: ['{{ fixture.current_sid }}']
+              remove: ['{{ fixture.current_sid }}']
+          diff: true
+          register: overlap_absent
+
+        - name: Add and remove the now present current account
+          sustainablelobster.legacy_windows.win_group:
+            name: '{{ primary }}'
+            members:
+              add: ['{{ fixture.current_sid }}']
+              remove: ['{{ fixture.current_sid }}']
+          diff: true
+          register: overlap_present
+
+        - name: Inspect persisted membership independently
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - '{{ fixture_code }}'
+              - inspect
+              - '{{ prefix }}'
+          register: membership_actual
+          changed_when: false
+
+        - name: Verify SID aliases and membership overlap rules
+          ansible.builtin.assert:
+            that:
+              - added.changed
+              - added.diff.after.members == [fixture.current_name]
+              - not add_repeated.changed
+              - membership_set.changed
+              - >-
+                membership_set.diff.after.members | sort ==
+                [fixture.current_name, fixture.guest_name] | sort
+              - member_removed.changed
+              - member_removed.diff.after.members == [fixture.guest_name]
+              - overlap_absent.changed
+              - >-
+                overlap_absent.diff.after.members | sort ==
+                [fixture.current_name, fixture.guest_name] | sort
+              - overlap_present.changed
+              - overlap_present.diff.after.members == [fixture.guest_name]
+              - >-
+                (membership_actual.stdout | from_json).primary.members ==
+                [fixture.guest_sid]
+
+        - name: Clear both the description and all memberships
+          sustainablelobster.legacy_windows.win_group:
+            name: '{{ primary }}'
+            description: ''
+            members:
+              set: []
+          diff: true
+          register: cleared
+
+        - name: Repeat the cleared state
+          sustainablelobster.legacy_windows.win_group:
+            name: '{{ primary }}'
+            description: ''
+            members:
+              set: []
+          register: clear_repeated
+
+        - name: Exercise mutually exclusive member options
+          block:
+            - name: Reject a request that combines set with add
+              sustainablelobster.legacy_windows.win_group:
+                name: '{{ primary }}'
+                members:
+                  set: []
+                  add: []
+              register: malformed
+            - name: Reject unexpected malformed-request success
+              ansible.builtin.fail:
+                msg: Mutually exclusive member options unexpectedly succeeded
+          rescue:
+            - name: Verify the malformed request failed before any change
+              ansible.builtin.assert:
+                that:
+                  - malformed.failed
+                  - not malformed.changed
+                  - "'mutually exclusive' in malformed.msg"
+
+        - name: Exercise an unresolved member after creating a group
+          block:
+            - name: Create a group before the unknown-account failure
+              sustainablelobster.legacy_windows.win_group:
+                name: '{{ partial }}'
+                description: Committed before lookup
+                members:
+                  add: ['{{ prefix }}missing_account']
+              register: creation_failure
+            - name: Reject unexpected unknown-account success
+              ansible.builtin.fail:
+                msg: The nonexistent member unexpectedly resolved
+          rescue:
+            - name: Verify partial creation uses the reference failure result
+              ansible.builtin.assert:
+                that:
+                  - creation_failure.failed
+                  - not creation_failure.changed
+                  - "'Failed to translate' in creation_failure.msg"
+
+        - name: Exercise unresolved removal after committing a description
+          block:
+            - name: Resolve both member lists before making a membership change
+              sustainablelobster.legacy_windows.win_group:
+                name: '{{ primary }}'
+                description: Retained after failure
+                members:
+                  add: ['{{ fixture.current_sid }}']
+                  remove: ['{{ prefix }}missing_account']
+              register: description_failure
+            - name: Reject unexpected unresolved-removal success
+              ansible.builtin.fail:
+                msg: The nonexistent removal account unexpectedly resolved
+          rescue:
+            - name: Verify the description failure retains changed false
+              ansible.builtin.assert:
+                that:
+                  - description_failure.failed
+                  - not description_failure.changed
+                  - "'Failed to translate' in description_failure.msg"
+
+        - name: Inspect changes committed before the expected lookup failures
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - '{{ fixture_code }}'
+              - inspect
+              - '{{ prefix }}'
+          register: after_failure
+          changed_when: false
+
+        - name: Verify descriptions persisted and neither membership was changed
+          ansible.builtin.assert:
+            that:
+              - cleared.changed
+              - cleared.diff.after.description == ''
+              - cleared.diff.after.members == []
+              - not clear_repeated.changed
+              - >-
+                (after_failure.stdout | from_json).primary.description ==
+                'Retained after failure'
+              - (after_failure.stdout | from_json).primary.members == []
+              - >-
+                (after_failure.stdout | from_json).partial.description ==
+                'Committed before lookup'
+              - (after_failure.stdout | from_json).partial.members == []
+
+        - name: Recover both groups with a valid existing account
+          sustainablelobster.legacy_windows.win_group:
+            name: '{{ item }}'
+            description: Recovered
+            members:
+              set: ['{{ fixture.current_sid }}']
+          loop: ['{{ primary }}', '{{ partial }}']
+          register: recovered
+
+        - name: Repeat the recovered state
+          sustainablelobster.legacy_windows.win_group:
+            name: '{{ item }}'
+            description: Recovered
+            members:
+              set: ['{{ fixture.current_sid }}']
+          loop: ['{{ primary }}', '{{ partial }}']
+          register: recovery_repeated
+
+        - name: Inspect recovered descriptions membership and stable group SIDs
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - '{{ fixture_code }}'
+              - inspect
+              - '{{ prefix }}'
+          register: recovery_actual
+          changed_when: false
+
+        - name: Verify recovery and repeated-state idempotence
+          ansible.builtin.assert:
+            that:
+              - recovered.results[item].changed
+              - not recovery_repeated.results[item].changed
+              - actual.description == 'Recovered'
+              - actual.members == [fixture.current_sid]
+              - actual.sid == (after_failure.stdout | from_json)[suffix].sid
+          loop: [0, 1]
+          vars:
+            suffix: '{{ ["primary", "partial"][item] }}'
+            actual: '{{ (recovery_actual.stdout | from_json)[suffix] }}'
+
+        - name: Delete both owned groups
+          sustainablelobster.legacy_windows.win_group:
+            name: '{{ item }}'
+            state: absent
+          loop: ['{{ primary }}', '{{ partial }}']
+          diff: true
+          register: deleted
+
+        - name: Repeat deletion of the absent groups
+          sustainablelobster.legacy_windows.win_group:
+            name: '{{ item }}'
+            state: absent
+          loop: ['{{ primary }}', '{{ partial }}']
+          register: delete_repeated
+
+        - name: Verify deletion results and repeated absence
+          ansible.builtin.assert:
+            that:
+              - deleted.results[item].changed
+              - deleted.results[item].sid is none
+              - deleted.results[item].diff.after is none
+              - not delete_repeated.results[item].changed
+              - delete_repeated.results[item].sid is none
+          loop: [0, 1]
+      always:
+        - name: Remove only initially absent owned groups and verify removal
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - '{{ fixture_code }}'
+              - cleanup
+              - '{{ prefix }}'
+          register: cleanup
+
+        - name: Verify all reserved group names are absent
+          ansible.builtin.assert:
+            that: (cleanup.stdout | from_json).removed
+
+        - name: Record remaining task directories
+          ansible.builtin.raw: >-
+            cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+            "import glob, json, os, tempfile;
+            print(json.dumps(sorted(glob.glob(os.path.join(tempfile.gettempdir(),
+            'ansible-tmp-*')))))""
+          register: task_directories_after
+          changed_when: false
+          check_mode: false
+
+        - name: Verify successful and failed requests cleaned their staged files
+          ansible.builtin.assert:
+            that:
+              - >-
+                (task_directories_before.stdout | from_json) ==
+                (task_directories_after.stdout | from_json)

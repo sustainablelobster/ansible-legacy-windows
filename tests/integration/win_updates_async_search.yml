@@ -1,0 +1,200 @@
+---
+# SPDX-License-Identifier: GPL-3.0-or-later
+- name: Compare real async WUA searches and check mode without selected writes
+  hosts: legacy_windows
+  gather_facts: false
+  vars_files:
+    - vars/native_async.yml
+  vars:
+    updates_async_search_capture_path: >-
+      {{ playbook_dir + '/../../tmp/codex/evidence/' +
+         'win-updates-async-search-v1.json' }}
+    updates_async_search_cases:
+      - {name: real-searched-reject-all, state: searched, check: false}
+      - {name: real-check-installed-reject-all, state: installed, check: true}
+    updates_async_search_global_program: >-
+      import glob,json,os,sys,tempfile;
+      assert sys.version_info[:3]==(3,4,4);
+      print(json.dumps({name:sorted(glob.glob(os.path.join(
+      tempfile.gettempdir(),pattern))) for name,pattern in
+      [('staging','ansible-tmp-*'),('workers','legacy-windows-updates-*')]}))
+  tasks:
+    - name: Capture actual Python runtime and exact original staging and workers
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "{{ updates_async_search_global_program }}""
+      register: updates_async_search_global_before
+      changed_when: false
+
+    - name: Capture full original service configuration and runtime
+      sustainablelobster.legacy_windows.win_service_info:
+      register: updates_async_search_services_before
+      no_log: true
+
+    - name: Allocate a uniquely owned async WUA search workspace
+      sustainablelobster.legacy_windows.win_tempfile:
+        prefix: legacy-windows-native-async-updates-search-
+        state: directory
+      register: updates_async_search_workspace
+
+    - name: Initialize complete and partial pair retention
+      ansible.builtin.set_fact:
+        updates_async_search_records: []
+        updates_async_search_pair: {}
+
+    - name: Exercise real native and released WUA searches with owned recovery
+      block:
+        - name: Journal exact protected resources before any public search
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}', '-',
+                   '{{ updates_async_search_workspace.path }}', setup]
+            stdin: '{{ native_async_program }}'
+          register: updates_async_search_setup
+          changed_when: false
+          no_log: true
+
+        - name: Exercise complete searched and installed-preview result pairs
+          ansible.builtin.include_tasks: >-
+            tasks/win_updates_async_search_case.yml
+          loop: '{{ updates_async_search_cases }}'
+          loop_control:
+            loop_var: updates_async_search_case
+            label: '{{ updates_async_search_case.name }}'
+      always:
+        - name: Require detached Updates workers naturally closed after status
+          ansible.builtin.raw: >-
+            cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+            "import glob,os,tempfile;
+            assert not glob.glob(os.path.join(tempfile.gettempdir(),
+            'legacy-windows-updates-*'))""
+          register: updates_async_search_worker_absence
+          changed_when: false
+          failed_when: false
+
+        - name: Recover only journal-owned generic jobs and protected resources
+          when: updates_async_search_worker_absence.rc == 0
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}', '-',
+                   '{{ updates_async_search_workspace.path }}', cleanup]
+            stdin: '{{ native_async_program }}'
+          register: updates_async_search_recovery
+          changed_when: false
+          failed_when: false
+          no_log: true
+
+        - name: Capture full service effects before bounded runtime restoration
+          sustainablelobster.legacy_windows.win_service_info:
+          register: updates_async_search_services_after
+          no_log: true
+
+        - name: Restore only originally stopped measured WUA service states
+          sustainablelobster.legacy_windows.win_service:
+            name: '{{ item }}'
+            state: stopped
+          loop: [TrustedInstaller, wuauserv]
+          when:
+            - updates_async_search_worker_absence.rc == 0
+            - >-
+              (updates_async_search_services_before.services |
+              selectattr('name', 'equalto', item) | first).state == 'stopped'
+            - >-
+              (updates_async_search_services_after.services |
+              selectattr('name', 'equalto', item) | first).state != 'stopped'
+          register: updates_async_search_service_restoration
+          no_log: true
+
+        - name: Capture full final service rows without inventing old PIDs
+          sustainablelobster.legacy_windows.win_service_info:
+          register: updates_async_search_services_final
+          no_log: true
+
+        - name: Preserve failed partial and complete fields before assertions
+          ansible.builtin.copy:
+            content: >-
+              {{ {'results': updates_async_search_records,
+                  'partial': updates_async_search_pair,
+                  'current': {
+                    'native_launch': updates_async_search_native_launch |
+                      default(none),
+                    'native_status': updates_async_search_native_status |
+                      default(none),
+                    'source_launch': updates_async_search_source_launch |
+                      default(none),
+                    'source_status': updates_async_search_source_status |
+                      default(none)},
+                  'workspace': updates_async_search_workspace,
+                  'setup': updates_async_search_setup | default(none),
+                  'services_before': updates_async_search_services_before,
+                  'services_after': updates_async_search_services_after,
+                  'services_final': updates_async_search_services_final,
+                  'service_restoration':
+                    updates_async_search_service_restoration,
+                  'worker_absence': updates_async_search_worker_absence,
+                  'recovery': updates_async_search_recovery,
+                  'global_before': updates_async_search_global_before} |
+                  to_nice_json }}
+            dest: '{{ updates_async_search_capture_path }}'
+            mode: '0600'
+          delegate_to: localhost
+          vars: &local
+            ansible_connection: local
+            ansible_shell_type: sh
+            ansible_python_interpreter: '{{ ansible_playbook_python }}'
+          changed_when: false
+          no_log: true
+
+        - name: Require measured protected and dedicated worker closure
+          ansible.builtin.assert:
+            that:
+              - updates_async_search_worker_absence.rc == 0
+              - updates_async_search_recovery.rc | default(-1) == 0
+              - (updates_async_search_recovery.stdout | from_json).restored
+
+        - name: Remove only the verified owned generic fixture workspace
+          sustainablelobster.legacy_windows.win_file:
+            path: '{{ updates_async_search_workspace.path }}'
+            state: absent
+
+        - name: Observe workspace absence and exact original global staging
+          ansible.builtin.raw: >-
+            cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+            "{{ updates_async_search_global_program }};
+            assert not os.path.exists(sys.argv[1])"
+            "{{ updates_async_search_workspace.path }}""
+          register: updates_async_search_global_after
+          changed_when: false
+
+        - name: Preserve complete final closure without altering public results
+          ansible.builtin.copy:
+            content: >-
+              {{ (lookup('ansible.builtin.file',
+                  updates_async_search_capture_path) | from_json) |
+                  combine({'global_after': updates_async_search_global_after,
+                    'workspace_absent': true}) | to_nice_json }}
+            dest: '{{ updates_async_search_capture_path }}'
+            mode: '0600'
+          delegate_to: localhost
+          vars: *local
+          changed_when: false
+          no_log: true
+
+        - name: Require literal original global staging and worker absence
+          ansible.builtin.assert:
+            that:
+              - >-
+                (updates_async_search_global_after.stdout | from_json) ==
+                (updates_async_search_global_before.stdout | from_json)
+
+        - name: Close this owner's persistent SSH connection after recovery
+          ansible.builtin.meta: reset_connection
+
+    - name: Require every requested complete real WUA source/native comparison
+      ansible.builtin.assert:
+        that:
+          - >-
+            updates_async_search_records | length ==
+            updates_async_search_cases | length
+          - >-
+            updates_async_search_records | map(attribute='comparison.rc') |
+            select('equalto', 0) | list | length ==
+            updates_async_search_cases | length

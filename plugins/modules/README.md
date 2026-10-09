@@ -1,8 +1,8 @@
 # Modules
 
-Place Windows module implementations here. Payloads must run under Python 3.4.4
-and follow the [compatibility contract](../../docs/compatibility.md).
+Windows payloads require Python 3.4.4 or newer. Each module documents its
+arguments, examples, results and prerequisites in Ansible's module format.
 
-Include Ansible module documentation, examples, and return-value documentation
-with each interface. Verify behavior on an authorized Windows target before
-claiming support.
+Keep interfaces familiar and failures actionable. Demonstrate behavior on an
+authorized Windows target before claiming it works; see
+[Development](../../docs/development.md).

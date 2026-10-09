@@ -1,0 +1,268 @@
+---
+# SPDX-License-Identifier: GPL-3.0-or-later
+- name: Bind this exact identity and transfer workflow
+  ansible.builtin.set_fact:
+    copy_template_runas_user: >-
+      {{ ansible_user if copy_template_runas_case[0] == 'user'
+         else 'NT AUTHORITY\SYSTEM' }}
+    copy_template_runas_check: >-
+      {{ copy_template_runas_case[2] in ['check_existing', 'check_new'] }}
+    copy_template_runas_index: >-
+      {{ copy_template_runas_users.index(copy_template_runas_case[0]) * 12 +
+         copy_template_runas_workflows.index(copy_template_runas_case[1]) * 4 +
+         copy_template_runas_phases.index(copy_template_runas_case[2]) }}
+    copy_template_runas_source: >-
+      {{ copy_template_runas_controller.path }}/{{
+         'tree/' if copy_template_runas_case[1] == 'archive'
+         else 'single.bin' }}
+    copy_template_runas_destination: >-
+      {{ copy_template_runas_workspace.path }}\output\{{
+         'basic.txt' if copy_template_runas_case[1] == 'template' else
+         ('single.bin' if copy_template_runas_case[1] == 'file' else '') }}
+
+- name: Restore the native initial state under the requested token
+  sustainablelobster.legacy_windows.win_command:
+    argv:
+      - '{{ ansible_python_interpreter }}'
+      - '-'
+      - '{{ copy_template_runas_workspace.path }}'
+      - prepare
+      - '{{ copy_template_runas_case[1] }}'
+      - '{{ copy_template_runas_case[2] }}'
+    stdin: '{{ copy_template_runas_program }}'
+  become: true
+  become_method: ansible.builtin.runas
+  become_user: '{{ copy_template_runas_user }}'
+  vars:
+    ansible_become_password: >-
+      {{ ansible_password if copy_template_runas_case[0] == 'user' else '' }}
+  register: copy_template_runas_before_native
+  changed_when: false
+  no_log: true
+
+- name: Start the owned observer before the native public call
+  sustainablelobster.legacy_windows.win_command:
+    argv: ['{{ ansible_python_interpreter }}', '-',
+           '{{ copy_template_runas_workspace.path }}', observer_start,
+           native, '{{ copy_template_runas_index }}']
+    stdin: '{{ copy_template_runas_program }}'
+  register: copy_template_runas_native_observer_start
+  changed_when: false
+  no_log: true
+
+- name: Retain the actual native Copy success or failure
+  when: copy_template_runas_case[1] != 'template'
+  block:
+    - name: Exercise the native controller file or archive transfer
+      sustainablelobster.legacy_windows.win_copy:
+        src: '{{ copy_template_runas_source }}'
+        dest: '{{ copy_template_runas_destination }}'
+      become: true
+      become_method: ansible.builtin.runas
+      become_user: '{{ copy_template_runas_user }}'
+      vars: &native
+        ansible_become_password: >-
+          {{ ansible_password if copy_template_runas_case[0] == 'user'
+             else '' }}
+        ansible_remote_tmp: '{{ copy_template_runas_workspace.path }}\staging'
+      check_mode: '{{ copy_template_runas_check }}'
+      register: copy_template_runas_native_copy
+      no_log: true
+  rescue:
+    - name: Preserve the registered public failure without changing its fields
+      ansible.builtin.debug:
+        msg: Complete public failure retained for the final paired gate.
+
+- name: Retain the actual native Template success or failure
+  when: copy_template_runas_case[1] == 'template'
+  block:
+    - name: Exercise actual native Template delegation to the Copy action
+      sustainablelobster.legacy_windows.win_template:
+        src: '{{ playbook_dir }}/templates/win_template/basic.j2'
+        dest: '{{ copy_template_runas_destination }}'
+      become: true
+      become_method: ansible.builtin.runas
+      become_user: '{{ copy_template_runas_user }}'
+      vars:
+        <<: *native
+        template_value: '{{ copy_template_runas_value }}'
+      check_mode: '{{ copy_template_runas_check }}'
+      register: copy_template_runas_native_template
+      no_log: true
+  rescue:
+    - name: Preserve the registered public failure without changing its fields
+      ansible.builtin.debug:
+        msg: Complete public failure retained for the final paired gate.
+
+- name: Record native rendered-source absence immediately after return
+  ansible.builtin.stat:
+    path: '{{ copy_template_runas_native_template.src }}'
+    get_checksum: false
+    get_mime: false
+  register: copy_template_runas_rendered_native
+  delegate_to: localhost
+  vars: &controller
+    ansible_connection: local
+    ansible_shell_type: sh
+    ansible_python_interpreter: '{{ ansible_playbook_python }}'
+  when:
+    - copy_template_runas_case[1] == 'template'
+    - copy_template_runas_native_template.src is defined
+
+- name: Observe whole native file and ownership effects
+  sustainablelobster.legacy_windows.win_command:
+    argv: ['{{ ansible_python_interpreter }}', '-',
+           '{{ copy_template_runas_workspace.path }}', observe]
+    stdin: '{{ copy_template_runas_program }}'
+  register: copy_template_runas_after_native
+  changed_when: false
+  no_log: true
+
+- name: Close and require the actual native worker token observation
+  sustainablelobster.legacy_windows.win_command:
+    argv:
+      - '{{ ansible_python_interpreter }}'
+      - '-'
+      - '{{ copy_template_runas_workspace.path }}'
+      - observer_stop
+      - >-
+        {{ 'S-1-5-18' if copy_template_runas_case[0] == 'system'
+           else copy_template_runas_identity.account.sid }}
+      - '{{ 2 if copy_template_runas_case[2] == "create" else 1 }}'
+    stdin: '{{ copy_template_runas_program }}'
+  register: copy_template_runas_native_observer_stop
+  changed_when: false
+  no_log: true
+
+- name: Restore the released initial state under the requested token
+  sustainablelobster.legacy_windows.win_command:
+    argv:
+      - '{{ ansible_python_interpreter }}'
+      - '-'
+      - '{{ copy_template_runas_workspace.path }}'
+      - prepare
+      - '{{ copy_template_runas_case[1] }}'
+      - '{{ copy_template_runas_case[2] }}'
+    stdin: '{{ copy_template_runas_program }}'
+  become: true
+  become_method: ansible.builtin.runas
+  become_user: '{{ copy_template_runas_user }}'
+  vars:
+    ansible_become_password: >-
+      {{ ansible_password if copy_template_runas_case[0] == 'user' else '' }}
+  register: copy_template_runas_before_original
+  changed_when: false
+  no_log: true
+
+- name: Start the owned observer before the released public call
+  sustainablelobster.legacy_windows.win_command:
+    argv: ['{{ ansible_python_interpreter }}', '-',
+           '{{ copy_template_runas_workspace.path }}', observer_start,
+           original, '{{ copy_template_runas_index }}']
+    stdin: '{{ copy_template_runas_program }}'
+  register: copy_template_runas_original_observer_start
+  changed_when: false
+  no_log: true
+
+- name: Retain the untouched released Copy success or failure
+  when: copy_template_runas_case[1] != 'template'
+  block:
+    - name: Exercise the untouched released controller file or archive transfer
+      ansible.windows.win_copy:
+        src: '{{ copy_template_runas_source }}'
+        dest: '{{ copy_template_runas_destination }}'
+      become: true
+      become_method: ansible.builtin.runas
+      become_user: '{{ copy_template_runas_user }}'
+      vars: &source
+        <<: *native
+        ansible_shell_type: cmd
+      check_mode: '{{ copy_template_runas_check }}'
+      register: copy_template_runas_original_copy
+      no_log: true
+  rescue:
+    - name: Preserve the registered public failure without changing its fields
+      ansible.builtin.debug:
+        msg: Complete public failure retained for the final paired gate.
+
+- name: Retain the untouched released Template success or failure
+  when: copy_template_runas_case[1] == 'template'
+  block:
+    - name: Exercise untouched released Template delegation to the Copy action
+      ansible.windows.win_template:
+        src: '{{ playbook_dir }}/templates/win_template/basic.j2'
+        dest: '{{ copy_template_runas_destination }}'
+      become: true
+      become_method: ansible.builtin.runas
+      become_user: '{{ copy_template_runas_user }}'
+      vars:
+        <<: *source
+        template_value: '{{ copy_template_runas_value }}'
+      check_mode: '{{ copy_template_runas_check }}'
+      register: copy_template_runas_original_template
+      no_log: true
+  rescue:
+    - name: Preserve the registered public failure without changing its fields
+      ansible.builtin.debug:
+        msg: Complete public failure retained for the final paired gate.
+
+- name: Record released rendered-source absence immediately after return
+  ansible.builtin.stat:
+    path: '{{ copy_template_runas_original_template.src }}'
+    get_checksum: false
+    get_mime: false
+  register: copy_template_runas_rendered_original
+  delegate_to: localhost
+  vars: *controller
+  when:
+    - copy_template_runas_case[1] == 'template'
+    - copy_template_runas_original_template.src is defined
+
+- name: Observe whole released file and ownership effects
+  sustainablelobster.legacy_windows.win_command:
+    argv: ['{{ ansible_python_interpreter }}', '-',
+           '{{ copy_template_runas_workspace.path }}', observe]
+    stdin: '{{ copy_template_runas_program }}'
+  register: copy_template_runas_after_original
+  changed_when: false
+  no_log: true
+
+- name: Close and require the actual released worker token observation
+  sustainablelobster.legacy_windows.win_command:
+    argv:
+      - '{{ ansible_python_interpreter }}'
+      - '-'
+      - '{{ copy_template_runas_workspace.path }}'
+      - observer_stop
+      - >-
+        {{ 'S-1-5-18' if copy_template_runas_case[0] == 'system'
+           else copy_template_runas_identity.account.sid }}
+      - '{{ 2 if copy_template_runas_case[2] == "create" else 1 }}'
+    stdin: '{{ copy_template_runas_program }}'
+  register: copy_template_runas_original_observer_stop
+  changed_when: false
+  no_log: true
+
+- name: Retain every raw pair without normalizing failures
+  ansible.builtin.set_fact:
+    copy_template_runas_results: >-
+      {{ copy_template_runas_results + [{
+         'case': copy_template_runas_case,
+         'before_native': copy_template_runas_before_native,
+         'after_native': copy_template_runas_after_native,
+         'before_original': copy_template_runas_before_original,
+         'after_original': copy_template_runas_after_original,
+         'native_observer_start': copy_template_runas_native_observer_start,
+         'native_observer_stop': copy_template_runas_native_observer_stop,
+         'original_observer_start': copy_template_runas_original_observer_start,
+         'original_observer_stop': copy_template_runas_original_observer_stop,
+         'rendered_native': copy_template_runas_rendered_native | default(none),
+         'rendered_original': copy_template_runas_rendered_original |
+           default(none),
+         'native': (copy_template_runas_native_template
+           if copy_template_runas_case[1] == 'template'
+           else copy_template_runas_native_copy),
+         'original': (copy_template_runas_original_template
+           if copy_template_runas_case[1] == 'template'
+           else copy_template_runas_original_copy)}] }}
+  no_log: true

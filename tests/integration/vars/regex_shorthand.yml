@@ -1,0 +1,44 @@
+---
+# SPDX-License-Identifier: GPL-3.0-or-later
+regex_shorthand_fixture: |
+  import base64
+  REGEX_FIXTURE_SOURCE = base64.b64decode({{ lookup('ansible.builtin.file',
+  playbook_dir + '/fixtures/regex_selection.py', rstrip=false) |
+  b64encode | to_json }}).decode('utf-8')
+  {{ lookup('ansible.builtin.file',
+  playbook_dir + '/fixtures/regex_shorthand.py', rstrip=false) }}
+regex_shorthand_find_cases:
+  - id: word
+    pattern: '^\w+[.]txt$'
+    names: [a.txt, É.txt, á.txt, a‿.txt, ࢳ.txt, 1.txt, ෦.txt]
+  - id: nonword
+    pattern: '^\W+[.]txt$'
+    names: [².txt, Ⅳ.txt, ' .txt', 😀.txt]
+  - {id: digit, pattern: '^\d+[.]txt$', names: [1.txt, ෦.txt]}
+  - id: nondigit
+    pattern: '^\D+[.]txt$'
+    names: [a.txt, É.txt, á.txt, a‿.txt, ².txt, Ⅳ.txt, ࢳ.txt,
+            ' .txt', a‌.txt, 😀.txt]
+  - {id: whitespace, pattern: '^\s+[.]txt$', names: [' .txt']}
+  - id: nonwhitespace
+    pattern: '^\S+[.]txt$'
+    names: [a.txt, É.txt, á.txt, a‿.txt, ².txt, Ⅳ.txt, ࢳ.txt, 1.txt,
+            ෦.txt, a‌.txt, 😀.txt]
+  - id: boundary
+    pattern: '\b[.]txt$'
+    names: [a.txt, É.txt, á.txt, a‿.txt, ࢳ.txt, 1.txt, ෦.txt, a‌.txt]
+  - id: nonboundary
+    pattern: '\B[.]txt$'
+    names: [².txt, Ⅳ.txt, ' .txt', 😀.txt]
+regex_shorthand_wait_cases:
+  - {id: digit, file: digit.txt, pattern: '^\d$', state: present}
+  - {id: control-not-space, file: control.txt, pattern: '^\s$', state: absent}
+  - {id: control-nonspace, file: control.txt, pattern: '^\S$', state: present}
+  - id: mark-boundary
+    file: mark-boundary.txt
+    pattern: '^\bá\b$'
+    state: present
+  - id: joiner-boundary
+    file: joiner-boundary.txt
+    pattern: '^\ba‌\b$'
+    state: present

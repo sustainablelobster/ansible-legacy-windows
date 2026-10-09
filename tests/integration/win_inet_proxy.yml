@@ -1,0 +1,101 @@
+---
+- name: Verify LAN and named WinINet settings with exact original restoration
+  hosts: legacy_windows
+  gather_facts: false
+  vars_files:
+    - vars/inet_proxy.yml
+    - vars/inet_proxy_fixture.yml
+  tasks:
+    - name: Require Python 3.4.4 and record existing task directories
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import glob, json, os, sys, tempfile;
+        assert sys.version_info[:3] == (3, 4, 4);
+        print(json.dumps(sorted(glob.glob(os.path.join(tempfile.gettempdir(),
+        'ansible-tmp-*')))))""
+      register: task_directories_before
+      changed_when: false
+
+    - name: Exercise WinINet with an owned disconnected phonebook entry
+      block:
+        - name: Allocate the recovery workspace
+          sustainablelobster.legacy_windows.win_tempfile:  # noqa: args[module]
+            state: directory
+            prefix: legacy-windows-inet-proxy-
+          register: inet_proxy_workspace
+          check_mode: false
+
+        - name: Journal original settings before LAN and phonebook changes
+          sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - '-'
+              - '{{ inet_proxy_workspace.path }}'
+              - setup
+            stdin: '{{ inet_proxy_fixture }}'
+          register: inet_proxy_setup
+          changed_when: true
+          check_mode: false
+
+        - name: Retain controlled observations and the owned connection name
+          ansible.builtin.set_fact:
+            inet_proxy_initial: >-
+              {{ (inet_proxy_setup.stdout | from_json).snapshot }}
+            inet_proxy_previous: >-
+              {{ (inet_proxy_setup.stdout | from_json).snapshot }}
+            inet_proxy_connection: >-
+              {{ (inet_proxy_setup.stdout | from_json).connection }}
+
+        - name: Exercise changes repeats check mode rollback and named settings
+          ansible.builtin.include_tasks: tasks/win_inet_proxy_case.yml
+          loop: '{{ range(inet_proxy_cases | length) | list }}'
+          loop_control:
+            loop_var: inet_proxy_case_index
+          vars:
+            inet_proxy_case: '{{ inet_proxy_cases[inet_proxy_case_index] }}'
+      always:
+        - name: Restore original settings before removing recovery data
+          when: inet_proxy_workspace.path is defined
+          block:
+            - name: Restore and verify original settings  # noqa: args[module]
+              sustainablelobster.legacy_windows.win_command:
+                argv:
+                  - '{{ ansible_python_interpreter }}'
+                  - '-'
+                  - '{{ inet_proxy_workspace.path }}'
+                  - cleanup
+                stdin: '{{ inet_proxy_fixture }}'
+              register: inet_proxy_restoration
+              changed_when: true
+              check_mode: false
+
+            - name: Require verified restoration before discarding the journal
+              ansible.builtin.assert:
+                that:
+                  - (inet_proxy_restoration.stdout | from_json).restored
+
+            - name: Remove only the verified recovery workspace
+              sustainablelobster.legacy_windows.win_file:  # noqa: args[module]
+                path: '{{ inet_proxy_workspace.path }}'
+                state: absent
+              check_mode: false
+
+        - name: Verify recovery-workspace and staging cleanup
+          ansible.builtin.raw: >-
+            cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+            "import glob, json, os, sys, tempfile;
+            assert not os.path.exists(sys.argv[1]);
+            print(json.dumps(sorted(glob.glob(os.path.join(tempfile.gettempdir(),
+            'ansible-tmp-*')))))" "{{ inet_proxy_workspace.path }}""
+          when: inet_proxy_workspace.path is defined
+          register: task_directories_after
+          changed_when: false
+          check_mode: false
+
+        - name: Require task-directory cleanup
+          ansible.builtin.assert:
+            that:
+              - >-
+                (task_directories_before.stdout | from_json) ==
+                (task_directories_after.stdout | from_json)
+          when: inet_proxy_workspace.path is defined

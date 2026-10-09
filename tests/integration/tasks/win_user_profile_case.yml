@@ -1,0 +1,191 @@
+---
+- name: Initialize one profile case observation
+  ansible.builtin.set_fact:
+    user_profile_before: {}
+    user_profile_after: {}
+    user_profile_result:
+    user_profile_validated: false
+
+- name: Observe capture and validate the public profile request
+  vars:
+    user_profile_case_record:
+      engine: '{{ user_profile_engine }}'
+      name: '{{ user_profile_case.name }}'
+      params: '{{ user_profile_case.params }}'
+      check: '{{ user_profile_case.check | default(false) }}'
+      validated: '{{ user_profile_validated }}'
+      result: '{{ user_profile_result }}'
+      before_command: '{{ user_profile_before }}'
+      after_command: '{{ user_profile_after }}'
+      before: >-
+        {{ (user_profile_before.stdout | from_json)
+        if user_profile_before.rc | default(1) == 0 else none }}
+      after: >-
+        {{ (user_profile_after.stdout | from_json)
+        if user_profile_after.rc | default(1) == 0 else none }}
+    user_profile_pending: >-
+      {{ user_profile_results + [user_profile_case_record] }}
+  block:
+    - name: Prepare only the journal-owned account or profile alias
+      sustainablelobster.legacy_windows.win_command: # noqa: args[module]
+        argv:
+          - '{{ ansible_python_interpreter }}'
+          - '-'
+          - '{{ user_profile_workspace.path }}'
+          - '{{ user_profile_case.prepare }}'
+        stdin: '{{ user_profile_program }}'
+      register: user_profile_preparation
+      when: user_profile_case.prepare is defined
+      check_mode: false
+
+    - name: Retain prepared account identities
+      ansible.builtin.set_fact:
+        user_profile_names: '{{ user_profile_preparation.stdout | from_json }}'
+      when: user_profile_case.prepare is defined
+
+    - name: Independently read all registered profiles and account identities
+      sustainablelobster.legacy_windows.win_command: # noqa: args[module]
+        argv:
+          - '{{ ansible_python_interpreter }}'
+          - '-'
+          - '{{ user_profile_workspace.path }}'
+          - observe
+        stdin: '{{ user_profile_program }}'
+      register: user_profile_before
+      changed_when: false
+      check_mode: false
+
+    - name: Capture public success or failure without changing its fields
+      block:
+        - name: Run the native public profile request # noqa: args[module]
+          sustainablelobster.legacy_windows.win_user_profile: >-
+            {{ user_profile_case.params }}
+          register: user_profile_native_result
+          check_mode: '{{ user_profile_case.check | default(false) }}'
+          when: user_profile_engine == 'native'
+
+        - name: Run the unchanged pinned original profile request
+          ansible.windows.win_user_profile: '{{ user_profile_case.params }}'
+          register: user_profile_original_result
+          check_mode: '{{ user_profile_case.check | default(false) }}'
+          when: user_profile_engine == 'original'
+          vars:
+            ansible_shell_type: cmd
+            ansible_remote_tmp: '{{ user_profile_workspace.path }}'
+      rescue:
+        - name: Retain the failed public call until observation completes
+          ansible.builtin.debug:
+            msg: Public failure retained for exact comparison and validation.
+      always:
+        - name: Retain the entire public result
+          ansible.builtin.set_fact:
+            user_profile_result: >-
+              {{ user_profile_native_result if user_profile_engine == 'native'
+              else user_profile_original_result }}
+
+    - name: Independently read profiles after the public request
+      sustainablelobster.legacy_windows.win_command: # noqa: args[module]
+        argv:
+          - '{{ ansible_python_interpreter }}'
+          - '-'
+          - '{{ user_profile_workspace.path }}'
+          - observe
+        stdin: '{{ user_profile_program }}'
+      register: user_profile_after
+      changed_when: false
+      check_mode: false
+
+    - name: Save complete public results before assertions
+      ansible.builtin.copy:
+        content: >-
+          {{ user_profile_capture |
+          combine({'results': user_profile_pending}) | to_nice_json }}
+        dest: '{{ user_profile_capture_file.path }}'
+        mode: '0600'
+      delegate_to: localhost
+      vars: &local
+        ansible_connection: local
+        ansible_shell_type: sh
+        ansible_python_interpreter: '{{ ansible_playbook_python }}'
+      changed_when: false
+
+    - name: Verify public change failure and no-mutation behavior
+      vars:
+        before: '{{ user_profile_before.stdout | from_json }}'
+        after: '{{ user_profile_after.stdout | from_json }}'
+      ansible.builtin.assert:
+        that:
+          - user_profile_result.changed == user_profile_case.changed
+          - (user_profile_result is failed) ==
+            (user_profile_case.failed | default(false))
+          - user_profile_case.message | default('') in
+            user_profile_result.msg | default('')
+          - >-
+            (user_profile_case.changed and not
+            (user_profile_case.check | default(false))) or before == after
+          - >-
+            (user_profile_case.initialized | default(true)) ==
+            ('path' in user_profile_result)
+
+    - name: Verify the complete public path against independent native state
+      vars:
+        before: '{{ user_profile_before.stdout | from_json }}'
+        after: '{{ user_profile_after.stdout | from_json }}'
+        expected_path: >-
+          {{ user_profile_names.root + user_profile_separator +
+          user_profile_case.predicted_name
+          if user_profile_case.predicted_name is defined else
+          before.owned_profiles[user_profile_case.before_path_role].path
+          if user_profile_case.before_path_role is defined else
+          after.owned_profiles[user_profile_case.path_role].path
+          if user_profile_case.path_role is defined else
+          before.system_profile_path
+          if user_profile_case.system_profile | default(false) else none }}
+      ansible.builtin.assert:
+        that:
+          - user_profile_result.path == expected_path
+      when: user_profile_case.initialized | default(true)
+
+    - name: Verify selected profile registration and real directory existence
+      vars:
+        after: '{{ user_profile_after.stdout | from_json }}'
+        selected: '{{ after.owned_profiles[user_profile_case.after_role] }}'
+      ansible.builtin.assert:
+        that:
+          - (selected is not none) == user_profile_case.registered
+          - >-
+            not user_profile_case.registered or
+            (selected.attributes is not none and selected.attributes | int > 0)
+          - >-
+            not (user_profile_case.collision | default(false)) or
+            selected.path | lower != (user_profile_names.root +
+            user_profile_separator +
+            user_profile_names.bases.collision) | lower
+      when: user_profile_case.after_role is defined
+
+    - name: Verify both aliased owned SID keys were removed
+      ansible.builtin.assert:
+        that:
+          - (user_profile_after.stdout | from_json).owned_profiles.primary
+            is none
+          - (user_profile_after.stdout | from_json).owned_profiles.multiple
+            is none
+      when: user_profile_case.all_multiple_absent | default(false)
+
+    - name: Mark this public case fully validated
+      ansible.builtin.set_fact:
+        user_profile_validated: true
+  always:
+    - name: Retain this case including any assertion failure
+      ansible.builtin.set_fact:
+        user_profile_results: >-
+          {{ user_profile_results + [user_profile_case_record] }}
+
+    - name: Save all private profile evidence
+      ansible.builtin.copy:
+        content: '{{ user_profile_capture | to_nice_json }}'
+        dest: '{{ user_profile_capture_file.path }}'
+        mode: '0600'
+      delegate_to: localhost
+      vars: *local
+      changed_when: false

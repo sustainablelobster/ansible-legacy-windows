@@ -1,0 +1,184 @@
+---
+# IDs and order are recorded from the released 3.8.0 provider on Server 2025.
+feature_iis_default_ids: [2, 140, 141, 143, 144, 145, 142, 155, 156, 171,
+                          172, 162, 169]
+feature_iis_all_ids: [2, 140, 141, 143, 144, 145, 142, 146, 314, 169, 162,
+                      155, 156, 160, 157, 161, 158, 159, 171, 172, 173,
+                      163, 446, 166, 165, 167, 170, 168, 164, 147, 149,
+                      220, 475, 429, 414, 445, 150, 152, 148, 153, 413,
+                      151, 154, 447, 184, 316, 317, 174, 175, 178, 179,
+                      181, 180, 176, 177]
+feature_cases:
+  - name: Already absent
+    params: {name: Telnet-Client, state: absent}
+    check: true
+    changed: false
+    ids: []
+  - name: Install prediction
+    params: {name: Telnet-Client}
+    check: true
+    changed: true
+    ids: [44]
+  - name: Duplicate prediction
+    params: {name: [Telnet-Client, Telnet-Client]}
+    check: true
+    changed: true
+    ids: [44]
+  - name: Multiple prediction
+    params: {name: [Telnet-Client, TFTP-Client]}
+    check: true
+    changed: true
+    ids: [44, 58]
+  - name: Case-insensitive name
+    params: {name: telnet-client}
+    check: true
+    changed: true
+    ids: [44]
+  - name: Wildcard name
+    params: {name: 'Tel*'}
+    check: true
+    changed: false
+    failed: true
+  - name: Literal regex punctuation
+    params: {name: 'Tel.*'}
+    check: true
+    changed: false
+    failed: true
+  - name: No matching name
+    params: {name: LegacyWindowsUnknownFeature}
+    check: true
+    changed: false
+    failed: true
+  - name: Missing later name
+    params: {name: [Telnet-Client, LegacyWindowsUnknownFeature]}
+    check: true
+    changed: false
+    failed: true
+  - name: Empty name list
+    params: {name: []}
+    check: true
+    changed: false
+    failed: true
+  - name: Null name list
+    params: {name: null}
+    check: true
+    changed: false
+    failed: true
+  - name: Missing required name
+    params: {}
+    check: true
+    changed: false
+    failed: true
+  - name: Null state
+    params: {name: Telnet-Client, state: null}
+    check: true
+    changed: false
+    ids: []
+  - name: Missing source on removal
+    params: {name: Telnet-Client, state: absent,
+             source: 'C:\LegacyWindowsMissingFeatureSource'}
+    check: true
+    changed: false
+    failed: true
+  - name: Missing source on install
+    params: {name: Telnet-Client,
+             source: 'C:\LegacyWindowsMissingFeatureSource'}
+    check: true
+    changed: false
+    failed: true
+  - name: Explicit null booleans
+    params: {name: Telnet-Client, include_sub_features: null,
+             include_management_tools: null}
+    check: true
+    changed: true
+    ids: [44]
+  - name: IIS default prediction
+    params: {name: Web-Server}
+    check: true
+    changed: true
+    ids: '{{ feature_iis_default_ids }}'
+  - name: IIS subfeature prediction
+    params: {name: Web-Server, include_sub_features: true}
+    check: true
+    changed: true
+    ids: '{{ feature_iis_all_ids }}'
+  - name: IIS tools prediction
+    params: {name: Web-Server, include_management_tools: true}
+    check: true
+    changed: true
+    ids: '{{ feature_iis_default_ids + [175, 174] }}'
+  - name: IIS all and tools prediction
+    params: {name: Web-Server, include_sub_features: true,
+             include_management_tools: true}
+    check: true
+    changed: true
+    ids: '{{ feature_iis_all_ids }}'
+  - name: HyperV tools prediction
+    params: {name: Hyper-V, include_management_tools: true}
+    check: true
+    changed: true
+    ids: [20, 457, 464, 256, 67, 301]
+  - name: Null source
+    params: {name: Telnet-Client, source: null}
+    check: true
+    changed: true
+    ids: [44]
+  - name: Empty source
+    params: {name: Telnet-Client, source: ''}
+    check: true
+    changed: true
+    ids: [44]
+  - name: Existing literal source
+    params: {name: Telnet-Client, source: '{{ feature_workspace.path }}'}
+    check: true
+    changed: true
+    ids: [44]
+  - name: Actual installation
+    params: {name: Telnet-Client}
+    changed: true
+    mutation: true
+    target_state: Enabled
+    ids: [44]
+  - name: Installed feature is idempotent
+    params: {name: Telnet-Client}
+    changed: false
+    ids: []
+  - name: Installed duplicates are idempotent
+    params: {name: [Telnet-Client, Telnet-Client]}
+    changed: false
+    ids: []
+  - name: Installed removal prediction
+    params: {name: Telnet-Client, state: absent}
+    check: true
+    changed: true
+    ids: [44]
+  - name: Actual removal ignores include_sub_features
+    params: {name: Telnet-Client, state: absent, include_sub_features: true}
+    changed: true
+    mutation: true
+    target_state: Disabled
+    ids: [44]
+  - name: Removed feature is idempotent
+    params: {name: Telnet-Client, state: absent}
+    changed: false
+    ids: []
+feature_legacy_cases:
+  - name: Unavailable installation command
+    params: {name: Telnet-Client}
+    changed: false
+    failed: true
+  - name: Unavailable removal command
+    params: {name: Telnet-Client, state: absent}
+    changed: false
+    failed: true
+  - name: Unavailable provider in check mode
+    params: {name: Telnet-Client}
+    check: true
+    changed: false
+    failed: true
+  - name: Missing source fails before unavailable provider
+    params: {name: Telnet-Client,
+             source: 'C:\LegacyWindowsMissingFeatureSource'}
+    check: true
+    changed: false
+    failed: true

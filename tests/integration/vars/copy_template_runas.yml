@@ -1,0 +1,32 @@
+---
+# SPDX-License-Identifier: GPL-3.0-or-later
+copy_template_runas_users: [user, system]
+copy_template_runas_workflows: [file, archive, template]
+copy_template_runas_phases: [create, repeat, check_existing, check_new]
+copy_template_runas_cases: >-
+  {{ copy_template_runas_users | product(copy_template_runas_workflows,
+     copy_template_runas_phases) | list }}
+copy_template_runas_case_indices: '{{ range(24) | list }}'
+copy_template_runas_program: |
+  PROCESS_SOURCE = {{ lookup('ansible.builtin.file', playbook_dir +
+    '/fixtures/native_async.py').split('def _protected():')[0] | to_json }}
+  WMI_SOURCE = {{ lookup('ansible.builtin.file', playbook_dir +
+    '/../../plugins/module_utils/legacy_windows_wmi.py', rstrip=false) |
+    to_json }}
+  OBSERVER_SOURCE = {{ lookup('ansible.builtin.file', playbook_dir +
+    '/fixtures/copy_template_runas_observer.py', rstrip=false) | to_json }}
+  FILE_SOURCE = {{ lookup('ansible.builtin.file', playbook_dir +
+    '/../../plugins/module_utils/legacy_windows_file.py', rstrip=false) |
+    to_json }}
+  ACCOUNT_SOURCE = {{ lookup('ansible.builtin.file', playbook_dir +
+    '/../../plugins/module_utils/legacy_windows_account.py', rstrip=false) |
+    to_json }}
+  RUNAS_TOKEN_SOURCE = {{ lookup('ansible.builtin.file', playbook_dir +
+    '/../../plugins/module_utils/legacy_windows_runas_token.py', rstrip=false) |
+    to_json }}
+  S4U_SOURCE = {{ lookup('ansible.builtin.file', playbook_dir +
+    '/../../plugins/module_utils/legacy_windows_s4u.py', rstrip=false) |
+    to_json }}
+  {{ lookup('ansible.builtin.file', playbook_dir +
+    '/fixtures/copy_template_runas.py', rstrip=false) }}
+copy_template_runas_value: 'Café 雪 \path % ! &'

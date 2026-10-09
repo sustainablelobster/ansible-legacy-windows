@@ -1,0 +1,212 @@
+---
+dhcp_compare: false
+dhcp_case_start: 0
+dhcp_cases:
+  - name: Missing reservation client identifier
+    params: { ip: "{{ dhcp_ip }}" }
+    failed: true
+    changed: false
+  - name: Missing reservation client identifier preview
+    params: { ip: "{{ dhcp_ip }}" }
+    check: true
+    failed: true
+    changed: false
+  - name: Empty reservation client identifier
+    params: { ip: "{{ dhcp_ip }}", mac: "" }
+    failed: true
+    changed: false
+  - name: Empty reservation client identifier preview
+    params: { ip: "{{ dhcp_ip }}", mac: "" }
+    check: true
+    failed: true
+    changed: false
+  - name: Missing lease client identifier
+    params: { ip: "{{ dhcp_ip }}", type: lease }
+    failed: true
+    changed: false
+  - name: Missing lease client identifier preview
+    params: { ip: "{{ dhcp_ip }}", type: lease }
+    check: true
+    failed: true
+    changed: false
+  - name: Empty lease client identifier
+    params: { ip: "{{ dhcp_ip }}", mac: "", type: lease }
+    failed: true
+    changed: false
+  - name: Empty lease client identifier preview
+    params: { ip: "{{ dhcp_ip }}", mac: "", type: lease }
+    check: true
+    failed: true
+    changed: false
+  - name: Missing record removal
+    params: { ip: "{{ dhcp_ip }}", state: absent }
+    changed: false
+  - name: Missing reservation creation preview
+    params: { ip: "{{ dhcp_ip }}", mac: "020000000025" }
+    check: true
+    changed: true
+  - name: Create named reservation
+    params:
+      ip: "{{ dhcp_ip }}"
+      mac: "02:00:00:00:00:25"
+      reservation_name: fixture.invalid
+      description: fixture description
+    changed: true
+  - name: Create reservation using DNS name
+    params:
+      ip: "{{ dhcp_ip }}"
+      mac: "020000000025"
+      dns_hostname: dns.invalid
+    changed: true
+  - name: Create generated-name reservation
+    params: { ip: "{{ dhcp_ip }}", mac: "020000000025" }
+    changed: true
+  - name: Existing reservation default-name rewrite is not reported changed
+    seed: { kind: Reservation }
+    params: { ip: "{{ dhcp_ip }}" }
+    changed: false
+  - name: Existing reservation same-description preview always predicts change
+    seed: { kind: Reservation }
+    params: { ip: "{{ dhcp_ip }}", description: original description }
+    check: true
+    changed: true
+  - name: Update reservation description and name
+    seed: { kind: Reservation }
+    params:
+      ip: "{{ dhcp_ip }}"
+      reservation_name: updated.invalid
+      description: updated description
+    changed: true
+  - name: Reservation case-only description update follows case-insensitive
+      comparison
+    seed: { kind: Reservation }
+    params: { ip: "{{ dhcp_ip }}", description: ORIGINAL DESCRIPTION }
+    changed: false
+  - name: Empty reservation fields preserve description and generate default
+      name
+    seed: { kind: Reservation }
+    params: { ip: "{{ dhcp_ip }}", description: "", reservation_name: "" }
+    changed: false
+  - name: Convert reservation to ordinary lease preview
+    seed: { kind: Reservation }
+    params: { ip: "{{ dhcp_ip }}", type: lease }
+    check: true
+    changed: true
+  - name: Convert reservation to ordinary lease
+    seed: { kind: Reservation }
+    params:
+      ip: "{{ dhcp_ip }}"
+      type: lease
+      duration: 14
+      description: ignored
+    changed: true
+  - name: Create ordinary lease with server default duration
+    params:
+      ip: "{{ dhcp_ip }}"
+      mac: "020000000025"
+      type: lease
+      dns_hostname: lease.invalid
+    changed: true
+  - name: Create ordinary lease with explicit duration and A registration
+    params:
+      ip: "{{ dhcp_ip }}"
+      mac: "020000000025"
+      type: lease
+      duration: 14
+      dns_regtype: a
+      dns_hostname: lease.invalid
+      description: leased description
+    changed: true
+  - name: Create ordinary lease without DNS registration
+    params:
+      ip: "{{ dhcp_ip }}"
+      mac: "020000000025"
+      type: lease
+      dns_regtype: noreg
+    changed: true
+  - name: Existing ordinary lease ignores changes
+    seed: { kind: Lease }
+    params:
+      ip: "{{ dhcp_ip }}"
+      type: lease
+      duration: 14
+      description: ignored
+      dns_hostname: ignored.invalid
+    changed: false
+  - name: Existing ordinary lease preview ignores changes
+    seed: { kind: Lease }
+    params: { ip: "{{ dhcp_ip }}", type: lease, duration: 14 }
+    check: true
+    changed: false
+  - name: Convert lease to reservation preview
+    seed: { kind: Lease }
+    params:
+      ip: "{{ dhcp_ip }}"
+      type: reservation
+      description: converted description
+    check: true
+    changed: false
+    error: Could not convert lease to a reservation
+  - name: Convert lease to named reservation
+    seed: { kind: Lease }
+    params:
+      ip: "{{ dhcp_ip }}"
+      type: reservation
+      reservation_name: converted.invalid
+      description: converted description
+    changed: true
+  - name: Remove existing lease preview
+    seed: { kind: Lease }
+    params: { ip: "{{ dhcp_ip }}", state: absent }
+    check: true
+    changed: true
+  - name: Remove existing lease
+    seed: { kind: Lease }
+    params: { ip: "{{ dhcp_ip }}", state: absent }
+    changed: true
+  - name: Remove existing reservation
+    seed: { kind: Reservation }
+    params: { mac: "020000000025", state: absent }
+    changed: true
+  - name: MAC selection takes precedence over different requested IP
+    seed: { kind: Reservation }
+    params:
+      mac: "020000000025"
+      ip: '{{ dhcp_scope.rsplit(".", 1)[0] }}.26'
+      state: absent
+    changed: true
+  - name: Unknown MAC falls back to requested IP
+    seed: { kind: Reservation }
+    params: { mac: "020000000026", ip: "{{ dhcp_ip }}", state: absent }
+    changed: true
+  - name: Missing scope on creation
+    scope: false
+    params: { ip: "{{ dhcp_ip }}", mac: "020000000025" }
+    error: The scope_id parameter is required for state=present when a lease or
+      reservation doesn't already exist
+    changed: false
+  - name: Invalid MAC length
+    params: { mac: short, state: absent }
+    error: The MAC Address is not properly formatted
+    changed: false
+  - name: Missing selectors
+    params: {}
+    failed: true
+    changed: false
+  - name: Changing reservation client ID reads back the original ID
+    seed: {kind: Reservation}
+    params: {ip: "{{ dhcp_ip }}", mac: "020000000026"}
+    changed: false
+    failed: true
+  - name: Abbreviated IPv4 selector matches the stored IPAddress
+    seed: {kind: Reservation}
+    params:
+      ip: >-
+        {{ (dhcp_ip.split('.')[0:2] | join('.')) + '.' +
+           (((dhcp_ip.split('.')[2] | int) * 256 +
+             (dhcp_ip.split('.')[3] | int)) | string) }}
+      state: absent
+    changed: true
+  - name: Invalid address selector remains unmatched on removal
+    params: {ip: invalid, state: absent}
+    changed: false

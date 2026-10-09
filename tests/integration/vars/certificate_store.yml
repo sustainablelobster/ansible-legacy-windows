@@ -1,0 +1,331 @@
+---
+certificate_store_password: OwnedCertificateFixture1!
+certificate_store_binding_cases:
+  - name: Require present input
+    params: {}
+    changed: false
+    failed: true
+    initialized: false
+  - name: Require absent selector
+    params: {state: absent}
+    changed: false
+    failed: true
+    initialized: false
+  - name: Explicit null absent selector
+    params: {state: absent, thumbprint: null}
+    changed: false
+    thumbprints: []
+  - name: Require export path and thumbprint
+    params: {state: exported}
+    changed: false
+    failed: true
+    initialized: false
+  - name: Reject invalid state
+    params: {state: invalid}
+    changed: false
+    failed: true
+    initialized: false
+  - name: Reject invalid file encoding
+    params: {path: '{{ certificate_store_names.files.primary_der }}',
+             file_type: invalid}
+    changed: false
+    failed: true
+    initialized: false
+  - name: Reject invalid key storage
+    params: {path: '{{ certificate_store_names.files.primary_der }}',
+             key_storage: invalid}
+    changed: false
+    failed: true
+    initialized: false
+  - name: Reject invalid store provider
+    params: {path: '{{ certificate_store_names.files.primary_der }}',
+             store_type: invalid}
+    changed: false
+    failed: true
+    initialized: false
+  - name: Reject invalid system location
+    params: {path: '{{ certificate_store_names.files.primary_der }}',
+             store_location: invalid}
+    changed: false
+    failed: true
+  - name: Fail opening an initially absent owned store before reading input
+    params: {path: '{{ certificate_store_names.files.missing }}',
+             store_name: '{{ certificate_store_names.missing_store }}'}
+    changed: false
+    failed: true
+  - name: Fail resolving an initially absent owned service
+    params: {path: '{{ certificate_store_names.files.primary_der }}',
+             store_type: service,
+             store_location: '{{ certificate_store_names.service }}Missing'}
+    changed: false
+    failed: true
+  - name: Reject missing input file
+    params: {path: '{{ certificate_store_names.files.missing }}'}
+    changed: false
+    failed: true
+  - name: Reject corrupt input
+    params: {path: '{{ certificate_store_names.files.corrupt }}'}
+    changed: false
+    failed: true
+  - name: Reject a wrong PFX password without importing a key
+    params: {path: '{{ certificate_store_names.files.primary_pfx }}',
+             password: WrongOwnedCertificatePassword}
+    changed: false
+    failed: true
+
+certificate_store_lifecycle_cases:
+  - name: Predict DER import without a store write
+    params: &primary_der
+      path: '{{ certificate_store_names.files.primary_der }}'
+    check: true
+    changed: true
+    thumbprints: [primary]
+    user_roles: []
+  - name: Import DER into the owned CurrentUser store
+    params: *primary_der
+    changed: true
+    thumbprints: [primary]
+    user_roles: [primary]
+    user_private: false
+  - name: Repeat DER import
+    params: *primary_der
+    changed: false
+    thumbprints: [primary]
+    user_roles: [primary]
+  - name: Predict case-insensitive thumbprint removal
+    params: &remove_primary
+      state: absent
+      thumbprint: '{{ certificate_store_names.thumbprints.primary | lower }}'
+    check: true
+    changed: true
+    user_roles: [primary]
+  - name: Prefer an input file over a different removal thumbprint
+    params:
+      state: absent
+      path: '{{ certificate_store_names.files.primary_der }}'
+      thumbprint: '{{ certificate_store_names.thumbprints.secondary }}'
+    changed: true
+    thumbprints: [primary]
+    user_roles: []
+  - name: Repeat removal of an absent literal selector
+    params: *remove_primary
+    changed: false
+    user_roles: []
+  - name: Import PEM into the owned CurrentUser store
+    params: &primary_pem
+      path: '{{ certificate_store_names.files.primary_pem }}'
+    changed: true
+    thumbprints: [primary]
+    user_roles: [primary]
+  - name: Repeat PEM in check mode
+    params: *primary_pem
+    check: true
+    changed: false
+    thumbprints: [primary]
+  - name: Import another DER into the owned LocalMachine store
+    params:
+      path: '{{ certificate_store_names.files.secondary_der }}'
+      store_location: LocalMachine
+    changed: true
+    thumbprints: [secondary]
+    machine_roles: [secondary]
+  - name: Import the two-certificate binary PKCS7 collection
+    params: {path: '{{ certificate_store_names.files.p7b }}'}
+    changed: true
+    thumbprints: [primary, secondary]
+    user_roles: [primary, secondary]
+  - name: Repeat the two-certificate PEM PKCS7 collection
+    params: {path: '{{ certificate_store_names.files.p7b_pem }}'}
+    changed: false
+    thumbprints: [primary, secondary]
+    user_roles: [primary, secondary]
+  - name: Predict DER export without writing a destination
+    params: &export_der
+      state: exported
+      thumbprint: '{{ certificate_store_names.thumbprints.primary }}'
+      path: '{{ certificate_store_names.files.export_der }}'
+    check: true
+    changed: true
+    thumbprints: [primary]
+    absent_file: export_der
+  - name: Export exact DER bytes
+    params: *export_der
+    changed: true
+    thumbprints: [primary]
+    present_file: export_der
+    der_file: export_der
+  - name: Repeat matching DER export
+    params: *export_der
+    changed: false
+    thumbprints: [primary]
+  - name: Replace the owned DER destination with PEM
+    params: &export_pem
+      state: exported
+      thumbprint: '{{ certificate_store_names.thumbprints.primary }}'
+      path: '{{ certificate_store_names.files.export_der }}'
+      file_type: pem
+    changed: true
+    thumbprints: [primary]
+    present_file: export_der
+  - name: Repeat matching PEM export
+    params: *export_pem
+    changed: false
+    thumbprints: [primary]
+  - name: Reject exporting to the owned workspace directory
+    params:
+      state: exported
+      thumbprint: '{{ certificate_store_names.thumbprints.primary }}'
+      path: '{{ certificate_store_names.workspace }}'
+    changed: false
+    failed: true
+    thumbprints: [primary]
+  - name: Fail writing beneath an absent owned directory
+    params:
+      state: exported
+      thumbprint: '{{ certificate_store_names.thumbprints.primary }}'
+      path: '{{ certificate_store_names.workspace }}/missing/export.der'
+    changed: false
+    failed: true
+    thumbprints: [primary]
+  - name: Reject exporting an absent certificate
+    params:
+      state: exported
+      thumbprint: '0000000000000000000000000000000000000000'
+      path: '{{ certificate_store_names.files.export_pem }}'
+    changed: false
+    failed: true
+  - name: Predict a PFX key upgrade and retain any imported key effect
+    params: &primary_pfx
+      path: '{{ certificate_store_names.files.primary_pfx }}'
+      password: '{{ certificate_store_password }}'
+      key_storage: user
+    check: true
+    changed: true
+    thumbprints: [primary]
+    keys_may_change: true
+    user_private: false
+  - name: Upgrade a public certificate with the PFX private key
+    params: *primary_pfx
+    changed: true
+    thumbprints: [primary]
+    keys_may_change: true
+    user_private: true
+  - name: Repeat PFX import while retaining its real key side effects
+    params: *primary_pfx
+    changed: false
+    thumbprints: [primary]
+    keys_may_change: true
+    user_private: true
+  - name: Predict exportable PFX serialization without a file write
+    params: &export_pfx
+      state: exported
+      thumbprint: '{{ certificate_store_names.thumbprints.primary }}'
+      path: '{{ certificate_store_names.files.export_pfx }}'
+      file_type: pkcs12
+      password: '{{ certificate_store_password }}'
+    check: true
+    changed: true
+    thumbprints: [primary]
+    key_exported: false
+    key_exportable: true
+    absent_file: export_pfx
+  - name: Export a private key to an owned PFX
+    params: *export_pfx
+    changed: true
+    thumbprints: [primary]
+    key_exported: false
+    key_exportable: true
+    present_file: export_pfx
+  - name: Repeat PFX export including persistent inspection side effects
+    params: *export_pfx
+    changed: false
+    thumbprints: [primary]
+    keys_may_change: true
+  - name: Import a nonexportable machine private key
+    params:
+      path: '{{ certificate_store_names.files.secondary_pfx }}'
+      password: '{{ certificate_store_password }}'
+      store_location: LocalMachine
+      key_storage: machine
+      key_exportable: false
+    changed: true
+    thumbprints: [secondary]
+    keys_may_change: true
+    machine_private: true
+  - name: Fail check-mode export after deleting an existing owned destination
+    prepare: prepare-destination
+    params: &locked_export
+      state: exported
+      thumbprint: '{{ certificate_store_names.thumbprints.secondary }}'
+      store_location: LocalMachine
+      path: '{{ certificate_store_names.files.export_failure }}'
+      file_type: pkcs12
+      password: '{{ certificate_store_password }}'
+    check: true
+    changed: true
+    failed: true
+    thumbprints: [secondary]
+    absent_file: export_failure
+    files_may_change: true
+  - name: Repeat failed nonexportable serialization with no destination
+    params: *locked_export
+    changed: false
+    failed: true
+    thumbprints: [secondary]
+    absent_file: export_failure
+  - name: Remove a certificate by PFX while preserving persisted keys
+    params:
+      <<: *primary_pfx
+      state: absent
+    changed: true
+    thumbprints: [primary]
+    keys_may_change: true
+    user_roles: [secondary]
+  - name: Matching existing export remains idempotent after store removal
+    params: *export_pfx
+    changed: false
+    thumbprints: [primary]
+    keys_may_change: true
+    user_roles: [secondary]
+  - name: Predict all nine missing owned service-store registrations
+    params: &service_import
+      path: '{{ certificate_store_names.files.primary_der }}'
+      store_type: service
+      store_location: '{{ certificate_store_names.service }}'
+      store_name: My
+    check: true
+    changed: true
+    thumbprints: [primary]
+  - name: Register the owned service stores and import a certificate
+    params: *service_import
+    changed: true
+    thumbprints: [primary]
+    service_roles: [primary]
+    service_stores: true
+  - name: Repeat service certificate import
+    params: *service_import
+    changed: false
+    thumbprints: [primary]
+    service_roles: [primary]
+  - name: Predict service certificate removal
+    params: &service_remove
+      state: absent
+      thumbprint: '{{ certificate_store_names.thumbprints.primary }}'
+      store_type: service
+      store_location: '{{ certificate_store_names.service }}'
+      store_name: My
+    check: true
+    changed: true
+    thumbprints: [primary]
+    service_roles: [primary]
+  - name: Remove the service certificate without deleting registrations
+    params: *service_remove
+    changed: true
+    thumbprints: [primary]
+    service_roles: []
+    service_stores: true
+  - name: Repeat service certificate removal
+    params: *service_remove
+    changed: false
+    thumbprints: [primary]
+    service_roles: []

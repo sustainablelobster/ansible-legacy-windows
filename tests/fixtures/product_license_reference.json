@@ -1,0 +1,47 @@
+{
+  "source": "Synthetic rows evaluated by the pinned win_product_facts licensing expressions and Windows-name regex",
+  "upstream": "ansible.windows 3.8.0",
+  "upstream_commit": "ff0ac96011ee196742901f34c0dd134acddbe89a",
+  "powershell": "5.1.26100.7462",
+  "culture": "en-US",
+  "capture": "Server 2025 reference guest; synthetic inputs only, serialized with ConvertTo-Json -Depth 10",
+  "licenses": [
+    {"channel": null, "edition": null, "status": null, "statuses": []},
+    {"channel": null, "edition": "Windows status 0", "status": "Unlicensed", "statuses": [0]},
+    {"channel": null, "edition": "Windows status 1", "status": "Licensed", "statuses": [1]},
+    {"channel": null, "edition": "Windows status 2", "status": "OOBGrace", "statuses": [2]},
+    {"channel": null, "edition": "Windows status 3", "status": "OOTGrace", "statuses": [3]},
+    {"channel": null, "edition": "Windows status 4", "status": "NonGenuineGrace", "statuses": [4]},
+    {"channel": null, "edition": "Windows status 5", "status": "Notification", "statuses": [5]},
+    {"channel": null, "edition": "Windows status 6", "status": "ExtendedGrace", "statuses": [6]},
+    {"channel": null, "edition": "Windows status 7", "status": null, "statuses": [7]},
+    {
+      "channel": [null, null],
+      "edition": ["Windows status 0", "Windows status 1"],
+      "status": ["Unlicensed", "Licensed"],
+      "statuses": [0, 1]
+    },
+    {
+      "channel": [null, null, null],
+      "edition": ["Windows status 1", "Windows status 7", "Windows status 6"],
+      "status": ["Licensed", null, "ExtendedGrace"],
+      "statuses": [1, 7, 6]
+    },
+    {
+      "channel": [null, null],
+      "edition": ["Windows status 7", "Windows status 7"],
+      "status": [null, null],
+      "statuses": [7, 7]
+    }
+  ],
+  "names": [
+    {"matched": true, "name": "Windows"},
+    {"matched": true, "name": "WINDOWS"},
+    {"matched": true, "name": "xWindowsx"},
+    {"matched": false, "name": "Office"},
+    {"matched": true, "name": "W\u0130NDOWS"},
+    {"matched": false, "name": "W\u0131NDOWS"},
+    {"matched": false, "name": "Window\u017f"},
+    {"matched": true, "name": "Windows\u0000suffix"}
+  ]
+}

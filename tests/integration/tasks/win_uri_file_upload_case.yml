@@ -1,0 +1,36 @@
+---
+- name: Perform the actual rejected public request
+  sustainablelobster.legacy_windows.win_uri:
+    url: '{{ (uri_file_urls.stdout | from_json)[uri_file_case.name] }}'
+    url_method: '{{ uri_file_case.method }}'
+    body: '{{ uri_file_case.body }}'
+  check_mode: '{{ uri_file_case.check }}'
+  register: uri_file_actual
+  ignore_errors: true
+
+- name: Observe existing bytes after the request
+  sustainablelobster.legacy_windows.win_stat:
+    path: '{{ uri_file_workspace.path }}\existing.bin'
+    checksum_algorithm: sha256
+  register: uri_file_existing
+
+- name: Observe absent path after the request
+  sustainablelobster.legacy_windows.win_stat:
+    path: '{{ uri_file_workspace.path }}\missing.bin'
+  register: uri_file_missing
+
+- name: Preserve literal failure and native file observations
+  ansible.builtin.set_fact:
+    uri_file_results: >-
+      {{ uri_file_results + [{'case': uri_file_case, 'result': uri_file_actual,
+                              'existing': uri_file_existing,
+                              'missing': uri_file_missing}] }}
+
+- name: Require rejection without file effects
+  ansible.builtin.assert:
+    that:
+      - uri_file_actual.failed and not uri_file_actual.changed
+      - >-
+        'file:// requests with a body are not supported' in uri_file_actual.msg
+      - uri_file_existing.stat.checksum == uri_file_before.stat.checksum
+      - not uri_file_missing.stat.exists

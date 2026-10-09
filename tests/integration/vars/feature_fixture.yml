@@ -1,0 +1,369 @@
+---
+feature_wmi_source: >-
+  {{ lookup('file', playbook_dir +
+  '/../../plugins/module_utils/legacy_windows_wmi.py') }}
+feature_info_source: >-
+  {{ lookup('file', playbook_dir +
+  '/../../plugins/module_utils/legacy_windows_feature_info.py') }}
+feature_legacy_source: >-
+  {{ lookup('file', playbook_dir +
+  '/../../plugins/module_utils/legacy_windows_feature_legacy.py') }}
+feature_match_source: >-
+  {{ lookup('file', playbook_dir +
+  '/../../plugins/module_utils/legacy_windows_find_match.py') }}
+feature_regex_source: >-
+  {{ lookup('file', playbook_dir +
+  '/../../plugins/module_utils/legacy_windows_regex.py') }}
+feature_program: |
+  import sys,types
+  for helper_name, source in (
+          ('legacy_windows_regex', {{ feature_regex_source | to_json }}),
+          ('legacy_windows_find_match', {{ feature_match_source | to_json }}),
+          ('legacy_windows_wmi', {{ feature_wmi_source | to_json }}),
+          ('legacy_windows_feature_legacy',
+           {{ feature_legacy_source | to_json }}),
+          ('legacy_windows_feature_info', {{ feature_info_source | to_json }})):
+      helper = types.ModuleType(helper_name)
+      sys.modules[helper_name] = helper
+      exec(source, helper.__dict__)
+  observer = sys.modules['legacy_windows_feature_info']
+  WmiConnection = sys.modules['legacy_windows_wmi'].WmiConnection
+  {{ feature_fixture }}
+feature_fixture: |
+  # SPDX-License-Identifier: GPL-3.0-or-later
+  # DISM's complete catalogue independently checks native provider servicing.
+  import binascii
+  import ctypes
+  import hashlib
+  import json
+  import os
+  import re
+  import subprocess
+  import sys
+  import tempfile
+  import time
+  import winreg
+
+  workspace, operation = sys.argv[1:3]
+  journal_path = os.path.join(workspace, 'feature-journal.json')
+  root = os.environ['SystemRoot']
+  tool = os.path.join(root, 'Sysnative', 'dism.exe')
+  if not os.path.isfile(tool):
+      tool = os.path.join(root, 'System32', 'dism.exe')
+  target, component_name = 'TelnetClient', 'Telnet-Client'
+  pending_paths = (
+      r'SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing'
+      r'\RebootPending',
+      r'SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update'
+      r'\RebootRequired',
+      r'SYSTEM\CurrentControlSet\Control\Session Manager')
+
+  def validate_workspace():
+      api = ctypes.WinDLL('kernel32', use_last_error=True)
+      api.GetLongPathNameW.argtypes = [ctypes.c_wchar_p, ctypes.c_wchar_p,
+                                      ctypes.c_uint32]
+      api.GetLongPathNameW.restype = ctypes.c_uint32
+      paths = []
+      for path in (workspace, tempfile.gettempdir()):
+          size = api.GetLongPathNameW(os.path.abspath(path), None, 0)
+          if not size:
+              raise ctypes.WinError(ctypes.get_last_error())
+          buffer = ctypes.create_unicode_buffer(size)
+          length = api.GetLongPathNameW(os.path.abspath(path), buffer, size)
+          assert 0 < length < size
+          paths.append(os.path.normcase(buffer.value))
+      assert os.path.basename(paths[0]).startswith('legacy-windows-feature-')
+      assert os.path.dirname(paths[0]) == paths[1]
+
+  def services():
+      with WmiConnection() as connection:
+          rows = connection.query('SELECT * FROM Win32_Service',
+              ['Name', 'DisplayName', 'StartMode', 'State', 'PathName',
+               'StartName'])
+      for row in rows:
+          if (row['Name'] != 'TrustedInstaller' and
+                  'bvsshserver' not in (row['PathName'] or '').lower()):
+              del row['State']
+      return {row['Name']: row for row in rows}
+
+  def pending():
+      result = {}
+      for path in pending_paths:
+          try:
+              key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, path)
+          except FileNotFoundError:
+              result[path] = None
+              continue
+          with key:
+              values = {}
+              for index in range(winreg.QueryInfoKey(key)[1]):
+                  name, value, kind = winreg.EnumValue(key, index)
+                  if (path == pending_paths[-1] and
+                          name != 'PendingFileRenameOperations'):
+                      continue
+                  if isinstance(value, bytes):
+                      value = {'hex': binascii.hexlify(value).decode('ascii')}
+                  values[name] = [value, kind]
+              result[path] = (values if values or path != pending_paths[-1]
+                              else None)
+      return result
+
+  def components():
+      try:
+          with WmiConnection(observer._NAMESPACE) as connection:
+              rows = observer._components(connection)
+              return {row['UniqueName']: row for row in rows}
+      except OSError as error:
+          if getattr(error, 'hresult', None) != 0x8004100E:
+              raise
+          return None
+
+  def dism(arguments):
+      with subprocess.Popen([tool, '/Online', '/English',
+              '/LogPath:' + os.path.join(workspace, 'fixture.log'),
+              '/ScratchDir:' + workspace] + arguments,
+              stdout=subprocess.PIPE, stderr=subprocess.PIPE) as child:
+          stdout, stderr = child.communicate()
+      return {'rc': child.returncode,
+              'stdout': stdout.decode('mbcs', errors='replace'),
+              'stderr': stderr.decode('mbcs', errors='replace')}
+
+  def catalogue():
+      if not os.path.isfile(tool):
+          return None
+      packet = dism(['/Get-Features'])
+      assert packet['rc'] == 0, packet
+      records = re.findall(
+          r'^Feature Name\s*:\s*([^\r\n]+)\r?\nState\s*:\s*([^\r\n]+)',
+          packet['stdout'], re.MULTILINE)
+      assert records
+      assert len(records) == len(set(name for name, _state in records))
+      return {name.strip(): state.strip() for name, state in records}
+
+  def identity():
+      with WmiConnection() as connection:
+          boot = connection.query('SELECT LastBootUpTime FROM '
+              'Win32_OperatingSystem', ['LastBootUpTime'])
+      with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,
+              r'SOFTWARE\Microsoft\Windows NT\CurrentVersion') as key:
+          image = {}
+          for name in ('CurrentBuildNumber', 'UBR', 'DisplayVersion'):
+              try:
+                  image[name] = list(winreg.QueryValueEx(key, name))
+              except FileNotFoundError:
+                  image[name] = None
+      files = {}
+      paths = {sys.executable}
+      for row in services().values():
+          command = row['PathName'] or ''
+          if 'bvsshserver' in command.lower():
+              paths.add(command.split('"')[1] if command.startswith('"')
+                        else command.split(' ')[0])
+      for path in sorted(paths):
+          with open(path, 'rb') as stream:
+              files[path] = hashlib.sha256(stream.read()).hexdigest()
+      return {'boot': boot, 'image': image, 'files': files,
+              'python': sys.version}
+
+  def comparable_components(records):
+      if records is None:
+          return None
+      result = {}
+      for name, record in records.items():
+          item = dict(record)
+          # Servicing can reshuffle these metadata arrays without changing
+          # membership or public feature ordering. Keep duplicates and every
+          # other field; preserve the complete original arrays separately.
+          if item.get('SubFeatures') is not None:
+              item['SubFeatures'] = sorted(item['SubFeatures'])
+          if item.get('OptionalCompanions') is not None:
+              item['OptionalCompanions'] = sorted(item['OptionalCompanions'],
+                  key=lambda entry: json.dumps(entry, sort_keys=True))
+          result[name] = item
+      return result
+
+  def snapshot(include_dism=True):
+      rows = components()
+      return {'components': rows,
+              'comparison_components': comparable_components(rows),
+              'features': catalogue() if include_dism and rows is not None
+                          else None,
+              'services': services(), 'pending': pending(),
+              'identity': identity()}
+
+  def write(record):
+      descriptor, temporary = tempfile.mkstemp(prefix='.feature-journal-',
+                                             dir=workspace)
+      try:
+          with os.fdopen(descriptor, 'w', encoding='utf-8') as stream:
+              json.dump(record, stream, sort_keys=True)
+              stream.flush()
+              os.fsync(stream.fileno())
+          os.replace(temporary, journal_path)
+      finally:
+          if os.path.exists(temporary):
+              os.remove(temporary)
+
+  def read():
+      with open(journal_path, encoding='utf-8') as stream:
+          record = json.load(stream)
+      assert record['workspace'] == workspace and record['target'] == target
+      return record
+
+  def setup():
+      assert not os.path.exists(journal_path)
+      before = {'components': None, 'comparison_components': None,
+                'features': None,
+                'services': services(), 'pending': pending(),
+                'identity': identity()}
+      record = {'workspace': workspace, 'target': target, 'before': before,
+                'complete': False, 'servicing_reboot': False}
+      write(record)
+      before['components'] = components()
+      before['comparison_components'] = comparable_components(
+          before['components'])
+      # An unavailable Server Manager provider cannot submit feature servicing.
+      # Avoid starting the workstation servicing worker just to test absence.
+      before['features'] = (catalogue() if before['components'] is not None
+                            else None)
+      if before['components'] is not None:
+          assert before['features'][target] == 'Disabled'
+          assert before['components'][component_name]['Installed'] == 0
+          assert not any('Pending' in state
+                         for state in before['features'].values())
+      record['complete'] = True
+      write(record)
+      return {'supported': before['components'] is not None, 'before': before}
+
+  def restore_service(original):
+      before = original.get('TrustedInstaller')
+      current = services().get('TrustedInstaller')
+      if before == current:
+          return
+      assert before and current
+      sc = os.path.join(root, 'System32', 'sc.exe')
+      if current['StartMode'] != before['StartMode']:
+          modes = {'Manual': 'demand', 'Auto': 'auto', 'Disabled': 'disabled'}
+          with subprocess.Popen([sc, 'config', 'TrustedInstaller', 'start=',
+                  modes[before['StartMode']]],
+                  stdout=subprocess.PIPE, stderr=subprocess.PIPE) as child:
+              child.communicate()
+          assert child.returncode == 0
+      if current['State'] != before['State']:
+          action = {'Stopped': 'stop', 'Running': 'start'}[before['State']]
+          with subprocess.Popen([sc, action, 'TrustedInstaller'],
+                  stdout=subprocess.PIPE, stderr=subprocess.PIPE) as child:
+              child.communicate()
+          assert child.returncode == 0
+          deadline = time.monotonic() + 45
+          while services().get('TrustedInstaller') != before:
+              assert time.monotonic() < deadline
+              time.sleep(.1)
+
+  def cleanup():
+      if not os.path.exists(journal_path):
+          return {'restored': True, 'journal_absent': True,
+                  'requires_reboot': False}
+      record = read()
+      before, actions = record['before'], []
+      after = snapshot()
+      if record['complete'] and before['components'] is not None:
+          original, current = before['features'], after['features']
+          assert set(current) == set(original)
+          assert all(current[name] == original[name]
+                     for name in original if name != target)
+          if (current[target] != original[target] and
+                  current[target] != 'Disable Pending'):
+              assert original[target] == 'Disabled'
+              assert current[target] in ('Enabled', 'Enable Pending')
+              packet = dism(['/Disable-Feature', '/FeatureName:' + target,
+                             '/NoRestart'])
+              actions.append(packet)
+              assert packet['rc'] in (0, 3010), packet
+              record['servicing_reboot'] |= packet['rc'] == 3010
+              write(record)
+              after = snapshot()
+          reboot = (after['features'] != original or
+              after['pending'] != before['pending'] or
+              (record['servicing_reboot'] and
+               after['identity']['boot'] == before['identity']['boot']))
+          if reboot:
+              assert all(value is None for value in before['pending'].values())
+              record['servicing_reboot'] = True
+              write(record)
+              return {'restored': False, 'requires_reboot': True,
+                      'after': after, 'actions': actions}
+          # Reject unrelated changes before touching the recorded service state.
+          # This does not authorize final recovery or journal removal.
+          assert (after['comparison_components'] ==
+                  before['comparison_components'])
+      elif record['complete']:
+          assert after['features'] == before['features']
+          assert after['components'] == before['components']
+      assert after['pending'] == before['pending']
+      if record['servicing_reboot']:
+          assert {k: v for k, v in after['identity'].items()
+                  if k != 'boot'} == (
+              {k: v for k, v in before['identity'].items() if k != 'boot'})
+      else:
+          assert after['identity'] == before['identity']
+      restore_service(before['services'])
+      if after['components'] != before['components']:
+          # Servicing can leave reordered metadata in the worker's live cache.
+          # Allow notifications to settle after restoring its original state.
+          # Only array order may differ while waiting; literal equality remains
+          # the final gate. Never rewrite the journal's original metadata.
+          deadline = time.monotonic() + 45
+          try:
+              while after['components'] != before['components']:
+                  after['components'] = components()
+                  after['comparison_components'] = comparable_components(
+                      after['components'])
+                  assert (after['comparison_components'] ==
+                          before['comparison_components'])
+                  if after['components'] == before['components']:
+                      break
+                  assert time.monotonic() < deadline
+                  time.sleep(.5)
+          finally:
+              # Even a failed observation must restore a worker it started.
+              restore_service(before['services'])
+      assert after['components'] == before['components']
+      after['services'] = services()
+      assert after['services'] == before['services']
+      record['verified'] = True
+      write(record)
+      return {'restored': True, 'requires_reboot': False, 'before': before,
+              'after': after, 'actions': actions}
+
+  def note_reboot():
+      record = read()
+      assert record['complete'] and record['before']['components'] is not None
+      record['servicing_reboot'] = True
+      write(record)
+      return {'journaled_reboot': True}
+
+  def finalize():
+      record = read()
+      assert record.get('verified') is True
+      assert services() == record['before']['services']
+      assert pending() == record['before']['pending']
+      now, original = identity(), record['before']['identity']
+      if record['servicing_reboot']:
+          assert {k: v for k, v in now.items() if k != 'boot'} == (
+              {k: v for k, v in original.items() if k != 'boot'})
+      else:
+          assert now == original
+      os.remove(journal_path)
+      return {'finalized': True,
+              'journal_absent': not os.path.exists(journal_path)}
+
+  if __name__ == '__main__':
+      assert sys.version_info[:3] == (3, 4, 4)
+      validate_workspace()
+      # Slow full DISM inventories bracket writes and recovery. Every read-only
+      # row still retains complete raw provider, services and protected state.
+      functions = {'setup': setup, 'observe': lambda: snapshot(False),
+                   'observe_mutation': snapshot, 'cleanup': cleanup,
+                   'note_reboot': note_reboot, 'finalize': finalize}
+      print(json.dumps(functions[operation](), sort_keys=True))

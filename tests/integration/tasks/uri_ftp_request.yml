@@ -1,0 +1,100 @@
+---
+# SPDX-License-Identifier: GPL-3.0-or-later
+- name: Mark owned FTP wire journal for one implementation
+  ansible.builtin.command:
+    argv: ['{{ ansible_playbook_python }}', '-',
+           '{{ get_url_ftp_workspace.path }}', mark,
+           '{{ get_url_ftp_controller_parent }}']
+    stdin: '{{ get_url_ftp_program }}'
+  delegate_to: localhost
+  vars: &local
+    ansible_connection: local
+    ansible_shell_type: sh
+    ansible_python_interpreter: '{{ ansible_playbook_python }}'
+  changed_when: false
+  no_log: true
+
+- name: Prepare identical owned destination baseline  # noqa: args[module]
+  sustainablelobster.legacy_windows.win_command:
+    argv: ['{{ ansible_python_interpreter }}', '-',
+           '{{ get_url_workspace.path }}', prepare,
+           '{{ get_url_case | to_json | b64encode }}']
+    stdin: '{{ get_url_program }}'
+  register: uri_ftp_before
+  changed_when: false
+  no_log: true
+
+- name: Retain the full original FTP URI result
+  when: uri_ftp_implementation == 'original'
+  block:
+    - name: Execute untouched released public FTP URI request
+      ansible.windows.win_uri: '{{ uri_ftp_params }}'
+      check_mode: '{{ get_url_case.check | default(false) }}'
+      register: uri_ftp_original
+      vars:
+        ansible_shell_type: cmd
+        ansible_remote_tmp: '{{ get_url_workspace.path }}'
+  rescue:
+    - name: Keep the full original failure before later gates
+      ansible.builtin.debug:
+        msg: Complete source failure retained.
+
+- name: Retain the full native FTP URI result
+  when: uri_ftp_implementation == 'native'
+  block:
+    - name: Execute public native FTP URI request  # noqa: args[module]
+      sustainablelobster.legacy_windows.win_uri: '{{ uri_ftp_params }}'
+      check_mode: '{{ get_url_case.check | default(false) }}'
+      register: uri_ftp_native
+  rescue:
+    - name: Keep the full native failure before later gates
+      ansible.builtin.debug:
+        msg: Complete native failure retained.
+
+- name: Observe raw protected target files  # noqa: args[module]
+  sustainablelobster.legacy_windows.win_command:
+    argv: ['{{ ansible_python_interpreter }}', '-',
+           '{{ get_url_workspace.path }}', observe]
+    stdin: '{{ get_url_program }}'
+  register: uri_ftp_after
+  changed_when: false
+  no_log: true
+
+- name: Capture exact FTP commands replies and controller material
+  ansible.builtin.command:
+    argv: ['{{ ansible_playbook_python }}', '-',
+           '{{ get_url_ftp_workspace.path }}', observe,
+           '{{ get_url_ftp_controller_parent }}']
+    stdin: '{{ get_url_ftp_program }}'
+  register: uri_ftp_wire
+  delegate_to: localhost
+  vars: *local
+  changed_when: false
+  no_log: true
+
+- name: Retain the complete observation before protected-state gates
+  ansible.builtin.set_fact:
+    uri_ftp_observations: >-
+      {{ uri_ftp_observations | combine({uri_ftp_implementation: {
+          'result': uri_ftp_original if uri_ftp_implementation == 'original'
+                    else uri_ftp_native,
+          'before': uri_ftp_before.stdout | from_json,
+          'after': uri_ftp_after.stdout | from_json,
+          'wire': uri_ftp_wire.stdout | from_json}}) }}
+
+- name: Require protected files and operation-bounded output times
+  vars:
+    before: '{{ uri_ftp_before.stdout | from_json }}'
+    after: '{{ uri_ftp_after.stdout | from_json }}'
+    result: >-
+      {{ uri_ftp_original if uri_ftp_implementation == 'original'
+         else uri_ftp_native }}
+  ansible.builtin.assert:
+    that:
+      - after.sentinel == before.sentinel and after.source == before.source
+      - >-
+        (not get_url_case.check | default(false) and result.changed) or
+        before.output == after.output
+      - >-
+        get_url_case.check | default(false) or not result.changed or
+        after.modified_in_request

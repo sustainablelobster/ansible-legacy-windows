@@ -1,0 +1,254 @@
+---
+# SPDX-License-Identifier: GPL-3.0-or-later
+- name: Cancel an actual public async WUA download through pinned caller loss
+  hosts: legacy_windows
+  gather_facts: false
+  vars_files:
+    - vars/native_async.yml
+  vars:
+    updates_cancel_capture: >-
+      {{ playbook_dir + '/../../tmp/codex/evidence/' +
+         'win-updates-async-real-cancel-v1.json' }}
+    updates_cancel_cache_identity: >-
+      {{ ((lookup('ansible.builtin.file', updates_cancel_snapshot_journal) |
+        from_json).cache.stdout | from_json).identity }}
+    updates_cancel_snapshot_journal: >-
+      {{ playbook_dir + '/../../tmp/codex/evidence/' +
+         'win-updates-async-servicing-runtime-v3/tmp/' +
+         'win-updates-async-snapshot-stable-v1.json' }}
+    updates_cancel_global_program: >-
+      import glob,json,os,sys,tempfile;
+      assert sys.version_info[:3]==(3,4,4);
+      print(json.dumps({name:sorted(glob.glob(os.path.join(
+      tempfile.gettempdir(),pattern))) for name,pattern in
+      [('staging','ansible-tmp-*'),('workers','legacy-windows-updates-*')]}))
+  tasks:
+    - name: Capture exact pre-operation global staging and worker absence
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "{{ updates_cancel_global_program }}""
+      register: updates_cancel_global_before
+      changed_when: false
+
+    - name: Preserve full writer state before the validated owned cache move
+      sustainablelobster.legacy_windows.win_service_info:
+      register: updates_cancel_services_before
+      no_log: true
+
+    - name: Require measured stopped cache writers before actual download
+      ansible.builtin.assert:
+        that:
+          - >-
+            (updates_cancel_services_before.services |
+             selectattr('name', 'equalto', 'wuauserv') |
+             first).state == 'stopped'
+          - >-
+            (updates_cancel_services_before.services |
+             selectattr('name', 'equalto', 'BITS') | first).state == 'stopped'
+      no_log: true
+
+    - name: Prepare only the exact absent same-volume owned cache sibling
+      sustainablelobster.legacy_windows.win_command:
+        argv: ['{{ ansible_python_interpreter }}', '-', prepare,
+               '{{ {"identity": updates_cancel_cache_identity,
+                     "backup": updates_cancel_cache_identity.path +
+                       ".legacy-updates-public-v2-110"} | to_json }}']
+        stdin: >-
+          {{ lookup('ansible.builtin.file',
+             playbook_dir + '/fixtures/win_updates_cache.py') }}
+      register: updates_cancel_prepared
+      no_log: true
+
+    - name: Allocate one uniquely owned real cancellation workspace
+      sustainablelobster.legacy_windows.win_tempfile:
+        prefix: legacy-windows-native-async-updates-cancel-
+        state: directory
+      register: updates_cancel_workspace
+
+    - name: Exercise actual WUA cancellation with safe owned recovery
+      block:
+        - name: Journal protected configuration and cache before public launch
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}', '-',
+                   '{{ updates_cancel_workspace.path }}', setup]
+            stdin: '{{ native_async_program }}'
+          register: updates_cancel_setup
+          changed_when: false
+          no_log: true
+
+        - name: Launch the public native asynchronous fresh NET download
+          sustainablelobster.legacy_windows.win_updates:
+            state: downloaded
+            category_names: ['*']
+            accept_list: [KB5126052]
+            log_path: '{{ updates_cancel_workspace.path }}\progress.log'
+          async: 1800
+          poll: 0
+          vars: &owned
+            ansible_remote_tmp: '{{ updates_cancel_workspace.path }}\staging'
+            ansible_async_dir: '{{ updates_cancel_workspace.path }}\cache'
+          register: updates_cancel_launch
+          no_log: true
+
+        - name: Pin the public watchdog independently of the WUA worker
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}', '-',
+                   '{{ updates_cancel_workspace.path }}', record,
+                   '{{ updates_cancel_launch | to_json | b64encode }}']
+            stdin: '{{ native_async_program }}'
+          register: updates_cancel_identity
+          changed_when: false
+          no_log: true
+
+        - name: Lose only the pinned caller after actual bytes-transfer callback
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}', '-',
+                   '{{ updates_cancel_workspace.path }}', KB5126052]
+            stdin: >-
+              {{ lookup('ansible.builtin.file',
+                 playbook_dir + '/fixtures/win_updates_real_cancel.py') }}
+          register: updates_cancel_actual
+          changed_when: false
+          failed_when: false
+          no_log: true
+
+        - name: Disconnect before public status of the terminated caller
+          ansible.builtin.meta: reset_connection
+
+        - name: Read complete public failed-job status after caller loss
+          sustainablelobster.legacy_windows.async_status:
+            jid: '{{ updates_cancel_launch.ansible_job_id }}'
+          vars: *owned
+          register: updates_cancel_status
+          until: updates_cancel_status.finished
+          retries: 9
+          delay: 1
+          failed_when: false
+          no_log: true
+
+        - name: Preserve complete public cache and protected observations
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}', '-',
+                   '{{ updates_cancel_workspace.path }}', observe]
+            stdin: '{{ native_async_program }}'
+          register: updates_cancel_observed
+          changed_when: false
+          no_log: true
+
+        - name: Erase exactly the completed failed public cache entry
+          sustainablelobster.legacy_windows.async_status:
+            jid: '{{ updates_cancel_launch.ansible_job_id }}'
+            mode: cleanup
+          vars: *owned
+      always:
+        - name: Require actual WUA worker absence before any generic cleanup
+          ansible.builtin.raw: >-
+            cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+            "import glob,os,tempfile;
+            assert not glob.glob(os.path.join(tempfile.gettempdir(),
+            'legacy-windows-updates-*'))""
+          register: updates_cancel_worker_absence
+          changed_when: false
+          failed_when: false
+
+        - name: Clean pinned generic jobs only after the WUA worker has closed
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}', '-',
+                   '{{ updates_cancel_workspace.path }}', cleanup]
+            stdin: '{{ native_async_program }}'
+          register: updates_cancel_recovery
+          when: updates_cancel_worker_absence.rc == 0
+          changed_when: false
+          failed_when: false
+          no_log: true
+
+        - name: Retain all complete failed or partial real-operation evidence
+          ansible.builtin.copy:
+            content: >-
+              {{ {'workspace':updates_cancel_workspace,
+                  'setup':updates_cancel_setup | default(none),
+                  'prepared':updates_cancel_prepared,
+                  'services_before':updates_cancel_services_before,
+                  'launch':updates_cancel_launch | default(none),
+                  'identity':updates_cancel_identity | default(none),
+                  'actual':updates_cancel_actual | default(none),
+                  'status':updates_cancel_status | default(none),
+                  'observation':updates_cancel_observed | default(none),
+                  'worker_absence':updates_cancel_worker_absence,
+                  'recovery':updates_cancel_recovery,
+                  'global_before':updates_cancel_global_before} |
+                  to_nice_json }}
+            dest: '{{ updates_cancel_capture }}'
+            mode: '0600'
+          delegate_to: localhost
+          vars: &local
+            ansible_connection: local
+            ansible_shell_type: sh
+            ansible_python_interpreter: '{{ ansible_playbook_python }}'
+          changed_when: false
+          no_log: true
+
+        - name: Require measured WUA and protected owned-job closure
+          ansible.builtin.assert:
+            that:
+              - updates_cancel_worker_absence.rc == 0
+              - updates_cancel_recovery.rc | default(-1) == 0
+              - (updates_cancel_recovery.stdout | from_json).restored
+
+        - name: Remove only the verified owned real-cancellation workspace
+          sustainablelobster.legacy_windows.win_file:
+            path: '{{ updates_cancel_workspace.path }}'
+            state: absent
+
+        - name: Observe exact original global staging and workspace absence
+          ansible.builtin.raw: >-
+            cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+            "{{ updates_cancel_global_program }};
+            assert not os.path.exists(sys.argv[1])"
+            "{{ updates_cancel_workspace.path }}""
+          register: updates_cancel_global_after
+          changed_when: false
+
+        - name: Preserve final closure alongside unmodified original evidence
+          ansible.builtin.copy:
+            content: >-
+              {{ (lookup('ansible.builtin.file', updates_cancel_capture) |
+                  from_json) | combine({
+                  'global_after':updates_cancel_global_after,
+                  'workspace_absent':true}) | to_nice_json }}
+            dest: '{{ updates_cancel_capture }}'
+            mode: '0600'
+          delegate_to: localhost
+          vars: *local
+          changed_when: false
+          no_log: true
+
+        - name: Require literal global staging and dedicated worker closure
+          ansible.builtin.assert:
+            that:
+              - >-
+                (updates_cancel_global_after.stdout | from_json) ==
+                (updates_cancel_global_before.stdout | from_json)
+
+        - name: Close the owned SSH connection before snapshot recovery
+          ansible.builtin.meta: reset_connection
+
+    - name: Require real transferred bytes abort and natural WUA completion
+      ansible.builtin.assert:
+        that:
+          - updates_cancel_actual.rc == 0
+          - (updates_cancel_actual.stdout | from_json).actual_operation_aborted
+          - >-
+            (updates_cancel_actual.stdout |
+             from_json).backend_natural_exit_confirmed
+          - >-
+            not (updates_cancel_actual.stdout |
+                 from_json).backend_was_terminated
+          - (updates_cancel_actual.stdout | from_json).root_absent
+          - updates_cancel_status.finished
+          # failed_when:false suppresses the registered task failure. The
+          # actual public result is retained literally in its completed cache.
+          - >-
+            (updates_cancel_observed.stdout | from_json).cache_records[
+              updates_cancel_launch.ansible_job_id].json.failed
+      no_log: true

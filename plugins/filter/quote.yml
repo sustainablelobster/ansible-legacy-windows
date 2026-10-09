@@ -1,0 +1,77 @@
+---
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+DOCUMENTATION:
+  name: quote
+  short_description: Format arguments for Windows command lines
+  version_added: '1.0.0'
+  author:
+    - Joe Lustri
+  description:
+    - Formats literal argument values for the selected Windows command language.
+    - The default follows C-runtime argument parsing, as used by
+      M(sustainablelobster.legacy_windows.win_command) without a shell.
+    - Select O(shell=cmd) for command-prompt arguments, or O(shell=powershell)
+      for single-quoted PowerShell expressions.
+    - Runs on the Ansible controller. Selecting a quoting style does not install
+      or start that shell on a Windows host.
+  positional: _input
+  options:
+    _input:
+      description:
+        - An argument string, a sequence of arguments, or a dictionary of MSI
+          properties.
+        - Sequence elements become separate, space-delimited arguments.
+        - Dictionary entries become C(NAME=value) assignments. Values are quoted
+          using the selected style; property names are not quoted or validated.
+        - Byte strings are decoded with Ansible's text conversion rules.
+        - Convert numbers to strings when supplying numeric argument values.
+      type: raw
+      required: true
+    shell:
+      description:
+        - The shell language whose quoting rules should be used.
+        - O(shell=None) uses C-runtime argument quoting without shell escaping.
+      type: string
+      choices:
+        - None
+        - cmd
+        - powershell
+      default: None
+  seealso:
+    - module: sustainablelobster.legacy_windows.win_command
+  notes:
+    - The default C-runtime style preserves an upstream edge case by doubling
+      backslashes immediately before a final line-feed character, not just at
+      the end of a quoted argument.
+    - The C(cmd) style preserves the upstream escaping rules, including their
+      limitations. Backslashes before a double quote or at the end of an
+      argument requiring quotes can change the arguments received by a native
+      executable, including merging adjacent arguments.
+    - Prefer the C(argv) option of
+      M(sustainablelobster.legacy_windows.win_command) when invoking a native
+      executable without a shell.
+
+EXAMPLES: |
+  - name: Pass one literal argument without a shell
+    sustainablelobster.legacy_windows.win_command:
+      cmd: >-
+        mytool.exe {{ argument | sustainablelobster.legacy_windows.quote }}
+
+  - name: Format an MSI property assignment
+    ansible.builtin.debug:
+      msg: >-
+        {{ {'INSTALLDIR': 'C:\Program Files\Example'} |
+           sustainablelobster.legacy_windows.quote }}
+
+  - name: Prepare a literal PowerShell expression on the controller
+    ansible.builtin.set_fact:
+      quoted_expression: >-
+        {{ argument |
+           sustainablelobster.legacy_windows.quote(shell='powershell') }}
+
+RETURN:
+  _value:
+    description:
+      - The formatted argument list, with one space between arguments.
+    type: string

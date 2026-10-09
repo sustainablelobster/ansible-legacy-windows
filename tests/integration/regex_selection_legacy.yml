@@ -1,0 +1,203 @@
+---
+# SPDX-License-Identifier: GPL-3.0-or-later
+- name: Verify native legacy category availability and exact owned recovery
+  hosts: legacy_windows
+  gather_facts: false
+  vars_files:
+    - vars/regex_selection.yml
+  vars:
+    regex_legacy_caret_case:
+      id: literal-caret
+      pattern: "^[\\p{L}^_]+[.]txt$"
+      names: '{{ regex_selection_find_cases[0].names }}'
+    regex_legacy_find_cases: >-
+      {{ regex_selection_find_cases + [regex_legacy_caret_case] }}
+    regex_legacy_observer: |
+      import base64,ctypes,json,sys
+      assert sys.version_info[:3] == (3,4,4)
+      observer={'__name__':'regex_legacy_protection',
+                'WMI_SOURCE':base64.b64decode(
+                {{ lookup('file', playbook_dir +
+                '/../../plugins/module_utils/legacy_windows_wmi.py') |
+                b64encode | to_json }}).decode('utf-8')}
+      exec(base64.b64decode({{ lookup('file', playbook_dir +
+      '/fixtures/native_async.py') | b64encode | to_json }}).decode('utf-8'),
+      observer)
+      protected=observer['_protected']()
+      version=sys.getwindowsversion()
+      print(json.dumps({'python':list(sys.version_info[:3]),
+                        'windows':[version.major,version.minor],
+                        'bits':ctypes.sizeof(ctypes.c_void_p)*8,
+                        'protected':protected},sort_keys=True))
+    regex_legacy_staging: >-
+      import glob,json,os,tempfile;
+      print(json.dumps(sorted(glob.glob(os.path.join(
+      tempfile.gettempdir(),'ansible-tmp-*')))))
+  tasks:
+    - name: Require exact externally established legacy identity expectations
+      ansible.builtin.assert:
+        that:
+          - regex_legacy_capture is defined
+          - regex_legacy_expected_mac is defined
+          - regex_legacy_expected_windows in [[5, 1], [5, 2]]
+    - name: Observe original global staging without target allocation
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "{{ regex_legacy_staging }}""
+      register: regex_legacy_staging_before
+      changed_when: false
+    - name: Read native runtime MAC and the established protected configuration
+      sustainablelobster.legacy_windows.win_command:
+        argv: ['{{ ansible_python_interpreter }}', '-']
+        stdin: '{{ regex_legacy_observer }}'
+      register: regex_legacy_before
+      changed_when: false
+      no_log: true
+    - name: Require actual guarded Python3.4.4 before fixture allocation
+      ansible.builtin.assert:
+        that:
+          - (regex_legacy_before.stdout | from_json).python == [3, 4, 4]
+          - (regex_legacy_before.stdout | from_json).bits == 32
+          - >-
+            (regex_legacy_before.stdout | from_json).windows ==
+            regex_legacy_expected_windows
+          - >-
+            regex_legacy_expected_mac in
+            ((regex_legacy_before.stdout | from_json).protected.network |
+            map(attribute='MACAddress') | list)
+      no_log: true
+    - name: Allocate only a uniquely owned inert Unicode file workspace
+      sustainablelobster.legacy_windows.win_tempfile:
+        prefix: legacy-windows-regex-selection-
+        state: directory
+      register: regex_legacy_workspace
+    - name: Exercise native legacy requests while retaining literal recovery
+      block:
+        - name: Journal owned inert file bytes attributes and modification times
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - '-'
+              - prepare
+              - '{{ regex_legacy_workspace.path }}'
+            stdin: '{{ regex_selection_fixture }}'
+          register: regex_legacy_prepare
+          changed_when: false
+          no_log: true
+        - name: Retain original identity and the pre-write file journal
+          ansible.builtin.copy:
+            dest: '{{ regex_legacy_capture }}'
+            mode: '0600'
+            content: >-
+              {{ {'identity': regex_legacy_before,
+              'workspace': regex_legacy_workspace,
+              'prepare': regex_legacy_prepare} | to_nice_json }}
+          delegate_to: localhost
+          vars: &local
+            ansible_connection: local
+            ansible_shell_type: sh
+            ansible_python_interpreter: '{{ ansible_playbook_python }}'
+          no_log: true
+        - name: Run all ten native category Find cases in normal and check mode
+          sustainablelobster.legacy_windows.win_find:
+            paths: '{{ regex_legacy_workspace.path }}\files'
+            patterns: ['{{ item.0.pattern }}']
+            use_regex: true
+            recurse: false
+            get_checksum: false
+            case_sensitive: '{{ item.0.sensitive | default(false) }}'
+          check_mode: '{{ item.1 }}'
+          loop: '{{ regex_legacy_find_cases | product([false, true]) | list }}'
+          register: regex_legacy_find
+          ignore_errors: true
+          no_log: true
+        - name: Record an independent native clock before Wait
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - '-c'
+              - 'import time; print(time.monotonic())'
+          register: regex_legacy_clock_before
+          changed_when: false
+        - name: Run all five native category file Wait cases
+          sustainablelobster.legacy_windows.win_wait_for:
+            path: '{{ regex_legacy_workspace.path }}\{{ item.file }}'
+            regex: '{{ item.pattern }}'
+            state: '{{ item.state }}'
+            timeout: 3
+          loop: '{{ regex_selection_wait_cases }}'
+          register: regex_legacy_wait
+          ignore_errors: true
+          no_log: true
+        - name: Record the independent native clock after Wait
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - '-c'
+              - 'import time; print(time.monotonic())'
+          register: regex_legacy_clock_after
+          changed_when: false
+      always:
+        - name: Require literal recovery and remove only journaled file names
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - '-'
+              - cleanup
+              - '{{ regex_legacy_workspace.path }}'
+            stdin: '{{ regex_selection_fixture }}'
+          register: regex_legacy_cleanup
+          changed_when: false
+          ignore_errors: true
+          no_log: true
+        - name: Reobserve protected configuration after exact owned cleanup
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}', '-']
+            stdin: '{{ regex_legacy_observer }}'
+          register: regex_legacy_after
+          changed_when: false
+          no_log: true
+          ignore_errors: true
+        - name: Observe final complete global staging
+          ansible.builtin.raw: >-
+            cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+            "{{ regex_legacy_staging }}""
+          register: regex_legacy_staging_after
+          changed_when: false
+        - name: Retain complete or failed public results before enforcing gates
+          ansible.builtin.copy:
+            dest: '{{ regex_legacy_capture }}'
+            mode: '0600'
+            content: >-
+              {{ {'mode': 'legacy-native',
+              'expected_mac': regex_legacy_expected_mac,
+              'expected_windows': regex_legacy_expected_windows,
+              'find_cases': regex_legacy_find_cases,
+              'wait_cases': regex_selection_wait_cases,
+              'before': regex_legacy_before, 'after': regex_legacy_after,
+              'workspace': regex_legacy_workspace,
+              'prepare': regex_legacy_prepare | default({}),
+              'find': regex_legacy_find | default({}),
+              'wait': regex_legacy_wait | default({}),
+              'clock_before': regex_legacy_clock_before | default({}),
+              'clock_after': regex_legacy_clock_after | default({}),
+              'cleanup': regex_legacy_cleanup,
+              'staging_before': regex_legacy_staging_before,
+              'staging_after': regex_legacy_staging_after} | to_nice_json }}
+          delegate_to: localhost
+          vars: *local
+          no_log: true
+    - name: Close the private connection after retained recovery
+      ansible.builtin.meta: reset_connection
+    - name: Verify complete native availability and literal within-host closure
+      ansible.builtin.command:
+        argv:
+          - '{{ ansible_playbook_python }}'
+          - >-
+            {{ regex_legacy_verifier | default(
+            playbook_dir + '/../../scripts/' +
+            'verify_regex_selection_legacy_capture.py') }}
+          - '{{ regex_legacy_capture }}'
+      delegate_to: localhost
+      vars: *local
+      changed_when: false

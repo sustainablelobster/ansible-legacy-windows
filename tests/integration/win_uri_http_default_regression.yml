@@ -1,0 +1,160 @@
+---
+- name: Bind the literal shared HTTP regression fixture and cases
+  hosts: legacy_windows
+  gather_facts: false
+  tasks:
+    - name: Select the echo server and downloaded-byte observations
+      # Facts override the imported flow's vars_files for this process only.
+      # Literal downloaded bytes reveal unwanted automatic request headers.
+      # The echo fixture deliberately owns this five-digit loopback port.
+      # Literal URLs do not depend on metadata created by the later setup.
+      ansible.builtin.set_fact:
+        get_url_server: >-
+          {{ (lookup('ansible.builtin.file', playbook_dir +
+                     '/vars/uri_fixture.yml', rstrip=false) |
+              from_yaml).get_url_server }}
+        get_url_cases:
+          - name: >-
+              Shared direct HTTP POST downloads literal echoed request bytes
+            params:
+              url: http://127.0.0.1:52771/echo
+              method: POST
+            request_methods: [POST]
+            changed: true
+          - name: >-
+              Shared HTTP POST redirect downloads literal final echoed
+              request bytes
+            params:
+              url: http://127.0.0.1:52771/redirect/303
+              method: POST
+              follow_redirects: all
+            request_methods: [POST, POST]
+            changed: true
+          - name: >-
+              Shared HTTP GET redirect downloads literal final echoed
+              request bytes
+            params:
+              url: http://127.0.0.1:52771/redirect/302
+            request_methods: [GET, GET]
+            changed: true
+      no_log: true
+
+    - name: Select bounded slow-body cases for both shared HTTP consumers
+      when: uri_body_timeout_regression | default(false) | bool
+      ansible.builtin.set_fact:
+        get_url_cases:
+          - name: HTTP10 body outlives the header timeout
+            params:
+              url: http://127.0.0.1:52771/slow-body/http10
+              url_timeout: 1
+            request_methods: [GET]
+            changed: true
+          - name: Closing HTTP11 body outlives the header timeout
+            params:
+              url: http://127.0.0.1:52771/slow-body/close
+              url_timeout: 1
+            request_methods: [GET]
+            changed: true
+          - name: Persistent HTTP11 body outlives the header timeout
+            params:
+              url: http://127.0.0.1:52771/slow-body/keep-alive
+              url_timeout: 1
+            request_methods: [GET]
+            changed: true
+        uri_cases:
+          - name: HTTP10 body outlives the header timeout
+            params:
+              url: http://127.0.0.1:52771/slow-body/http10
+              url_timeout: 1
+              return_content: true
+          - name: Closing HTTP11 body outlives the header timeout
+            params:
+              url: http://127.0.0.1:52771/slow-body/close
+              url_timeout: 1
+              return_content: true
+          - name: Persistent HTTP11 body outlives the header timeout
+            params:
+              url: http://127.0.0.1:52771/slow-body/keep-alive
+              url_timeout: 1
+              return_content: true
+      no_log: true
+
+    - name: Select bounded default-port Host observations
+      when: uri_default_host_regression | default(false) | bool
+      ansible.builtin.set_fact:
+        get_url_server: >-
+          {{ (lookup('ansible.builtin.file', playbook_dir +
+                     '/vars/uri_fixture.yml', rstrip=false) |
+              from_yaml).get_url_server |
+              replace("Server(('127.0.0.1', 52771), Handler)",
+                      "Server(('127.0.0.1', 80), Handler)") }}
+        get_url_cases:
+          - name: Automatic Host omits explicit default HTTP port
+            params: {url: 'http://127.0.0.1:80/echo'}
+            request_methods: [GET]
+            changed: true
+          - name: Automatic Host preserves an omitted HTTP port
+            params: {url: 'http://127.0.0.1/echo'}
+            request_methods: [GET]
+            changed: true
+          - name: Explicit Host preserves caller default-port text
+            params:
+              url: http://127.0.0.1:80/echo
+              headers: {Host: 'caller.example:80'}
+            request_methods: [GET]
+            changed: true
+        uri_cases:
+          - name: Automatic Host omits explicit default HTTP port
+            params: {url: 'http://127.0.0.1:80/echo', return_content: true}
+          - name: Automatic Host preserves an omitted HTTP port
+            params: {url: 'http://127.0.0.1/echo', return_content: true}
+          - name: Explicit Host preserves caller default-port text
+            params:
+              url: http://127.0.0.1:80/echo
+              headers: {Host: 'caller.example:80'}
+              return_content: true
+      no_log: true
+
+    - name: Include available IPv6 default-port authority observations
+      when: uri_ipv6_host_regression | default(false) | bool
+      vars:
+        get_url_ipv6_cases:
+          - name: Automatic IPv6 Host omits explicit default HTTP port
+            params: {url: 'http://[::1]:80/echo'}
+            request_methods: [GET]
+            changed: true
+          - name: Automatic IPv6 Host preserves an omitted HTTP port
+            params: {url: 'http://[::1]/echo'}
+            request_methods: [GET]
+            changed: true
+          - name: Explicit IPv6 Host preserves caller default-port text
+            params:
+              url: http://[::1]:80/echo
+              headers: {Host: '[::1]:80'}
+            request_methods: [GET]
+            changed: true
+        uri_ipv6_cases:
+          - name: Automatic IPv6 Host omits explicit default HTTP port
+            params: {url: 'http://[::1]:80/echo', return_content: true}
+          - name: Automatic IPv6 Host preserves an omitted HTTP port
+            params: {url: 'http://[::1]/echo', return_content: true}
+          - name: Explicit IPv6 Host preserves caller default-port text
+            params:
+              url: http://[::1]:80/echo
+              headers: {Host: '[::1]:80'}
+              return_content: true
+      ansible.builtin.set_fact:
+        get_url_server: '{{ get_url_server | replace("enable_ipv6 = False",
+                                                   "enable_ipv6 = True") }}'
+        get_url_cases: '{{ get_url_cases + get_url_ipv6_cases }}'
+        uri_cases: '{{ uri_cases + uri_ipv6_cases }}'
+      no_log: true
+
+- name: Verify shared direct HTTP policy through public Get URL downloads
+  ansible.builtin.import_playbook: win_get_url.yml
+
+- name: Verify URI slow-body responses through the same request lifetime
+  ansible.builtin.import_playbook: win_uri.yml
+  when: >-
+    uri_body_timeout_regression | default(false) | bool or
+    uri_default_host_regression | default(false) | bool

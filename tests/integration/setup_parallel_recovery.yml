@@ -1,0 +1,33 @@
+---
+- name: Verify and recover only the owned implicit gathering workspace
+  hosts: legacy_windows
+  gather_facts: false
+  vars_files:
+    - vars/setup_parallel.yml
+  tasks:
+    - name: Observe real implicit jobs before recovery
+      block:
+        - name: Read finished records and protected configuration
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}', '-',
+                   '{{ setup_parallel_workspace.path }}', observe]
+            stdin: '{{ setup_parallel_program }}'
+          register: setup_parallel_observation
+          changed_when: false
+          no_log: true
+
+        - name: Require both real detached jobs and no comparison jobs
+          vars:
+            observed: '{{ setup_parallel_observation.stdout | from_json }}'
+          ansible.builtin.assert:
+            that:
+              - observed.jobs | length == 2
+              - >-
+                observed.jobs | selectattr('side', 'equalto', 'native-cache') |
+                list | length == 2
+              - observed.jobs | selectattr('result.finished', 'equalto', true) |
+                list | length == 2
+          no_log: true
+      always:
+        - name: Recover owned jobs even when a public assertion fails
+          ansible.builtin.include_tasks: tasks/setup_parallel_cleanup.yml

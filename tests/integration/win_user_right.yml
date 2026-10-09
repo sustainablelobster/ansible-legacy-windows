@@ -1,0 +1,97 @@
+---
+- name: Verify user-right assignments and restore the original policy
+  hosts: legacy_windows
+  gather_facts: false
+  vars_files:
+    - vars/user_right.yml
+    - vars/user_right_fixture.yml
+  tasks:
+    - name: Require Python 3.4.4 and record existing task directories
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import glob, json, os, sys, tempfile;
+        assert sys.version_info[:3] == (3, 4, 4);
+        print(json.dumps(sorted(glob.glob(os.path.join(tempfile.gettempdir(),
+        'ansible-tmp-*')))))""
+      register: task_directories_before
+      changed_when: false
+
+    - name: Exercise assignment changes with a durable recovery journal
+      block:
+        - name: Allocate the recovery workspace
+          sustainablelobster.legacy_windows.win_tempfile:  # noqa: args[module]
+            state: directory
+            prefix: legacy-windows-user-right-
+          register: user_right_workspace
+          check_mode: false
+
+        - name: Journal original assignments before clearing the test right
+          sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - '-'
+              - '{{ user_right_workspace.path }}'
+              - setup
+            stdin: '{{ user_right_fixture }}'
+          register: user_right_setup
+          changed_when: true
+          check_mode: false
+
+        - name: Retain the controlled initial native observation
+          ansible.builtin.set_fact:
+            user_right_initial: '{{ user_right_setup.stdout | from_json }}'
+            user_right_previous: '{{ user_right_setup.stdout | from_json }}'
+
+        - name: Exercise assignment changes repeats check mode and failures
+          ansible.builtin.include_tasks: tasks/win_user_right_case.yml
+          loop: '{{ range(user_right_cases | length) | list }}'
+          loop_control:
+            loop_var: user_right_case_index
+          vars:
+            user_right_case: '{{ user_right_cases[user_right_case_index] }}'
+      always:
+        - name: Restore original assignments before removing recovery data
+          when: user_right_workspace.path is defined
+          block:
+            - name: Restore original assignments  # noqa: args[module]
+              sustainablelobster.legacy_windows.win_command:
+                argv:
+                  - '{{ ansible_python_interpreter }}'
+                  - '-'
+                  - '{{ user_right_workspace.path }}'
+                  - cleanup
+                stdin: '{{ user_right_fixture }}'
+              register: user_right_restoration
+              changed_when: true
+              check_mode: false
+
+            - name: Require verified restoration before discarding the journal
+              ansible.builtin.assert:
+                that:
+                  - (user_right_restoration.stdout | from_json).restored
+
+            - name: Remove only the verified recovery workspace
+              sustainablelobster.legacy_windows.win_file:  # noqa: args[module]
+                path: '{{ user_right_workspace.path }}'
+                state: absent
+              check_mode: false
+
+        - name: Verify recovery-workspace and staging cleanup
+          ansible.builtin.raw: >-
+            cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+            "import glob, json, os, sys, tempfile;
+            assert not os.path.exists(sys.argv[1]);
+            print(json.dumps(sorted(glob.glob(os.path.join(tempfile.gettempdir(),
+            'ansible-tmp-*')))))" "{{ user_right_workspace.path }}""
+          when: user_right_workspace.path is defined
+          register: task_directories_after
+          changed_when: false
+          check_mode: false
+
+        - name: Require task-directory cleanup
+          ansible.builtin.assert:
+            that:
+              - >-
+                (task_directories_before.stdout | from_json) ==
+                (task_directories_after.stdout | from_json)
+          when: user_right_workspace.path is defined

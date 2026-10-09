@@ -1,0 +1,482 @@
+---
+- name: Compare isolated native DNS zones with the pinned released
+    implementation
+  hosts: legacy_windows
+  gather_facts: false
+  vars_files:
+    - vars/dns_zone_fixture.yml
+  vars:
+    dns_zone_comparisons: []
+    dns_zone_raw_results: []
+    dns_zone_cases:
+      - id: create-primary
+        args:
+          type: primary
+          replication: none
+      - id: create-primary-update-none
+        args:
+          type: primary
+          replication: none
+          dynamic_update: none
+      - id: create-primary-secure-warning
+        args:
+          type: primary
+          replication: none
+          dynamic_update: secure
+      - id: create-primary-nonsecure-warning
+        args:
+          type: primary
+          replication: none
+          dynamic_update: nonsecureandsecure
+      - id: repeat-primary
+        seed: primary
+        args:
+          type: primary
+          replication: none
+      - id: update-primary
+        seed: primary
+        args:
+          replication: none
+          dynamic_update: nonsecureandsecure
+      - id: preview-primary
+        seed: primary
+        check: true
+        args:
+          replication: none
+          dynamic_update: none
+      - id: create-forwarder-one
+        args:
+          type: forwarder
+          dns_servers:
+            - '{{ dns_zone_master_server | default("127.0.0.1") }}'
+      - id: create-forwarder-two
+        args:
+          type: forwarder
+          dns_servers:
+            - '{{ dns_zone_second_master | default("127.0.0.2") }}'
+            - '{{ dns_zone_master_server | default("127.0.0.1") }}'
+          forwarder_timeout: 15
+      - id: create-forwarder-zero
+        args:
+          type: forwarder
+          dns_servers:
+            - '{{ dns_zone_master_server | default("127.0.0.1") }}'
+          forwarder_timeout: 0
+      - id: create-forwarder-warning
+        args:
+          type: forwarder
+          dns_servers:
+            - '{{ dns_zone_master_server | default("127.0.0.1") }}'
+          forwarder_timeout: 16
+      - id: repeat-forwarder
+        seed: forwarder
+        args:
+          dns_servers:
+            - '{{ dns_zone_master_server | default("127.0.0.1") }}'
+      - id: update-forwarder
+        seed: forwarder
+        args:
+          dns_servers:
+            - '{{ dns_zone_second_master | default("127.0.0.2") }}'
+            - '{{ dns_zone_master_server | default("127.0.0.1") }}'
+          forwarder_timeout: 5
+      - id: preview-forwarder
+        seed: forwarder
+        check: true
+        args:
+          dns_servers:
+            - '{{ dns_zone_second_master | default("127.0.0.2") }}'
+            - '{{ dns_zone_master_server | default("127.0.0.1") }}'
+          forwarder_timeout: 5
+      - id: create-secondary
+        args:
+          type: secondary
+          dns_servers:
+            - '{{ dns_zone_master_server | default("127.0.0.1") }}'
+      - id: repeat-secondary
+        seed: secondary
+        args:
+          type: secondary
+          replication: none
+          dns_servers:
+            - '{{ dns_zone_master_server | default("127.0.0.1") }}'
+      - id: update-secondary
+        seed: secondary
+        args:
+          replication: none
+          dns_servers:
+            - '{{ dns_zone_second_master | default("127.0.0.2") }}'
+            - '{{ dns_zone_master_server | default("127.0.0.1") }}'
+      - id: create-stub
+        args:
+          type: stub
+          dns_servers:
+            - '{{ dns_zone_master_server | default("127.0.0.1") }}'
+      - id: repeat-stub
+        seed: stub
+        args:
+          replication: none
+          dns_servers:
+            - '{{ dns_zone_master_server | default("127.0.0.1") }}'
+      - id: update-stub
+        seed: stub
+        args:
+          replication: none
+          dns_servers:
+            - '{{ dns_zone_second_master | default("127.0.0.2") }}'
+            - '{{ dns_zone_master_server | default("127.0.0.1") }}'
+      - id: remove-primary
+        seed: primary
+        args:
+          state: absent
+      - id: preview-removal
+        seed: primary
+        check: true
+        args:
+          state: absent
+      - id: absent-missing
+        args:
+          state: absent
+      - id: require-secondary-servers
+        args:
+          type: secondary
+      - id: require-stub-servers
+        args:
+          type: stub
+      - id: require-forwarder-servers
+        args:
+          type: forwarder
+      - id: unsupported-stub-conversion
+        seed: primary
+        args:
+          type: stub
+          replication: none
+          dns_servers:
+            - '{{ dns_zone_master_server | default("127.0.0.1") }}'
+      - id: unsupported-forwarder-conversion
+        seed: primary
+        args:
+          type: forwarder
+          dns_servers:
+            - '{{ dns_zone_master_server | default("127.0.0.1") }}'
+      - id: reject-file-to-ad
+        seed: primary
+        args:
+          replication: forest
+  tasks:
+    - name: Record original global staging
+      ansible.builtin.raw: "cmd.exe /d /s /c \"\"{{\
+        \ ansible_python_interpreter }}\" -c \"import\
+        \ glob,json,os,sys,tempfile; assert sys.version_info[:3] == (3,4,4);\
+        \ print(json.dumps(sorted(glob.glob(os.path.join(\
+        tempfile.gettempdir(),'ansible-tmp-*')))))\"\""
+      register: dns_zone_staging_before
+      changed_when: false
+    - name: Allocate uniquely owned recovery workspace
+      sustainablelobster.legacy_windows.win_tempfile:
+        prefix: legacy-windows-dns-zone-
+        state: directory
+      register: dns_zone_workspace
+    - name: Exercise only journal-owned DNS state
+      block:
+        - name: Flush original full measured state before role preparation
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - '-'
+              - '{{ dns_zone_workspace.path }}'
+              - setup
+            stdin: '{{ dns_zone_fixture_program }}'
+          register: dns_zone_setup
+          no_log: true
+          changed_when: false
+        - name: Retain complete durable journal before any role write
+          ansible.builtin.copy:
+            content: '{{ dns_zone_setup | to_nice_json }}'
+            dest: '{{ dns_zone_capture }}.before.json'
+            mode: '0600'
+          delegate_to: localhost
+          vars: &local
+            ansible_connection: local
+            ansible_shell_type: sh
+            ansible_python_interpreter: '{{ ansible_playbook_python }}'
+          no_log: true
+          changed_when: false
+        - name: Install only an initially absent DNS role and tools
+          sustainablelobster.legacy_windows.win_feature:
+            name: DNS
+            include_management_tools: true
+          when: (dns_zone_setup.stdout |
+            from_json).before.components.DNS.Installed == 0
+          register: dns_zone_role
+        - name: Require role preparation without an uncoordinated reboot
+          ansible.builtin.assert:
+            that:
+              - dns_zone_role is skipped or not
+                dns_zone_role.reboot_required
+        - name: Record exact protected prepared configuration
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - '-'
+              - '{{ dns_zone_workspace.path }}'
+              - prepared
+            stdin: '{{ dns_zone_fixture_program }}'
+          register: dns_zone_prepared
+          no_log: true
+          changed_when: false
+        - name: Journal the uniquely absent zone and zone-file name before
+            writes
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - '-'
+              - '{{ dns_zone_workspace.path }}'
+              - register_zone
+            stdin: '{{ dns_zone_fixture_program }}'
+          register: dns_zone_register
+          no_log: true
+          changed_when: false
+        - name: Bind only the owned zone name
+          ansible.builtin.set_fact:
+            dns_zone_owned_name: '{{ (dns_zone_register.stdout | from_json).name
+              }}'
+        - name: Exercise public behavior idempotence check mode and
+            literal source parity
+          ansible.builtin.include_tasks: >-
+            {{ dns_zone_case_tasks | default('tasks/win_dns_zone_case.yml') }}
+          loop: '{{ dns_zone_cases }}'
+          loop_control:
+            loop_var: dns_zone_case
+            label: '{{ dns_zone_case.id }}'
+      always:
+        - name: Preserve complete raw results before cleanup or assertion
+          ansible.builtin.copy:
+            content: >-
+              {{ {'workspace': dns_zone_workspace,
+              'staging_before': dns_zone_staging_before,
+              'setup': dns_zone_setup | default(none),
+              'role': dns_zone_role | default(none),
+              'prepared': dns_zone_prepared
+              | default(none),
+              'raw': dns_zone_raw_results, 'comparisons': dns_zone_comparisons}
+              | to_nice_json }}
+            dest: '{{ dns_zone_capture }}'
+            mode: '0600'
+          delegate_to: localhost
+          vars: *local
+          no_log: true
+          changed_when: false
+        - name: Recover only the journal-owned zone and verify all
+            protected native rows and files
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - '-'
+              - '{{ dns_zone_workspace.path }}'
+              - zones_cleanup
+            stdin: '{{ dns_zone_fixture_program }}'
+          when: dns_zone_register is defined and dns_zone_register.rc == 0
+          register: dns_zone_zones_cleanup
+          failed_when: false
+          no_log: true
+          changed_when: false
+        - name: Retain whole owned-zone recovery before validation
+          ansible.builtin.copy:
+            content: '{{ dns_zone_zones_cleanup | to_nice_json }}'
+            dest: '{{ dns_zone_capture }}.zones-cleanup.json'
+            mode: '0600'
+          delegate_to: localhost
+          vars: *local
+          no_log: true
+          changed_when: false
+        - name: Require owned-zone recovery before any role removal
+          ansible.builtin.assert:
+            that:
+              - dns_zone_zones_cleanup is skipped or
+                dns_zone_zones_cleanup.rc == 0
+        - name: Remove only journal-owned role tools and ancestors
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - '-'
+              - '{{ dns_zone_workspace.path }}'
+              - cleanup
+            stdin: '{{ dns_zone_fixture_program }}'
+          register: dns_zone_role_cleanup
+          failed_when: false
+          no_log: true
+          changed_when: false
+        - name: Retain the complete original role recovery result before
+            assertions
+          ansible.builtin.copy:
+            content: '{{ dns_zone_role_cleanup | to_nice_json }}'
+            dest: '{{ dns_zone_capture }}.role-cleanup.json'
+            mode: '0600'
+          delegate_to: localhost
+          vars: *local
+          no_log: true
+          changed_when: false
+        - name: Require successful recovery processing while keeping the
+            journal on failure
+          ansible.builtin.assert:
+            that:
+              - dns_zone_role_cleanup.rc == 0
+        - name: Bind only an actually measured servicing reboot
+            requirement
+          ansible.builtin.set_fact:
+            dns_zone_requires_recovery_reboot: '{{ (dns_zone_role_cleanup.stdout
+              | from_json).requires_reboot | default(false) }}'
+        - name: Require explicit fixture authorization before any recovery
+            reboot
+          ansible.builtin.assert:
+            that:
+              - not dns_zone_requires_recovery_reboot or
+                dns_zone_recovery_reboot_authorized | default(false) |
+                bool
+            fail_msg: Role servicing requires a recovery reboot; the
+              durable owned journal remains intact.
+        - name: Flush the exact owned files and boot timestamp before the
+            authorized reboot
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - '-'
+              - '{{ dns_zone_workspace.path }}'
+              - note_reboot
+            stdin: '{{ dns_zone_fixture_program }}'
+          when: dns_zone_requires_recovery_reboot
+          register: dns_zone_recovery_note
+          failed_when: false
+          no_log: true
+          changed_when: false
+        - name: Retain raw pre-reboot ownership before boot mutation
+          ansible.builtin.copy:
+            content: '{{ dns_zone_recovery_note | to_nice_json }}'
+            dest: '{{ dns_zone_capture }}.recovery-note.json'
+            mode: '0600'
+          when: dns_zone_requires_recovery_reboot
+          delegate_to: localhost
+          vars: *local
+          no_log: true
+          changed_when: false
+        - name: Require durable ownership before the single authorized
+            recovery reboot
+          ansible.builtin.assert:
+            that:
+              - dns_zone_recovery_note.rc == 0
+              - (dns_zone_recovery_note.stdout | from_json).journaled
+          when: dns_zone_requires_recovery_reboot
+        - name: Complete only the measured servicing reboot requirement
+          when: dns_zone_requires_recovery_reboot
+          block:
+            - name: Reboot the explicitly selected owned DNS fixture
+                target once
+              sustainablelobster.legacy_windows.win_reboot:
+                msg: Journaled DNS fixture owned-role recovery
+                reboot_timeout: 600
+              register: dns_zone_recovery_reboot
+          always:
+            - name: Retain the full raw reboot result even on failure
+              ansible.builtin.copy:
+                content: '{{ dns_zone_recovery_reboot | to_nice_json }}'
+                dest: '{{ dns_zone_capture }}.recovery-reboot.json'
+                mode: '0600'
+              delegate_to: localhost
+              vars: *local
+              no_log: true
+              changed_when: false
+        - name: Finish remaining owned ancestors and exact original-state
+            recovery
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - '-'
+              - '{{ dns_zone_workspace.path }}'
+              - cleanup
+            stdin: '{{ dns_zone_fixture_program }}'
+          when: dns_zone_requires_recovery_reboot
+          register: dns_zone_after_reboot_cleanup
+          failed_when: false
+          no_log: true
+          changed_when: false
+        - name: Bind the complete final recovery without replacing
+            original raw failures
+          ansible.builtin.set_fact:
+            dns_zone_final_cleanup: >-
+              {{ dns_zone_after_reboot_cleanup if
+              dns_zone_requires_recovery_reboot else dns_zone_role_cleanup }}
+        - name: Retain full original and final recovered state before
+            finalization
+          ansible.builtin.copy:
+            content: '{{ dns_zone_final_cleanup | to_nice_json }}'
+            dest: '{{ dns_zone_capture }}.final-cleanup.json'
+            mode: '0600'
+          delegate_to: localhost
+          vars: *local
+          no_log: true
+          changed_when: false
+        - name: Require complete restoration before removing any recovery
+            journal
+          ansible.builtin.assert:
+            that:
+              - dns_zone_final_cleanup.rc == 0
+              - (dns_zone_final_cleanup.stdout | from_json).restored
+        - name: Recheck complete recovery before finalizing only the owned
+            journal
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - '-'
+              - '{{ dns_zone_workspace.path }}'
+              - finalize
+            stdin: '{{ dns_zone_fixture_program }}'
+          no_log: true
+          changed_when: false
+        - name: Remove only the fully verified owned workspace
+          sustainablelobster.legacy_windows.win_file:
+            path: '{{ dns_zone_workspace.path }}'
+            state: absent
+        - name: Observe exact workspace absence and final global staging
+            without a payload
+          ansible.builtin.raw: "cmd.exe /d /s /c \"\"{{\
+            \ ansible_python_interpreter }}\" -c \"import\
+            \ glob,json,os,tempfile;assert not os.path.exists(r'{{\
+            \ dns_zone_workspace.path }}');\
+            \ print(json.dumps(sorted(glob.glob(os.path.join(\
+            tempfile.gettempdir(),'ansible-tmp-*')))))\"\""
+          register: dns_zone_staging_after
+          changed_when: false
+        - name: Retain the literal staging closure before assertions
+          ansible.builtin.copy:
+            content: >-
+              {{ {"before": dns_zone_staging_before,
+              "after": dns_zone_staging_after} | to_nice_json }}
+            dest: '{{ dns_zone_capture }}.staging-cleanup.json'
+            mode: '0600'
+          delegate_to: localhost
+          vars: *local
+          no_log: true
+          changed_when: false
+        - name: Require literal original global staging restoration
+          ansible.builtin.assert:
+            that:
+              - dns_zone_staging_before.stdout ==
+                dns_zone_staging_after.stdout
+    - name: Require literal public parity for every completed case
+      when: dns_zone_compare_released | default(true)
+      ansible.builtin.assert:
+        that:
+          - dns_zone_comparisons | length == dns_zone_cases | length
+          - dns_zone_comparisons | selectattr('expected', 'defined') |
+            rejectattr('expected') | list | length == 0
+          - dns_zone_comparisons | rejectattr('equal') | list | length ==
+            0
+    - name: Require every declared classic-provider behavior without
+        claiming source parity
+      when: not (dns_zone_compare_released | default(true))
+      ansible.builtin.assert:
+        that:
+          - dns_zone_comparisons | length == dns_zone_cases | length
+          - dns_zone_comparisons |
+            rejectattr('declared_behavior_verified') | list | length == 0

@@ -1,0 +1,77 @@
+---
+- name: '{{ timezone_case.name }}'
+  block:
+    - name: Apply or predict the requested timezone  # noqa: args[module]
+      sustainablelobster.legacy_windows.win_timezone:
+        timezone: '{{ timezone_case.timezone }}'
+      register: timezone_result
+      check_mode: '{{ timezone_case.check | default(false) }}'
+      diff: true
+  rescue:
+    - name: Require the declared unsupported-timezone failure
+      ansible.builtin.assert:
+        that:
+          - timezone_case.error is defined
+          - timezone_result is failed
+          - timezone_result.msg == timezone_case.error
+          - not timezone_result.changed
+
+- name: Read the effective native rules and seasonal offsets
+  sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+    argv:
+      - '{{ ansible_python_interpreter }}'
+      - '-'
+      - '{{ timezone_workspace.path }}'
+      - observe
+    stdin: '{{ timezone_fixture }}'
+  register: timezone_observation
+  changed_when: false
+  check_mode: false
+
+- name: Verify public results diffs and exact non-writing behavior
+  vars:
+    observation: '{{ timezone_observation.stdout | from_json }}'
+    expected_offsets: '{{ timezone_case.offsets | default(timezone_offsets) }}'
+    expected_disabled: >-
+      {{ timezone_case.daylight_disabled |
+         default(timezone_daylight_disabled) }}
+  ansible.builtin.assert:
+    that:
+      - timezone_result.changed == timezone_case.changed
+      - (timezone_case.error is defined) == (timezone_result is failed)
+      - timezone_result.previous_timezone == timezone_previous
+      - timezone_result.timezone == timezone_case.timezone
+      - timezone_result.diff.before == timezone_previous ~ ('%c' | format(10))
+      - >-
+        timezone_result.diff.after ==
+        timezone_case.timezone ~ ('%c' | format(10))
+      - timezone_result.warnings | default([]) == []
+      - timezone_result.reboot_required is not defined
+      - timezone_result.stdout is not defined
+      - timezone_result.stderr is not defined
+      - timezone_result.rc is not defined
+      - timezone_case.error is defined or timezone_result.msg is not defined
+      - observation.offsets == expected_offsets
+      - >-
+        observation.dynamic is none or
+        observation.dynamic.daylight_disabled == expected_disabled
+      - >-
+        not (timezone_case.check | default(false)) or
+        observation == timezone_previous_snapshot
+      - timezone_case.changed or observation == timezone_previous_snapshot
+
+- name: Retain the complete public result and native observation
+  vars:
+    record:
+      case: '{{ timezone_case.name }}'
+      result: '{{ timezone_result }}'
+      snapshot: '{{ timezone_observation.stdout | from_json }}'
+  ansible.builtin.set_fact:
+    timezone_previous: >-
+      {{ timezone_case.current | default(timezone_previous) }}
+    timezone_previous_snapshot: '{{ record.snapshot }}'
+    timezone_offsets: '{{ timezone_case.offsets | default(timezone_offsets) }}'
+    timezone_daylight_disabled: >-
+      {{ timezone_case.daylight_disabled |
+         default(timezone_daylight_disabled) }}
+    timezone_results: '{{ timezone_results | default([]) + [record] }}'

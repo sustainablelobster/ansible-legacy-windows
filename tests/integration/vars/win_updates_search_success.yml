@@ -1,0 +1,48 @@
+---
+# SPDX-License-Identifier: GPL-3.0-or-later
+updates_search_mode: observe
+updates_search_cache_journal: false
+updates_search_capture: >-
+  {{ playbook_dir }}/../../tmp/codex/evidence/win-updates-search-success.json
+updates_search_inputs:
+  state: searched
+  server_selection: windows_update
+  category_names: ['*']
+  reject_list: ['.*']
+updates_search_sources: |
+  WMI_SOURCE = {{ lookup('ansible.builtin.file',
+    playbook_dir + '/../../plugins/module_utils/legacy_windows_wmi.py',
+    rstrip=false) | to_json }}
+  BASE_SOURCE = {{ lookup('ansible.builtin.file',
+    playbook_dir + '/fixtures/native_async.py', rstrip=false) | to_json }}
+updates_search_monitor_source: |
+  {{ updates_search_sources }}
+  {{ lookup('ansible.builtin.file',
+    playbook_dir + '/fixtures/win_updates_runas.py', rstrip=false) }}
+updates_search_program: |
+  {{ updates_search_sources }}
+  RUNAS_SOURCE = {{ lookup('ansible.builtin.file',
+    playbook_dir + '/fixtures/win_updates_runas.py', rstrip=false) | to_json }}
+  MONITOR_SOURCE = {{ updates_search_monitor_source | to_json }}
+  CACHE_SOURCE = {{ lookup('ansible.builtin.file',
+    playbook_dir + '/fixtures/win_updates_cache.py', rstrip=false) | to_json }}
+  SETUP_SOURCE = {{ lookup('ansible.builtin.file',
+    playbook_dir + '/fixtures/setup.py', rstrip=false) | to_json }}
+  HELPER_SOURCES = {
+      'legacy_windows_wmi': WMI_SOURCE,
+      'legacy_windows_updates_native': {{ lookup('ansible.builtin.file',
+        playbook_dir + '/../../plugins/module_utils/' +
+        'legacy_windows_updates_native.py',
+        rstrip=false) | to_json }}
+  }
+  PROVIDER_SOURCE = {{ lookup('ansible.builtin.file',
+    playbook_dir + '/fixtures/win_updates.py', rstrip=false) | to_json }}
+  {{ lookup('ansible.builtin.file',
+    playbook_dir + '/fixtures/win_updates_search_success.py', rstrip=false) }}
+updates_search_global_program: >-
+  import glob,json,os,sys,tempfile;assert sys.version_info[:3]==(3,4,4);
+  roots=sorted(set([tempfile.gettempdir(),
+  os.path.join(os.environ['SystemRoot'],'Temp')]));
+  print(json.dumps({root:{pattern:sorted(glob.glob(os.path.join(root,pattern)))
+  for pattern in ['ansible-tmp-*','legacy-windows-updates-*']}
+  for root in roots},sort_keys=True))

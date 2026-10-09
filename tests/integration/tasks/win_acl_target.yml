@@ -1,0 +1,36 @@
+---
+- name: Select the independent fixture for this target
+  vars:
+    kind: '{{ "registry" if acl_target == "registry" else "filesystem" }}'
+    fixture: '{{ acl_fixtures[kind] }}'
+  ansible.builtin.set_fact:
+    acl_kind: '{{ kind }}'
+    acl_paths: '{{ fixture.paths }}'
+    acl_baseline: '{{ fixture.snapshot }}'
+    acl_path: >-
+      {{ fixture.paths.file if acl_target == "file" else fixture.paths.parent }}
+
+- name: Observe the starting permissions for this sequence
+  sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+    argv:
+      - '{{ ansible_python_interpreter }}'
+      - '-'
+      - '{{ acl_workspace.path }}'
+      - observe
+      - '{{ acl_kind }}'
+    stdin: '{{ acl_inheritance_fixture }}'
+  changed_when: false
+  check_mode: false
+  register: acl_target_start
+
+- name: Retain the starting observation
+  ansible.builtin.set_fact:
+    acl_previous: '{{ (acl_target_start.stdout | from_json).snapshot }}'
+
+- name: Exercise access rules in their declared order
+  ansible.builtin.include_tasks: win_acl_case.yml
+  loop: '{{ range(acl_cases[acl_target] | length) | list }}'
+  loop_control:
+    loop_var: acl_case_index
+  vars:
+    acl_case: '{{ acl_cases[acl_target][acl_case_index] }}'

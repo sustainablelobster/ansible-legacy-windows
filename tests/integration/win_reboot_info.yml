@@ -1,0 +1,305 @@
+---
+# SPDX-License-Identifier: GPL-3.0-or-later
+- name: Verify read-only reboot information on Windows Python 3.4.4
+  hosts: legacy_windows
+  gather_facts: false
+  vars:
+    observations: '{{ native_before.stdout | from_json }}'
+    reason_order:
+      - component_based_servicing
+      - windows_update
+      - pending_file_rename
+      - pending_computer_rename
+      - domain_join
+      - server_manager
+    observation_code: |
+      import ctypes, datetime, glob, json, os, struct, sys, tempfile, winreg
+      assert sys.version_info[:3] == (3, 4, 4)
+      locations = [
+          ('cbs', r'SOFTWARE\Microsoft\Windows\CurrentVersion'
+              r'\Component Based Servicing\RebootPending', []),
+          ('update', r'SOFTWARE\Microsoft\Windows\CurrentVersion'
+              r'\WindowsUpdate\Auto Update\RebootRequired', []),
+          ('rename', r'SYSTEM\CurrentControlSet\Control\Session Manager',
+              ['PendingFileRenameOperations']),
+          ('pending', r'SYSTEM\CurrentControlSet\Control\ComputerName'
+              r'\ComputerName', ['ComputerName']),
+          ('active', r'SYSTEM\CurrentControlSet\Control\ComputerName'
+              r'\ActiveComputerName', ['ComputerName']),
+          ('domain', r'SYSTEM\CurrentControlSet\Services\Netlogon',
+              ['JoinDomain', 'AvoidSpnSet']),
+          ('server', r'SOFTWARE\Microsoft\ServerManager\ServicingStorage'
+              r'\ServerComponentCache', ['RestartRequired'])]
+      registry = {}
+      for label, path, names in locations:
+          record = {'exists': False, 'values': {}}
+          try:
+              with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, path) as key:
+                  record['exists'] = True
+                  for name in names:
+                      try:
+                          value, kind = winreg.QueryValueEx(key, name)
+                          if isinstance(value, bytes):
+                              value = list(bytearray(value))
+                          record['values'][name] = {
+                              'value': value, 'kind': kind}
+                      except OSError as error:
+                          assert error.winerror == 2
+          except OSError as error:
+              assert error.winerror in (2, 5)
+              record['exists'] = error.winerror == 5
+          registry[label] = record
+      library = ctypes.WinDLL('advapi32', use_last_error=True)
+      dword = ctypes.c_uint32
+      pointer = ctypes.c_void_p
+      library.OpenEventLogW.argtypes = [ctypes.c_wchar_p, ctypes.c_wchar_p]
+      library.OpenEventLogW.restype = pointer
+      library.ReadEventLogW.argtypes = [pointer, dword, dword, pointer, dword,
+          ctypes.POINTER(dword), ctypes.POINTER(dword)]
+      library.ReadEventLogW.restype = ctypes.c_int
+      library.CloseEventLog.argtypes = [pointer]
+      library.CloseEventLog.restype = ctypes.c_int
+      handle = library.OpenEventLogW(None, 'System')
+      if not handle:
+          raise ctypes.WinError(ctypes.get_last_error())
+      event, capacity = None, 65536
+      try:
+          while event is None:
+              buffer = ctypes.create_string_buffer(capacity)
+              used, needed = dword(), dword()
+              if not library.ReadEventLogW(handle, 9, 0, buffer, capacity,
+                      ctypes.byref(used), ctypes.byref(needed)):
+                  error = ctypes.get_last_error()
+                  if error == 122:
+                      capacity = needed.value
+                      continue
+                  if error == 38:
+                      break
+                  raise ctypes.WinError(error)
+              position = 0
+              while position < used.value:
+                  record = buffer.raw[position:used.value]
+                  length, _, number, generated, _, identifier = (
+                      struct.unpack_from('<6I', record))
+                  assert length >= 56 and position + length <= used.value
+                  if identifier & 65535 == 1074:
+                      count = struct.unpack_from('<H', record, 26)[0]
+                      offset = struct.unpack_from('<I', record, 36)[0]
+                      strings = []
+                      for _ in range(count):
+                          end = offset
+                          while (end + 1 < length and
+                                  record[end:end + 2] != b'\0\0'):
+                              end += 2
+                          assert end + 1 < length
+                          strings.append(record[offset:end].decode('utf-16-le'))
+                          offset = end + 2
+                      event = {'epoch': generated, 'strings': strings,
+                          'record': number,
+                          'time': datetime.datetime.utcfromtimestamp(
+                              generated).strftime('%Y-%m-%dT%H:%M:%SZ')}
+                      break
+                  position += length
+      finally:
+          assert library.CloseEventLog(handle)
+      def truth(value):
+          if isinstance(value, list):
+              return len(value) > 1 or (len(value) == 1 and truth(value[0]))
+          return bool(value)
+      def value(label, name):
+          return registry[label]['values'].get(name, {}).get('value')
+      pending, active = (value('pending', 'ComputerName'),
+          value('active', 'ComputerName'))
+      assert pending is None or isinstance(pending, str)
+      assert active is None or isinstance(active, str)
+      reasons = []
+      for name, present in [
+          ('component_based_servicing', registry['cbs']['exists']),
+          ('windows_update', registry['update']['exists']),
+          ('pending_file_rename',
+              truth(value('rename', 'PendingFileRenameOperations'))),
+          ('pending_computer_rename',
+              bool(pending and active and pending.lower() != active.lower())),
+          ('domain_join', bool(registry['domain']['values'])),
+          ('server_manager', truth(value('server', 'RestartRequired')))]:
+          if present:
+              reasons.append(name)
+      print(json.dumps({
+          'python': list(sys.version_info[:3]), 'registry': registry,
+          'reason_sources': reasons, 'event': event,
+          'task_directories': sorted(glob.glob(os.path.join(
+              tempfile.gettempdir(), 'ansible-tmp-*')))}))
+  tasks:
+    - name: Read registry indicators and event records independently
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import base64;
+        exec(base64.b64decode('{{ observation_code | b64encode }}'))""
+      register: native_before
+      changed_when: false
+      check_mode: false
+
+    - name: Require the intended target runtime
+      ansible.builtin.assert:
+        that:
+          - observations.python == [3, 4, 4]
+          - observations.task_directories == []
+
+    - name: Exercise reboot information and recovery
+      block:
+        - name: Read reboot information
+          sustainablelobster.legacy_windows.win_reboot_info:
+          register: reboot_info
+
+        - name: Repeat the read
+          sustainablelobster.legacy_windows.win_reboot_info:
+          register: repeated
+
+        - name: Read reboot information in check mode
+          sustainablelobster.legacy_windows.win_reboot_info:
+          check_mode: true
+          diff: true
+          register: checked
+
+        - name: Require stable complete results without changes
+          ansible.builtin.assert:
+            that:
+              - reboot_info is not changed
+              - repeated is not changed
+              - checked is not changed
+              - >-
+                reboot_info.last_reboot.keys() | sort ==
+                ['details', 'time', 'time_epoch']
+              - >-
+                reboot_info.last_reboot.time is
+                match('^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$')
+              - reboot_info.last_reboot.time_epoch is number
+              - reboot_info.last_reboot.time_epoch > 0
+              - repeated.last_reboot == reboot_info.last_reboot
+              - checked.last_reboot == reboot_info.last_reboot
+              - >-
+                repeated.reboot_required_reasons ==
+                reboot_info.reboot_required_reasons
+              - >-
+                checked.reboot_required_reasons ==
+                reboot_info.reboot_required_reasons
+              - checked.diff is not defined
+              - >-
+                (reboot_info.reboot_required_reasons |
+                map(attribute='source') | list)
+                == observations.reason_sources
+              - >-
+                reboot_info.reboot_required ==
+                (observations.reason_sources | length > 0)
+
+        - name: Verify each pending reason has its public fields
+          ansible.builtin.assert:
+            that:
+              - item.keys() | sort == ['description', 'source']
+              - item.source in reason_order
+              - item.description is string
+              - item.description | length > 0
+          loop: '{{ reboot_info.reboot_required_reasons }}'
+          loop_control:
+            label: '{{ item.source }}'
+
+        - name: Exclude a subsecond threshold ambiguity in the classic observer
+          # Classic records retain seconds; modern events may retain subseconds.
+          ansible.builtin.assert:
+            that:
+              - >-
+                observations.event is none or
+                ((observations.event.epoch -
+                (reboot_info.last_reboot.time_epoch - 300)) | abs) >= 1
+
+        - name: Compare event fields with the independent classic record
+          ansible.builtin.assert:
+            that:
+              - >-
+                reboot_info.last_reboot.details == {} if
+                (observations.event is none or observations.event.epoch <
+                reboot_info.last_reboot.time_epoch - 300)
+                else reboot_info.last_reboot.details.keys() | sort ==
+                ['comment', 'event_time', 'initiated_by', 'process',
+                'reason', 'reason_code', 'type']
+              - >-
+                reboot_info.last_reboot.details == {} or
+                reboot_info.last_reboot.details.event_time ==
+                observations.event.time
+              - >-
+                reboot_info.last_reboot.details == {} or
+                reboot_info.last_reboot.details.process ==
+                (observations.event.strings[0] | default(none))
+              - >-
+                reboot_info.last_reboot.details == {} or
+                reboot_info.last_reboot.details.reason ==
+                (observations.event.strings[2] | default(none))
+              # This fixture compares the standard Windows 32-bit hex reason.
+              - >-
+                reboot_info.last_reboot.details == {} or
+                observations.event.strings[3] is
+                match('^0x[0-9a-fA-F]{1,8}$')
+              - >-
+                reboot_info.last_reboot.details == {} or
+                reboot_info.last_reboot.details.reason_code ==
+                (observations.event.strings[3] | int(base=16))
+              - >-
+                reboot_info.last_reboot.details == {} or
+                reboot_info.last_reboot.details.type ==
+                (observations.event.strings[4] | default(none))
+              - >-
+                reboot_info.last_reboot.details == {} or
+                reboot_info.last_reboot.details.comment ==
+                (observations.event.strings[5] | default(none))
+              - >-
+                reboot_info.last_reboot.details == {} or
+                reboot_info.last_reboot.details.initiated_by ==
+                (observations.event.strings[6] | default(none))
+
+        - name: Verify unsupported arguments fail before querying
+          block:
+            - name: Submit an unsupported option  # noqa: args[module]
+              # Send the invalid option to the WANT_JSON payload's validation.
+              sustainablelobster.legacy_windows.win_reboot_info:
+                unexpected_option: true
+              register: invalid
+
+            - name: Reject unexpected success
+              ansible.builtin.fail:
+                msg: An unsupported reboot-info argument unexpectedly succeeded
+          rescue:
+            - name: Assert the intended unchanged validation failure
+              ansible.builtin.assert:
+                that:
+                  - invalid is failed
+                  - invalid is not changed
+                  - invalid.msg is search('Unsupported parameters')
+                  - invalid.last_reboot is not defined
+                  - invalid.reboot_required is not defined
+
+        - name: Read after the validation failure
+          sustainablelobster.legacy_windows.win_reboot_info:
+          register: recovered
+
+        - name: Verify complete recovery
+          ansible.builtin.assert:
+            that:
+              - recovered is not changed
+              - recovered.last_reboot == reboot_info.last_reboot
+              - >-
+                recovered.reboot_required_reasons ==
+                reboot_info.reboot_required_reasons
+      always:
+        - name: Inspect native state and task directories after all queries
+          ansible.builtin.raw: >-
+            cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+            "import base64;
+            exec(base64.b64decode('{{ observation_code | b64encode }}'))""
+          register: native_after
+          changed_when: false
+          check_mode: false
+
+        - name: Verify unchanged observed state and staged-file cleanup
+          ansible.builtin.assert:
+            that:
+              - (native_after.stdout | from_json) == observations

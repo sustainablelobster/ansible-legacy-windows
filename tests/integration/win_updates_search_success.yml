@@ -1,0 +1,275 @@
+---
+# SPDX-License-Identifier: GPL-3.0-or-later
+- name: Compare a genuine noninstalling successful Windows Update search
+  hosts: legacy_windows
+  gather_facts: false
+  vars_files:
+    - vars/win_updates_search_success.yml
+  tasks:
+    - name: Require the bounded operation and external snapshot protection
+      ansible.builtin.assert:
+        that:
+          - updates_search_mode in ['guard', 'observe', 'paired']
+          - >-
+            updates_search_mode != 'paired' or
+            updates_search_snapshot_protected | default(false)
+          - updates_search_inputs.state == 'searched'
+          - updates_search_inputs.server_selection == 'windows_update'
+          - updates_search_inputs.category_names == ['*']
+          - updates_search_inputs.reject_list == ['.*']
+    - name: Record global staging and Updates workspaces before module staging
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "{{ updates_search_global_program }}""
+      register: updates_search_global_before
+      changed_when: false
+    - name: Observe actual Python network services and update policies
+      sustainablelobster.legacy_windows.win_command:
+        argv: ['{{ ansible_python_interpreter }}', '-', unused, observe]
+        stdin: '{{ updates_search_program }}'
+      register: updates_search_before
+      changed_when: false
+      no_log: true
+    - name: Retain complete service configuration and raw runtime state
+      sustainablelobster.legacy_windows.win_service_info:
+      register: updates_search_services_before
+      no_log: true
+    - name: Journal cache bytes only at the explicit external recovery boundary
+      when: updates_search_cache_journal
+      sustainablelobster.legacy_windows.win_command:
+        argv: ['{{ ansible_python_interpreter }}', '-', unused, cache]
+        stdin: '{{ updates_search_program }}'
+      register: updates_search_cache_before
+      changed_when: false
+      failed_when: false
+      no_log: true
+    - name: Read the retained complete post-rollback baseline on controller
+      when: updates_search_mode == 'paired'
+      ansible.builtin.set_fact:
+        updates_search_baseline: >-
+          {{ lookup('ansible.builtin.file', updates_search_baseline_capture,
+                    rstrip=false) | from_json }}
+      no_log: true
+    - name: Require its complete recovered cache without calling it a new scan
+      when: updates_search_mode == 'paired'
+      ansible.builtin.assert:
+        that:
+          - updates_search_baseline.mode == 'observe'
+          - updates_search_baseline.cache_before.rc == 0
+          - not updates_search_baseline.absence.stat.exists
+      no_log: true
+    - name: Retain the source capture hash and explicit observation boundary
+      when: updates_search_mode == 'paired'
+      ansible.builtin.stat:
+        path: '{{ updates_search_baseline_capture }}'
+        checksum_algorithm: sha256
+      delegate_to: localhost
+      vars:
+        ansible_connection: local
+        ansible_shell_type: sh
+        ansible_python_interpreter: '{{ ansible_playbook_python }}'
+      register: updates_search_baseline_file
+      no_log: true
+    - name: Preserve the baseline and its actual historical origin
+      when: updates_search_mode == 'paired'
+      ansible.builtin.set_fact:
+        updates_search_cache_before: >-
+          {{ updates_search_baseline.cache_before }}
+        updates_search_cache_origin:
+          path: '{{ updates_search_baseline_capture }}'
+          sha256: '{{ updates_search_baseline_file.stat.checksum }}'
+          boundary: completed rollback recovery before this attempt snapshot
+      no_log: true
+    - name: Execute only the successful search comparison
+      when: updates_search_mode == 'paired'
+      block:
+        - name: Allocate a uniquely owned search observation workspace
+          sustainablelobster.legacy_windows.win_tempfile:
+            state: directory
+            prefix: legacy-windows-updates-runas-search-
+          register: updates_search_workspace
+        - name: Preserve the allocated workspace before any owned writes
+          ansible.builtin.copy:
+            dest: '{{ updates_search_capture }}.workspace.json'
+            mode: '0600'
+            content: '{{ updates_search_workspace | to_nice_json }}'
+          delegate_to: localhost
+          vars:
+            ansible_connection: local
+            ansible_shell_type: sh
+            ansible_python_interpreter: '{{ ansible_playbook_python }}'
+          no_log: true
+        - name: Write and record the binary protected sibling
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}', '-',
+                   '{{ updates_search_workspace.path }}', prepare]
+            stdin: '{{ updates_search_program }}'
+          register: updates_search_protected
+          changed_when: false
+          no_log: true
+        - name: Observe cached update mutable flags without accepting EULAs
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}', '-', unused, catalogue]
+            stdin: '{{ updates_search_program }}'
+          register: updates_search_catalogue_before
+          changed_when: false
+          no_log: true
+        - name: Start the maintained birth-identified SYSTEM backend observer
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}', '-',
+                   '{{ updates_search_workspace.path }}', start]
+            stdin: '{{ updates_search_program }}'
+          become: true
+          become_method: ansible.builtin.runas
+          become_user: 'NT AUTHORITY\SYSTEM'
+          register: updates_search_monitor
+          no_log: true
+        - name: Capture the successful native public online search
+          sustainablelobster.legacy_windows.win_updates:
+            state: searched
+            server_selection: windows_update
+            category_names: ['*']
+            reject_list: ['.*']
+            log_path: '{{ updates_search_workspace.path }}\native.log'
+          timeout: 120
+          vars:
+            ansible_remote_tmp: '{{ updates_search_workspace.path }}\staging'
+          register: updates_search_native
+          ignore_errors: true
+          no_log: true
+        - name: Capture the untouched released public online search
+          ansible.windows.win_updates:
+            state: searched
+            server_selection: windows_update
+            category_names: ['*']
+            reject_list: ['.*']
+            log_path: '{{ updates_search_workspace.path }}\original.log'
+          timeout: 120
+          vars:
+            ansible_remote_tmp: '{{ updates_search_workspace.path }}\staging'
+            ansible_shell_type: cmd
+          register: updates_search_original
+          ignore_errors: true
+          no_log: true
+      always:
+        - name: Close the maintained observer and prove captured backend exits
+          when: updates_search_monitor is defined
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}', '-',
+                   '{{ updates_search_workspace.path }}', stop]
+            stdin: '{{ updates_search_program }}'
+          become: true
+          become_method: ansible.builtin.runas
+          become_user: 'NT AUTHORITY\SYSTEM'
+          register: updates_search_monitor_closed
+          failed_when: false
+          no_log: true
+        - name: Retain complete provider logs and protected sibling effects
+          when: updates_search_protected is defined
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}', '-',
+                   '{{ updates_search_workspace.path }}', diagnostics]
+            stdin: '{{ updates_search_program }}'
+          register: updates_search_diagnostics
+          changed_when: false
+          failed_when: false
+          no_log: true
+        - name: Observe final cached EULA download and installation flags
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}', '-', unused, catalogue]
+            stdin: '{{ updates_search_program }}'
+          register: updates_search_catalogue_after
+          changed_when: false
+          failed_when: false
+          no_log: true
+        - name: Preserve partial results before a setup or public-call failure
+          ansible.builtin.copy:
+            dest: '{{ updates_search_capture }}.partial.json'
+            mode: '0600'
+            content: >-
+              {{ {'before': updates_search_before,
+                  'cache_before': updates_search_cache_before | default(none),
+                  'workspace': updates_search_workspace | default(none),
+                  'protected': updates_search_protected | default(none),
+                  'native': updates_search_native | default(none),
+                  'original': updates_search_original | default(none),
+                  'catalogue_before':
+                    updates_search_catalogue_before | default(none),
+                  'catalogue_after':
+                    updates_search_catalogue_after | default(none),
+                  'monitor': updates_search_monitor | default(none),
+                  'monitor_closed':
+                    updates_search_monitor_closed | default(none),
+                  'diagnostics': updates_search_diagnostics | default(none)}
+                 | to_nice_json }}
+          delegate_to: localhost
+          vars:
+            ansible_connection: local
+            ansible_shell_type: sh
+            ansible_python_interpreter: '{{ ansible_playbook_python }}'
+          no_log: true
+        - name: Remove the owned workspace after process and file closure
+          when:
+            - updates_search_monitor_closed.rc | default(-1) == 0
+            - updates_search_diagnostics.rc | default(-1) == 0
+            - >-
+              (updates_search_diagnostics.stdout | from_json).protected ==
+              (updates_search_protected.stdout | from_json)
+          sustainablelobster.legacy_windows.win_file:
+            path: '{{ updates_search_workspace.path }}'
+            state: absent
+    - name: Observe protected configuration effects before snapshot rollback
+      sustainablelobster.legacy_windows.win_command:
+        argv: ['{{ ansible_python_interpreter }}', '-', unused, observe]
+        stdin: '{{ updates_search_program }}'
+      register: updates_search_after
+      changed_when: false
+      no_log: true
+    - name: Retain complete service effects without claiming process stasis
+      sustainablelobster.legacy_windows.win_service_info:
+      register: updates_search_services_after
+      no_log: true
+    - name: Observe global staging and worker closure
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "{{ updates_search_global_program }}""
+      register: updates_search_global_after
+      changed_when: false
+    - name: Prove the exact owned workspace is absent after rollback
+      when: updates_search_absence_check is defined
+      sustainablelobster.legacy_windows.win_stat:
+        path: '{{ updates_search_absence_check }}'
+      register: updates_search_absence
+    - name: Preserve complete raw public provider and recovery results
+      ansible.builtin.copy:
+        dest: '{{ updates_search_capture }}'
+        mode: '0600'
+        content: >-
+          {{ {'mode': updates_search_mode, 'inputs': updates_search_inputs,
+              'before': updates_search_before, 'after': updates_search_after,
+              'services_before': updates_search_services_before,
+              'services_after': updates_search_services_after,
+              'cache_before': updates_search_cache_before | default(none),
+              'cache_before_origin':
+                updates_search_cache_origin | default(none),
+              'catalogue_before':
+                updates_search_catalogue_before | default(none),
+              'catalogue_after': updates_search_catalogue_after | default(none),
+              'native': updates_search_native | default(none),
+              'original': updates_search_original | default(none),
+              'protected': updates_search_protected | default(none),
+              'monitor': updates_search_monitor | default(none),
+              'monitor_closed': updates_search_monitor_closed | default(none),
+              'diagnostics': updates_search_diagnostics | default(none),
+              'workspace': updates_search_workspace | default(none),
+              'absence': updates_search_absence | default(none),
+              'global_before': updates_search_global_before,
+              'global_after': updates_search_global_after} | to_nice_json }}
+      delegate_to: localhost
+      vars:
+        ansible_connection: local
+        ansible_shell_type: sh
+        ansible_python_interpreter: '{{ ansible_playbook_python }}'
+      no_log: true
+    - name: Close only this owner's private SSH control connection
+      ansible.builtin.meta: reset_connection

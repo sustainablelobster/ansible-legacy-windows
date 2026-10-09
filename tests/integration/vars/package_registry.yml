@@ -1,0 +1,320 @@
+---
+package_compare: false
+package_registry_case_start: 0
+package_registry_case_end: 47
+package_registry_selected_cases: >-
+  {{ package_registry_case_indices |
+  default(range(package_registry_case_start | int,
+  package_registry_case_end | int) | list) |
+  map('extract', package_registry_cases) | list }}
+package_registry_arguments:
+  - -S
+  - '{{ package_workspace.path }}\registry_installer.py'
+  - '{{ package_workspace.path }}'
+package_registry_installer: >-
+  {{ package_workspace.path }}\registry installer.exe
+package_registry_product_id: >-
+  {{ (package_setup.stdout | from_json).identifier }}
+package_registry_python_home: >-
+  {{ (package_setup.stdout | from_json).python_home }}
+package_registry_cases:
+  - name: Native machine registry executable installation preview
+    hive: HKLM
+    branch: native
+    check: true
+    changed: true
+  - name: Native machine registry executable installation
+    hive: HKLM
+    branch: native
+    changed: true
+    installed: true
+  - name: Native machine registry executable idempotence
+    hive: HKLM
+    branch: native
+    initial: present
+    installed: true
+  - name: Native machine registry removal preview
+    hive: HKLM
+    branch: native
+    initial: present
+    state: absent
+    check: true
+    changed: true
+    installed: true
+  - name: Native machine registry executable removal
+    hive: HKLM
+    branch: native
+    initial: present
+    state: absent
+    changed: true
+  - name: Wow machine registry executable installation preview
+    hive: HKLM
+    branch: wow
+    check: true
+    changed: true
+  - name: Wow machine registry executable installation
+    hive: HKLM
+    branch: wow
+    changed: true
+    installed: true
+  - name: Wow machine registry executable idempotence
+    hive: HKLM
+    branch: wow
+    initial: present
+    installed: true
+  - name: Wow machine registry removal preview
+    hive: HKLM
+    branch: wow
+    initial: present
+    state: absent
+    check: true
+    changed: true
+    installed: true
+  - name: Wow machine registry executable removal
+    hive: HKLM
+    branch: wow
+    initial: present
+    state: absent
+    changed: true
+  - name: Native user registry executable installation preview
+    hive: HKCU
+    branch: native
+    check: true
+    changed: true
+  - name: Native user registry executable installation
+    hive: HKCU
+    branch: native
+    changed: true
+    installed: true
+  - name: Native user registry executable idempotence
+    hive: HKCU
+    branch: native
+    initial: present
+    installed: true
+  - name: Native user registry removal preview
+    hive: HKCU
+    branch: native
+    initial: present
+    state: absent
+    check: true
+    changed: true
+    installed: true
+  - name: Native user registry executable removal
+    hive: HKCU
+    branch: native
+    initial: present
+    state: absent
+    changed: true
+  - name: Wow user registry executable installation preview
+    hive: HKCU
+    branch: wow
+    check: true
+    changed: true
+  - name: Wow user registry executable installation
+    hive: HKCU
+    branch: wow
+    changed: true
+    installed: true
+  - name: Wow user registry executable idempotence
+    hive: HKCU
+    branch: wow
+    initial: present
+    installed: true
+  - name: Wow user registry removal preview
+    hive: HKCU
+    branch: wow
+    initial: present
+    state: absent
+    check: true
+    changed: true
+    installed: true
+  - name: Wow user registry executable removal
+    hive: HKCU
+    branch: wow
+    initial: present
+    state: absent
+    changed: true
+  - name: Quiet uninstall takes precedence over ordinary uninstall
+    hive: HKCU
+    branch: native
+    initial: present
+    uninstall_property: QuietUninstallString
+    state: absent
+    changed: true
+  - name: Missing uninstall string failure does not change owned installation
+    hive: HKCU
+    branch: native
+    initial: present
+    uninstall_property: missing
+    state: absent
+    installed: true
+    failed: true
+  - name: Executable failure retains streams and signed exit status
+    hive: HKCU
+    branch: native
+    operation: fail
+    failed: true
+  - name: Explicit accepted installer exit code
+    hive: HKCU
+    branch: native
+    operation: fail
+    expected_return_code: [23]
+    changed: true
+  - name: Signed negative accepted installer exit code
+    hive: HKCU
+    branch: native
+    operation: negative
+    expected_return_code: [-1]
+    changed: true
+  - name: Uppercase provider choice dispatches to registry installation
+    hive: HKCU
+    branch: native
+    provider: REGISTRY
+    changed: true
+    installed: true
+  - name: Uppercase state choice preserves registry installation
+    hive: HKCU
+    branch: native
+    state: PRESENT
+    changed: true
+    installed: true
+  - name: Uppercase checksum choice returns the complete SHA256 result
+    hive: HKCU
+    branch: native
+    checksum_algorithm: SHA256
+    changed: true
+    installed: true
+  - name: Boolean maximum_redirection fails before registry installer execution
+    hive: HKCU
+    branch: native
+    binding: {maximum_redirection: true}
+    failed: true
+  - name: Fractional maximum_redirection fails before installer execution
+    hive: HKCU
+    branch: native
+    binding: {maximum_redirection: 2.5}
+    failed: true
+  - name: Out of Int32 maximum_redirection fails before installer execution
+    hive: HKCU
+    branch: native
+    binding: {maximum_redirection: 2147483648}
+    failed: true
+  - name: Boolean url_timeout fails before registry installer execution
+    hive: HKCU
+    branch: native
+    binding: {url_timeout: true}
+    failed: true
+  - name: Fractional url_timeout fails before registry installer execution
+    hive: HKCU
+    branch: native
+    binding: {url_timeout: 2.5}
+    failed: true
+  - name: Out of Int32 url_timeout fails before registry installer execution
+    hive: HKCU
+    branch: native
+    binding: {url_timeout: 2147483648}
+    failed: true
+  - name: Unsupported boolean timeout fails before registry installer execution
+    hive: HKCU
+    branch: native
+    binding: {timeout: true}
+    failed: true
+  - name: Unsupported fractional timeout fails before installer execution
+    hive: HKCU
+    branch: native
+    binding: {timeout: 2.5}
+    failed: true
+  - name: Unsupported oversized timeout fails before installer execution
+    hive: HKCU
+    branch: native
+    binding: {timeout: 2147483648}
+    failed: true
+  - name: Unsupported method fails before registry installer execution
+    hive: HKCU
+    branch: native
+    binding: {method: GET}
+    failed: true
+  - name: Unquoted spaced uninstall recovers the executable and exact arguments
+    hive: HKCU
+    branch: native
+    initial: present
+    state: absent
+    uninstall_form: unquoted
+    uninstall_arguments: &uninstall_arguments
+      - ''
+      - two words
+      - 'quoted "value"'
+      - 'trailing slash\'
+      - '^()%!<>&|'
+      - '雪'
+    repeat: true
+    changed: true
+  - name: Unquoted spaced uninstall check mode does not launch
+    hive: HKCU
+    branch: native
+    initial: present
+    state: absent
+    uninstall_form: unquoted
+    check: true
+    changed: true
+    installed: true
+  - name: Quoted spaced uninstall preserves the same exact arguments
+    hive: HKCU
+    branch: native
+    initial: present
+    state: absent
+    uninstall_arguments: *uninstall_arguments
+    changed: true
+  - name: Quiet unquoted uninstall takes priority over a failing
+      ordinary command
+    hive: HKCU
+    branch: native
+    initial: present
+    state: absent
+    uninstall_property: QuietUninstallString
+    uninstall_form: unquoted
+    uninstall_arguments: *uninstall_arguments
+    changed: true
+  - name: Unquoted variable prefix expands before executable recovery
+    hive: HKCU
+    branch: native
+    initial: present
+    state: absent
+    uninstall_form: environment
+    uninstall_arguments: *uninstall_arguments
+    changed: true
+  - name: Quoted variable prefix expands without changing arguments
+    hive: HKCU
+    branch: native
+    initial: present
+    state: absent
+    uninstall_form: quoted_environment
+    uninstall_arguments: *uninstall_arguments
+    changed: true
+  - name: Unquoted uninstall failure retains exact arguments and installation
+    hive: HKCU
+    branch: native
+    initial: present
+    state: absent
+    uninstall_form: unquoted
+    uninstall_operation: uninstall_fail
+    uninstall_arguments: *uninstall_arguments
+    failed: true
+    installed: true
+  - name: Explicit removal path overrides a missing registry executable
+    hive: HKCU
+    branch: native
+    initial: present
+    state: absent
+    uninstall_form: missing
+    uninstall_arguments: *uninstall_arguments
+    override: true
+    changed: true
+  - name: Missing recovered executable fails without launching an installer
+    hive: HKCU
+    branch: native
+    initial: present
+    state: absent
+    uninstall_form: missing
+    failed: true
+    installed: true

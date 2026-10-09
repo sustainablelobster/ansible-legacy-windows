@@ -1,0 +1,64 @@
+---
+capability_info_cases:
+  - name: All capability metadata
+    params: {}
+    all: true
+  - name: Null names return all
+    params: {name: null}
+    all: true
+  - name: Empty names return all in check mode
+    params: {name: []}
+    check: true
+    all: true
+  - name: Exact installed capability
+    params: {name: OpenSSH.Client~~~~0.0.1.0}
+    names: [OpenSSH.Client~~~~0.0.1.0]
+  - name: Case insensitive alternatives retain catalogue order
+    params: {name: 'openssh.server*,OPENSSH.CLIENT*'}
+    names: [OpenSSH.Client~~~~0.0.1.0, OpenSSH.Server~~~~0.0.1.0]
+  - name: Question and bracket wildcard
+    params: {name: 'OpenSSH.[CS]*~~~~0.0.1.?'}
+    names: [OpenSSH.Client~~~~0.0.1.0, OpenSSH.Server~~~~0.0.1.0]
+  - name: Unmatched pattern returns empty
+    params: {name: 'LegacyWindowsAbsentCapability*'}
+    names: []
+  - name: One empty pattern returns all
+    params: {name: ['']}
+    all: true
+  - name: Matching first alternative skips malformed later wildcard
+    params: {name: ['*', '[invalid']}
+    all: true
+  - name: Reached malformed wildcard fails without changes
+    params: {name: ['[invalid']}
+    failed: true
+  - name: Zero logging retains upstream default
+    params: {name: 'OpenSSH.Client*', log_level: 0}
+    names: [OpenSSH.Client~~~~0.0.1.0]
+  - name: Warning logging and missing source still read metadata
+    params:
+      name: 'OpenSSH.Client*'
+      log_level: 1
+      source: >-
+        {{ (capability_info_setup.stdout | from_json).missing_source }}
+      disable_windows_update: true
+    names: [OpenSSH.Client~~~~0.0.1.0]
+  - name: Information logging with an owned log
+    params: {name: 'OpenSSH.Client*', log_level: 2,
+             log_path: '{{ (capability_info_setup.stdout | from_json).log }}'}
+    names: [OpenSSH.Client~~~~0.0.1.0]
+  - name: Documented debug logging is rejected by the installed provider
+    params: {name: 'OpenSSH.Client*', log_level: 3}
+    failed: true
+  - name: Null update and source preserve read-only behavior
+    params: {name: 'OpenSSH.Client*', disable_windows_update: null,
+             source: null}
+    names: [OpenSSH.Client~~~~0.0.1.0]
+  - name: Fractional logging integer is rejected by the public binder
+    params: {name: 'OpenSSH.Client*', log_level: 1.5}
+    failed: true
+  - name: Invalid logging argument fails before metadata
+    params: {name: 'OpenSSH.Client*', log_level: invalid}
+    failed: true
+  - name: Unsupported parameter fails before metadata
+    params: {name: 'OpenSSH.Client*', unsupported_option: true}
+    failed: true

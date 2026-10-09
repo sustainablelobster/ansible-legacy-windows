@@ -1,0 +1,12 @@
+---
+# SPDX-License-Identifier: GPL-3.0-or-later
+regex_utf16_find_cases:
+  - id: one-unit
+    pattern: '^.[.]txt$'
+    names: [É.txt, Ϳ.txt, ࢳ.txt, ͅ.txt, 1.txt]
+  - id: two-units
+    pattern: '^..[.]txt$'
+    names: [😀.txt]
+regex_utf16_wait_cases:
+  - {id: one-unit-absent, file: astral.txt, pattern: '^.$', state: absent}
+  - {id: two-units-present, file: astral.txt, pattern: '^..$', state: present}

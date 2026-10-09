@@ -1,0 +1,443 @@
+---
+# SPDX-License-Identifier: GPL-3.0-or-later
+- name: Verify owned path variables on Windows Python 3.4.4
+  hosts: legacy_windows
+  gather_facts: false
+  vars:
+    prefix: '{{ (setup.stdout | from_json).prefix }}'
+    scopes: [machine, user]
+    initial_elements:
+      - 'C:\A'
+      - 'C:\B\'
+      - '%SystemRoot%\C'
+      - '"C:\Quoted;雪"'
+    initial_value: 'C:\A;C:\B\;%SystemRoot%\C;"C:\Quoted;雪"'
+    ordered_elements: ['C:\New', 'c:\A', 'c:\B']
+    ordered_value: '%SystemRoot%\C;"C:\Quoted;雪";C:\New;c:\A;c:\B'
+    fixture_code: |
+      import ctypes, json, re, sys, uuid, winreg
+      assert sys.version_info[:3] == (3, 4, 4)
+      locations = {
+          'user': (winreg.HKEY_CURRENT_USER, 'Environment'),
+          'machine': (winreg.HKEY_LOCAL_MACHINE,
+              r'SYSTEM\CurrentControlSet\Control\Session Manager\Environment')}
+      suffixes = ('primary', 'duplicates', 'normalized', 'multi',
+          'empty_array', 'default_scope')
+
+      def inspect(prefix):
+          result = {}
+          for scope, location in locations.items():
+              result[scope] = {}
+              with winreg.OpenKey(*location) as key:
+                  for suffix in suffixes:
+                      try:
+                          value, kind = winreg.QueryValueEx(
+                              key, prefix + suffix)
+                      except FileNotFoundError:
+                          result[scope][suffix] = None
+                      else:
+                          if isinstance(value, bytes):
+                              value = list(value)
+                          result[scope][suffix] = [kind, value]
+          return result
+
+      def cleanup(prefix):
+          for root, path in locations.values():
+              with winreg.OpenKey(root, path, 0,
+                      winreg.KEY_READ | winreg.KEY_SET_VALUE) as key:
+                  for suffix in suffixes:
+                      try:
+                          winreg.DeleteValue(key, prefix + suffix)
+                      except FileNotFoundError:
+                          pass
+          assert all(value is None for values in inspect(prefix).values()
+              for value in values.values())
+          library = ctypes.WinDLL('user32', use_last_error=True)
+          library.SendMessageTimeoutW.argtypes = [ctypes.c_void_p,
+              ctypes.c_uint32, ctypes.c_size_t, ctypes.c_wchar_p,
+              ctypes.c_uint32, ctypes.c_uint32,
+              ctypes.POINTER(ctypes.c_size_t)]
+          library.SendMessageTimeoutW.restype = ctypes.c_ssize_t
+          result = ctypes.c_size_t()
+          if not library.SendMessageTimeoutW(0xffff, 0x1a, 0,
+                  'Environment', 2, 5000, ctypes.byref(result)):
+              raise ctypes.WinError(ctypes.get_last_error())
+
+      mode = sys.argv[1]
+      if mode == 'create':
+          prefix = 'LW_PATH_' + uuid.uuid4().hex + '_'
+          assert all(value is None for values in inspect(prefix).values()
+              for value in values.values())
+          try:
+              for root, path in locations.values():
+                  with winreg.OpenKey(root, path, 0,
+                          winreg.KEY_READ | winreg.KEY_SET_VALUE) as key:
+                      for suffix, value, kind in (
+                              ('duplicates', 'A;A;B', winreg.REG_SZ),
+                              ('normalized', ';A;;;B;', winreg.REG_SZ),
+                              ('multi', ['X;Y', 'Z'], winreg.REG_MULTI_SZ),
+                              ('empty_array', b'', winreg.REG_BINARY)):
+                          winreg.SetValueEx(
+                              key, prefix + suffix, 0, kind, value)
+          except Exception:
+              cleanup(prefix)
+              raise
+          print(json.dumps({'prefix': prefix}))
+      else:
+          prefix = sys.argv[2]
+          assert re.match(r'^LW_PATH_[a-f0-9]{32}_$', prefix)
+          if mode == 'inspect':
+              print(json.dumps(inspect(prefix)))
+          else:
+              assert mode == 'cleanup'
+              cleanup(prefix)
+              print(json.dumps({'removed': True}))
+  tasks:
+    - name: Require Python 3.4.4 and record initial task directories
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import glob, json, os, sys, tempfile;
+        assert sys.version_info[:3] == (3, 4, 4);
+        print(json.dumps(sorted(glob.glob(os.path.join(tempfile.gettempdir(),
+        'ansible-tmp-*')))))""
+      register: task_directories_before
+      changed_when: false
+      check_mode: false
+
+    - name: Allocate and seed isolated user and machine variables
+      sustainablelobster.legacy_windows.win_command:
+        argv:
+          - '{{ ansible_python_interpreter }}'
+          - -c
+          - '{{ fixture_code }}'
+          - create
+      register: setup
+
+    - name: Exercise path editing and recovery
+      block:
+        - name: Record the initial owned registry values
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - '{{ fixture_code }}'
+              - inspect
+              - '{{ prefix }}'
+          register: before_preview
+
+        - name: Preview creation in both scopes
+          sustainablelobster.legacy_windows.win_path:
+            name: '{{ prefix }}primary'
+            scope: '{{ item }}'
+            elements: '{{ initial_elements }}'
+          loop: '{{ scopes }}'
+          check_mode: true
+          diff: true
+          register: creation_preview
+
+        - name: Preview first-match duplicate removal
+          sustainablelobster.legacy_windows.win_path:
+            name: '{{ prefix }}duplicates'
+            scope: '{{ item }}'
+            elements: [A]
+            state: absent
+          loop: '{{ scopes }}'
+          check_mode: true
+          register: removal_preview
+
+        - name: Inspect stored values after previews
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - '{{ fixture_code }}'
+              - inspect
+              - '{{ prefix }}'
+          register: after_preview
+
+        - name: Verify predictions without registry changes
+          ansible.builtin.assert:
+            that:
+              - >-
+                (before_preview.stdout | from_json) ==
+                (after_preview.stdout | from_json)
+              - creation_preview.results[item].changed
+              - creation_preview.results[item].path_value == initial_value
+              - "'diff' not in creation_preview.results[item]"
+              - removal_preview.results[item].changed
+              - removal_preview.results[item].path_value == 'A;B'
+              - removal_preview.results[item].removed_idx == 0
+          loop: [0, 1]
+
+        - name: Create paths in both scopes
+          sustainablelobster.legacy_windows.win_path:
+            name: '{{ prefix }}primary'
+            scope: '{{ item }}'
+            elements: '{{ initial_elements }}'
+          loop: '{{ scopes }}'
+          register: created
+
+        - name: Repeat paths with case quote and backslash differences
+          sustainablelobster.legacy_windows.win_path:
+            name: '{{ prefix }}primary'
+            scope: '{{ item }}'
+            elements:
+              - 'c:\a'
+              - 'c:\b'
+              - '%systemroot%\c'
+              - 'C:\Quoted;雪'
+          loop: '{{ scopes }}'
+          register: repeated
+
+        - name: Verify unchanged spelling on repeated requests
+          ansible.builtin.assert:
+            that:
+              - created.results[item].changed
+              - created.results[item].path_value == initial_value
+              - not repeated.results[item].changed
+              - repeated.results[item].path_value == initial_value
+          loop: [0, 1]
+
+        - name: Use the default machine scope with an owned name
+          sustainablelobster.legacy_windows.win_path:
+            name: '{{ prefix }}default_scope'
+            elements: 'C:\DefaultScope'
+          register: default_scope
+
+        - name: Move existing elements after a newly appended element
+          sustainablelobster.legacy_windows.win_path:
+            name: '{{ prefix }}primary'
+            scope: '{{ item }}'
+            elements: '{{ ordered_elements }}'
+          loop: '{{ scopes }}'
+          register: reordered
+
+        - name: Repeat the requested ordering
+          sustainablelobster.legacy_windows.win_path:
+            name: '{{ prefix }}primary'
+            scope: '{{ item }}'
+            elements: '{{ ordered_elements }}'
+          loop: '{{ scopes }}'
+          register: order_repeated
+
+        - name: Remove only the first duplicate
+          sustainablelobster.legacy_windows.win_path:
+            name: '{{ prefix }}duplicates'
+            scope: '{{ item }}'
+            state: absent
+            elements: [A]
+          loop: '{{ scopes }}'
+          register: first_removed
+
+        - name: Remove the remaining duplicate and attempt a missing duplicate
+          sustainablelobster.legacy_windows.win_path:
+            name: '{{ prefix }}duplicates'
+            scope: '{{ item }}'
+            state: absent
+            elements: [A, A]
+          loop: '{{ scopes }}'
+          register: rest_removed
+
+        - name: Repeat removal after all matching duplicates are gone
+          sustainablelobster.legacy_windows.win_path:
+            name: '{{ prefix }}duplicates'
+            scope: '{{ item }}'
+            state: absent
+            elements: [A]
+          loop: '{{ scopes }}'
+          register: removal_repeated
+
+        - name: Return normalized separators without requesting an edit
+          sustainablelobster.legacy_windows.win_path:
+            name: '{{ prefix }}normalized'
+            scope: '{{ item }}'
+            elements: []
+          loop: '{{ scopes }}'
+          register: normalized
+
+        - name: Convert an existing string array through path editing
+          sustainablelobster.legacy_windows.win_path:
+            name: '{{ prefix }}multi'
+            scope: '{{ item }}'
+            elements: [A]
+          loop: '{{ scopes }}'
+          register: multi_written
+
+        - name: Inspect ordered and converted values independently
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - '{{ fixture_code }}'
+              - inspect
+              - '{{ prefix }}'
+          register: edited_actual
+
+        - name: Verify ordering duplicate removal storage kinds and defaults
+          ansible.builtin.assert:
+            that:
+              - reordered.results[item].changed
+              - reordered.results[item].path_value == ordered_value
+              - not order_repeated.results[item].changed
+              - order_repeated.results[item].path_value == ordered_value
+              - first_removed.results[item].changed
+              - first_removed.results[item].path_value == 'A;B'
+              - first_removed.results[item].removed_idx == 0
+              - rest_removed.results[item].changed
+              - rest_removed.results[item].path_value == 'B'
+              - rest_removed.results[item].removed_idx == -1
+              - not removal_repeated.results[item].changed
+              - removal_repeated.results[item].removed_idx == -1
+              - not normalized.results[item].changed
+              - normalized.results[item].path_value == 'A;B'
+              - multi_written.results[item].changed
+              - multi_written.results[item].path_value == 'X;Y Z;A'
+              - >-
+                (edited_actual.stdout | from_json)[scopes[item]].primary ==
+                [2, ordered_value]
+              - >-
+                (edited_actual.stdout | from_json)[scopes[item]].normalized ==
+                [1, ';A;;;B;']
+              - >-
+                (edited_actual.stdout | from_json)[scopes[item]].multi ==
+                [2, 'X;Y Z;A']
+              - default_scope is changed
+              - >-
+                (edited_actual.stdout | from_json).machine.default_scope ==
+                [2, 'C:\DefaultScope']
+              - (edited_actual.stdout | from_json).user.default_scope is none
+          loop: [0, 1]
+
+        - name: Exercise the reference failure for an empty stored array
+          block:
+            - name: Request an edit of each empty stored byte array
+              sustainablelobster.legacy_windows.win_path:
+                name: '{{ prefix }}empty_array'
+                scope: '{{ item }}'
+                elements: [A]
+              loop: '{{ scopes }}'
+              register: empty_failed
+            - name: Reject unexpected empty-array success
+              ansible.builtin.fail:
+                msg: An empty stored array unexpectedly accepted a path edit
+          rescue:
+            - name: Verify failure fields and unchanged stored arrays
+              ansible.builtin.assert:
+                that:
+                  - empty_failed.results[item].failed
+                  - not empty_failed.results[item].changed
+                  - "'path_value' not in empty_failed.results[item]"
+              loop: [0, 1]
+
+        - name: Inspect the values after the expected failures
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - '{{ fixture_code }}'
+              - inspect
+              - '{{ prefix }}'
+          register: after_failure
+
+        - name: Verify failure left both arrays untouched
+          ansible.builtin.assert:
+            that:
+              - >-
+                (edited_actual.stdout | from_json) ==
+                (after_failure.stdout | from_json)
+
+        - name: Recover the owned malformed path values
+          sustainablelobster.legacy_windows.win_regedit:
+            path: '{{ item }}'
+            name: '{{ prefix }}empty_array'
+            type: expandstring
+            data: A
+          loop:
+            - >-
+              HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Environment
+            - 'HKCU:\Environment'
+
+        - name: Verify recovered values accept unchanged path requests
+          sustainablelobster.legacy_windows.win_path:
+            name: '{{ prefix }}empty_array'
+            scope: '{{ item }}'
+            elements: [A]
+          loop: '{{ scopes }}'
+          register: recovered
+
+        - name: Remove the last duplicate value element
+          sustainablelobster.legacy_windows.win_path:
+            name: '{{ prefix }}duplicates'
+            scope: '{{ item }}'
+            state: absent
+            elements: [B]
+          loop: '{{ scopes }}'
+          register: emptied
+
+        - name: Repeat removal against the retained empty string
+          sustainablelobster.legacy_windows.win_path:
+            name: '{{ prefix }}duplicates'
+            scope: '{{ item }}'
+            state: absent
+            elements: [B]
+          loop: '{{ scopes }}'
+          register: empty_repeated
+
+        - name: Inspect recovered values and retained empty strings
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - '{{ fixture_code }}'
+              - inspect
+              - '{{ prefix }}'
+          register: final_actual
+
+        - name: Verify recovery and empty-value idempotence
+          ansible.builtin.assert:
+            that:
+              - not recovered.results[item].changed
+              - recovered.results[item].path_value == 'A'
+              - emptied.results[item].changed
+              - emptied.results[item].path_value == ''
+              - emptied.results[item].removed_idx == 0
+              - not empty_repeated.results[item].changed
+              - empty_repeated.results[item].removed_idx == -1
+              - >-
+                (final_actual.stdout | from_json)[scopes[item]].duplicates ==
+                [2, '']
+              - >-
+                (final_actual.stdout | from_json)[scopes[item]].empty_array ==
+                [2, 'A']
+          loop: [0, 1]
+      always:
+        - name: Remove only the allocated variable names and notify applications
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - '{{ fixture_code }}'
+              - cleanup
+              - '{{ prefix }}'
+          register: cleanup
+
+        - name: Verify all owned variables were removed
+          ansible.builtin.assert:
+            that: (cleanup.stdout | from_json).removed
+
+    - name: Record remaining task directories
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import glob, json, os, tempfile;
+        print(json.dumps(sorted(glob.glob(os.path.join(tempfile.gettempdir(),
+        'ansible-tmp-*')))))""
+      register: task_directories_after
+      changed_when: false
+      check_mode: false
+
+    - name: Verify successful and failed requests cleaned their staged files
+      ansible.builtin.assert:
+        that:
+          - >-
+            (task_directories_before.stdout | from_json) ==
+            (task_directories_after.stdout | from_json)

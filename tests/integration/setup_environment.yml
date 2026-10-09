@@ -1,0 +1,274 @@
+---
+- name: Compare full default and explicit Setup environment under owned recovery
+  hosts: legacy_windows
+  gather_facts: false
+  vars:
+    setup_environment_cases:
+      - name: Full default normal mode
+        subsets: [all]
+        check: false
+        environment: {}
+      - name: Full default check mode
+        subsets: [all]
+        check: true
+        environment: {}
+      - name: Explicit environment normal mode
+        subsets: ['!all', '!min', env]
+        check: false
+        environment:
+          PATHEXT: '.EXE;.OwN;.cpl'
+          PSModulePath: 'C:\SetupEnv\雪;C:\MixedCase\Modules\'
+          PSExecutionPolicyPreference: RemoteSigned
+          SetupEnvLiteral: 'Café 雪 100% & | ^ " \'
+      - name: Explicit environment check mode
+        subsets: ['!all', '!min', env]
+        check: true
+        environment:
+          PATHEXT: '.EXE;.OwN;.cpl'
+          PSModulePath: 'C:\SetupEnv\雪;C:\MixedCase\Modules\'
+          PSExecutionPolicyPreference: RemoteSigned
+          SetupEnvLiteral: 'Café 雪 100% & | ^ " \'
+    setup_environment_protection_source: >-
+      {{ lookup('ansible.builtin.file', 'fixtures/setup.py', rstrip=false) }}
+    setup_environment_witness_source: >-
+      {{ lookup('ansible.builtin.file', 'fixtures/setup_environment.py',
+                rstrip=false) }}
+    setup_environment_program: |
+      import json, sys
+      protection = {'__name__': 'setup_protection'}
+      fixture = {'__name__': 'setup_environment_fixture'}
+      source = {{ setup_environment_protection_source | to_json }}
+      exec(compile(source, 'setup_protection', 'exec'), protection)
+      source = {{ setup_environment_witness_source | to_json }}
+      exec(compile(source, 'setup_environment_fixture', 'exec'), fixture)
+      result = fixture['main'](protection, sys.argv[1:])
+      print(json.dumps(result, ensure_ascii=True))
+  tasks:
+    - name: Require an explicit private capture location
+      ansible.builtin.assert:
+        that: setup_environment_capture | default('') | length > 0
+    - name: Record original global staging
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import glob,json,os,sys,tempfile;assert sys.version_info[:3]==(3,4,4);
+        print(json.dumps(sorted(glob.glob(os.path.join(tempfile.gettempdir(),'ansible-tmp-*')))))""
+      register: setup_environment_staging_before
+      changed_when: false
+    - name: Exercise complete public requests with an owned witness
+      block:
+        - name: Allocate only this owner's environment workspace
+          sustainablelobster.legacy_windows.win_tempfile:
+            state: directory
+            prefix: legacy-windows-setup-environment-
+          register: setup_environment_workspace
+        - name: Journal registry values and sentinel bytes and security
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}', '-', prepare,
+                   '{{ setup_environment_workspace.path }}']
+            stdin: '{{ setup_environment_program }}'
+          register: setup_environment_prepared
+          no_log: true
+        - name: Start only the bounded independent environment witness
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}', '-', watch,
+                   '{{ setup_environment_workspace.path }}']
+            stdin: '{{ setup_environment_program }}'
+          vars:
+            ansible_async_dir: '{{ setup_environment_workspace.path }}\cache'
+          async: 360
+          poll: 0
+          register: setup_environment_launch
+          no_log: true
+        - name: Wait until the independent native block calibration is complete
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}', '-', ready,
+                   '{{ setup_environment_workspace.path }}']
+            stdin: '{{ setup_environment_program }}'
+          register: setup_environment_ready
+          until: (setup_environment_ready.stdout | from_json).ready
+          retries: 30
+          delay: 1
+          changed_when: false
+          no_log: true
+        - name: Observe independent clock and protected state before native
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}', '-', observe,
+                   '{{ setup_environment_workspace.path }}']
+            stdin: '{{ setup_environment_program }}'
+          register: setup_environment_before_native
+          changed_when: false
+          no_log: true
+        - name: Gather complete native normal check and override requests
+          sustainablelobster.legacy_windows.setup:
+            gather_subset: '{{ item.subsets }}'
+          check_mode: '{{ item.check }}'
+          environment: '{{ item.environment }}'
+          loop: '{{ setup_environment_cases }}'
+          loop_control:
+            label: '{{ item.name }}'
+          register: setup_environment_native
+          no_log: true
+        - name: Observe independent clock and protected state between engines
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}', '-', observe,
+                   '{{ setup_environment_workspace.path }}']
+            stdin: '{{ setup_environment_program }}'
+          register: setup_environment_between
+          changed_when: false
+          no_log: true
+        - name: Gather identical complete untouched released requests
+          ansible.windows.setup:
+            gather_subset: '{{ item.subsets }}'
+          check_mode: '{{ item.check }}'
+          environment: '{{ item.environment }}'
+          loop: '{{ setup_environment_cases }}'
+          loop_control:
+            label: '{{ item.name }}'
+          register: setup_environment_original
+          no_log: true
+        - name: Observe independent clock and protected state after source
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}', '-', observe,
+                   '{{ setup_environment_workspace.path }}']
+            stdin: '{{ setup_environment_program }}'
+          register: setup_environment_after_original
+          changed_when: false
+          no_log: true
+      always:
+        - name: Preserve completed or partial public requests before cleanup
+          ansible.builtin.copy:
+            content: >-
+              {{ {'native': setup_environment_native | default(none),
+                  'original': setup_environment_original | default(none),
+                  'before_native': setup_environment_before_native |
+                    default(none),
+                  'between': setup_environment_between | default(none),
+                  'after_original': setup_environment_after_original |
+                    default(none),
+                  'preparation': setup_environment_prepared | default(none),
+                  'launch': setup_environment_launch | default(none),
+                  'workspace': setup_environment_workspace.path |
+                    default(none),
+                  'staging_before': setup_environment_staging_before}
+                 | to_nice_json }}
+            dest: '{{ setup_environment_capture }}.requests.json'
+            mode: '0600'
+          delegate_to: localhost
+          vars:
+            ansible_connection: local
+            ansible_shell_type: sh
+            ansible_python_interpreter: '{{ ansible_playbook_python }}'
+          no_log: true
+        - name: Request natural witness completion without killing a caller
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}', '-', stop,
+                   '{{ setup_environment_workspace.path }}']
+            stdin: '{{ setup_environment_program }}'
+          register: setup_environment_stop
+          failed_when: false
+          no_log: true
+          when: setup_environment_workspace.path is defined
+        - name: Wait for actual witness completion before discarding its job
+          sustainablelobster.legacy_windows.async_status:
+            jid: '{{ setup_environment_launch.ansible_job_id }}'
+          vars:
+            ansible_async_dir: '{{ setup_environment_workspace.path }}\cache'
+          register: setup_environment_completed
+          until: setup_environment_completed.finished | default(false)
+          retries: 30
+          delay: 1
+          failed_when: false
+          no_log: true
+          when: setup_environment_launch.ansible_job_id is defined
+        - name: Remove only the completed owned async record
+          sustainablelobster.legacy_windows.async_status:
+            jid: '{{ setup_environment_launch.ansible_job_id }}'
+            mode: cleanup
+          vars:
+            ansible_async_dir: '{{ setup_environment_workspace.path }}\cache'
+          register: setup_environment_cache_removed
+          when: >-
+            setup_environment_launch.ansible_job_id is defined and
+            setup_environment_completed.finished | default(false) and
+            not setup_environment_completed.failed | default(false)
+          no_log: true
+        - name: Retain literal recovery and live-birth witness records
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}', '-', finish,
+                   '{{ setup_environment_workspace.path }}']
+            stdin: '{{ setup_environment_program }}'
+          register: setup_environment_recovery
+          failed_when: false
+          changed_when: false
+          no_log: true
+          when: setup_environment_workspace.path is defined
+        - name: Retain complete public results and raw recovery
+          ansible.builtin.copy:
+            content: >-
+              {{ {'native': setup_environment_native | default(none),
+                  'original': setup_environment_original | default(none),
+                  'before_native': setup_environment_before_native |
+                    default(none),
+                  'between': setup_environment_between | default(none),
+                  'after_original': setup_environment_after_original |
+                    default(none),
+                  'preparation': setup_environment_prepared | default(none),
+                  'launch': setup_environment_launch | default(none),
+                  'completed': setup_environment_completed | default(none),
+                  'cache_removed': setup_environment_cache_removed |
+                    default(none),
+                  'stop': setup_environment_stop | default(none),
+                  'recovery': setup_environment_recovery | default(none),
+                  'workspace': setup_environment_workspace.path |
+                    default(none),
+                  'staging_before': setup_environment_staging_before}
+                 | to_nice_json }}
+            dest: '{{ setup_environment_capture }}'
+            mode: '0600'
+          delegate_to: localhost
+          vars:
+            ansible_connection: local
+            ansible_shell_type: sh
+            ansible_python_interpreter: '{{ ansible_playbook_python }}'
+          no_log: true
+        - name: Require actual witness completion and protected recovery
+          ansible.builtin.assert:
+            that:
+              - setup_environment_completed.finished
+              - not setup_environment_completed.failed | default(false)
+              - setup_environment_recovery.rc == 0
+              - (setup_environment_recovery.stdout | from_json).restored
+          no_log: true
+        - name: Remove only the recovered uniquely owned workspace
+          sustainablelobster.legacy_windows.win_file:
+            path: '{{ setup_environment_workspace.path }}'
+            state: absent
+        - name: Observe workspace absence and final global staging
+          ansible.builtin.raw: >-
+            cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+            "import glob,json,os,sys,tempfile;
+            assert not os.path.exists(sys.argv[1]);
+            print(json.dumps(sorted(glob.glob(os.path.join(tempfile.gettempdir(),'ansible-tmp-*')))))"
+            "{{ setup_environment_workspace.path }}""
+          register: setup_environment_staging_after
+          changed_when: false
+        - name: Retain separate final owned closure evidence
+          ansible.builtin.copy:
+            content: >-
+              {{ {'staging_before': setup_environment_staging_before,
+                  'staging_after': setup_environment_staging_after,
+                  'workspace_absent': true} | to_nice_json }}
+            dest: '{{ setup_environment_capture }}.closure.json'
+            mode: '0600'
+          delegate_to: localhost
+          vars:
+            ansible_connection: local
+            ansible_shell_type: sh
+            ansible_python_interpreter: '{{ ansible_playbook_python }}'
+        - name: Require literal global staging recovery
+          ansible.builtin.assert:
+            that: >-
+              (setup_environment_staging_before.stdout | from_json) ==
+              (setup_environment_staging_after.stdout | from_json)
+        - name: Reset only this owner's connection after recovery
+          ansible.builtin.meta: reset_connection

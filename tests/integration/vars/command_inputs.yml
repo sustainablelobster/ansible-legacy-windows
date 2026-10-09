@@ -1,0 +1,68 @@
+---
+# SPDX-License-Identifier: GPL-3.0-or-later
+command_inputs_compare_source: true
+command_inputs_observer: |
+  import ctypes
+  import glob
+  import json
+  import os
+  import subprocess
+  import sys
+  import tempfile
+
+  class NativeVersion(ctypes.Structure):
+      _fields_ = [
+          ('size', ctypes.c_uint32),
+          ('major', ctypes.c_uint32),
+          ('minor', ctypes.c_uint32),
+          ('build', ctypes.c_uint32),
+          ('platform', ctypes.c_uint32),
+          ('service_pack', ctypes.c_uint16 * 128),
+          ('service_pack_major', ctypes.c_uint16),
+          ('service_pack_minor', ctypes.c_uint16),
+          ('suite', ctypes.c_uint16),
+          ('product_type', ctypes.c_uint8),
+          ('reserved', ctypes.c_uint8),
+      ]
+
+  # Python 3.4's manifest-limited GetVersionEx reports 6.2 on newer Windows.
+  native = ctypes.WinDLL('ntdll', use_last_error=True)
+  native.RtlGetVersion.argtypes = [ctypes.POINTER(NativeVersion)]
+  native.RtlGetVersion.restype = ctypes.c_int32
+  version = NativeVersion(size=ctypes.sizeof(NativeVersion))
+  status = native.RtlGetVersion(ctypes.byref(version))
+  if status < 0:
+      raise OSError(
+          'RtlGetVersion failed: 0x{0:08X}'.format(status & 0xffffffff))
+  observation = dict(
+      python=list(sys.version_info[:3]),
+      windows_version=[version.major, version.minor],
+      windows_reported=list(sys.getwindowsversion()[:2]),
+      mac=subprocess.check_output(
+          ['getmac', '/fo', 'csv', '/nh']).decode('ascii'),
+      staging=sorted(glob.glob(os.path.join(
+          tempfile.gettempdir(), 'ansible-tmp-*'))),
+  )
+  # Preserve the actual observation even when a required runtime check fails.
+  print(json.dumps(observation))
+  assert sys.version_info[:3] == (3, 4, 4)
+  assert observation['windows_version'] == json.loads(sys.argv[1])
+
+command_inputs_cases:
+  - {name: missing, args: {}}
+  - {name: cmd-null, args: {cmd: null}}
+  - {name: cmd-empty, args: {cmd: ''}}
+  - {name: argv-null, args: {argv: null}}
+  - {name: argv-empty, args: {argv: []}}
+  - {name: raw-null, args: {_raw_params: null}}
+  - {name: raw-empty, args: {_raw_params: ''}}
+  - {name: raw-space, args: {_raw_params: '   '}}
+  - {name: argv-null-element, args: {argv: [null]}}
+  - name: argv-null-tail
+    args:
+      argv: ['__legacy_nonexistent_7b44a22f__.exe', null]
+  - name: null-mutual
+    args:
+      cmd: null
+      argv: ['__legacy_nonexistent_7b44a22f__.exe']
+  - {name: null-mutual-all, args: {cmd: null, argv: null, _raw_params: null}}

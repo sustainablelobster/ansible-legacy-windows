@@ -1,0 +1,58 @@
+---
+# Copyright 2026 Joe Lustri
+# SPDX-License-Identifier: GPL-3.0-or-later
+- name: Restore an identical file baseline
+  sustainablelobster.legacy_windows.win_copy:
+    content: baseline
+    dest: '{{ uri_upload_workspace.path }}\file-upload.bin'
+
+- name: Remove only the fixture file for new-resource cases
+  when: uri_upload_case.missing | default(false)
+  sustainablelobster.legacy_windows.win_file:
+    path: '{{ uri_upload_workspace.path }}\file-upload.bin'
+    state: absent
+
+- name: Observe released file upload and possible post-write failure
+  when: uri_upload_engine == 'upstream'
+  ansible.windows.win_uri: &request
+    url: >-
+      {{ 'file:///' + (uri_upload_workspace.path |
+         replace('\u005c', '/')) + '/file-upload.bin' }}
+    method: '{{ uri_upload_case.method }}'
+    body: '{{ uri_upload_case.body | default(omit) }}'
+    status_code: '{{ uri_upload_case.status | default([200]) }}'
+    return_content: true
+    use_proxy: false
+    url_timeout: 10
+  vars:
+    ansible_shell_type: cmd
+    ansible_remote_tmp: '{{ uri_upload_workspace.path }}'
+  check_mode: '{{ uri_upload_case.check | default(false) }}'
+  register: uri_upload_upstream
+  ignore_errors: true
+  no_log: true
+
+- name: Observe native file upload and possible post-write failure
+  when: uri_upload_engine == 'native'
+  sustainablelobster.legacy_windows.win_uri: *request
+  check_mode: '{{ uri_upload_case.check | default(false) }}'
+  register: uri_upload_native
+  ignore_errors: true
+  no_log: true
+
+- name: Independently read exact fixture bytes after either outcome
+  sustainablelobster.legacy_windows.slurp:
+    src: '{{ uri_upload_workspace.path }}\file-upload.bin'
+  register: uri_upload_file_bytes
+  ignore_errors: true
+  no_log: true
+
+- name: Retain public file result and independent bytes
+  ansible.builtin.set_fact:
+    uri_upload_results: >-
+      {{ uri_upload_results + [{'protocol': 'file', 'case': uri_upload_case,
+          'engine': uri_upload_engine,
+          'result': (uri_upload_native if uri_upload_engine == 'native'
+                     else uri_upload_upstream),
+          'observation': uri_upload_file_bytes}] }}
+  no_log: true

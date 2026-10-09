@@ -1,0 +1,176 @@
+---
+- name: Verify complete server-feature metadata without servicing changes
+  hosts: legacy_windows
+  gather_facts: false
+  vars_files:
+    - vars/feature_info.yml
+    - vars/feature_info_fixture.yml
+  tasks:
+    - name: Require actual Python 3.4.4 and record original staging
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import glob,json,os,sys,tempfile;
+        assert sys.version_info[:3] == (3,4,4);
+        print(json.dumps(sorted(glob.glob(os.path.join(
+        tempfile.gettempdir(),'ansible-tmp-*')))))""
+      register: feature_info_staging_before
+      changed_when: false
+
+    - name: Allocate private controller evidence
+      ansible.builtin.tempfile:
+        state: file
+        path: '{{ playbook_dir }}/../../tmp'
+        prefix: 'feature-info-{{ inventory_hostname }}-'
+        suffix: .json
+      register: feature_info_capture
+      delegate_to: localhost
+      vars: &local
+        ansible_connection: local
+        ansible_shell_type: sh
+        ansible_python_interpreter: '{{ ansible_playbook_python }}'
+      changed_when: false
+
+    - name: Initialize retained evidence
+      ansible.builtin.set_fact:
+        feature_info_results: []
+
+    - name: Exercise public feature metadata with owned staging and recovery
+      block:
+        - name: Allocate unique workspace  # noqa: args[module]
+          sustainablelobster.legacy_windows.win_tempfile:
+            state: directory
+            prefix: legacy-windows-feature-info-
+          register: feature_info_workspace
+
+        - name: Journal state before querying  # noqa: args[module]
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}', '-',
+                   '{{ feature_info_workspace.path }}', setup]
+            stdin: '{{ feature_info_program }}'
+          register: feature_info_setup
+          changed_when: false
+          no_log: true
+
+        - name: Exercise every case on native provider targets
+          when: (feature_info_setup.stdout | from_json).supported
+          ansible.builtin.include_tasks: tasks/win_feature_info_case.yml
+          loop: '{{ feature_info_cases }}'
+          loop_control:
+            loop_var: feature_info_case
+            label: '{{ feature_info_case.name }}'
+
+        - name: Verify explicit failure when the native provider is unavailable
+          when: not (feature_info_setup.stdout | from_json).supported
+          block:
+            - name: Request unavailable server features  # noqa: args[module]
+              sustainablelobster.legacy_windows.win_feature_info:
+                name: '*'
+              register: feature_info_unavailable
+
+            - name: Reject unexpected success without a native provider
+              ansible.builtin.fail:
+                msg: Server feature metadata unexpectedly succeeded.
+          rescue:
+            - name: Require unchanged and actionable missing-provider failure
+              ansible.builtin.assert:
+                that:
+                  - feature_info_unavailable is failed
+                  - not feature_info_unavailable.changed
+                  - >-
+                    feature_info_unavailable.msg ==
+                    'Windows Server Manager deployment provider is unavailable.'
+      always:
+        - name: Retain raw evidence before recovery
+          ansible.builtin.copy:
+            content: >-
+              {{ {'results': feature_info_results,
+                  'unavailable': feature_info_unavailable | default(none),
+                  'workspace': feature_info_workspace | default(none),
+                  'setup': feature_info_setup | default(none),
+                  'latest_native': feature_info_native | default(none),
+                  'latest_original': feature_info_original | default(none),
+                  'staging_before': feature_info_staging_before}
+                 | to_nice_json }}
+            dest: '{{ feature_info_capture.path }}'
+            mode: '0600'
+          delegate_to: localhost
+          vars: *local
+          changed_when: false
+          no_log: true
+
+        - name: Verify unchanged state and recover service  # noqa: args[module]
+          when: feature_info_workspace.path is defined
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}', '-',
+                   '{{ feature_info_workspace.path }}', cleanup]
+            stdin: '{{ feature_info_program }}'
+          register: feature_info_recovery
+          changed_when: false
+          no_log: true
+
+        - name: Require verified native recovery
+          ansible.builtin.assert:
+            that: [(feature_info_recovery.stdout | from_json).restored]
+
+        - name: Finalize verified recovery journal  # noqa: args[module]
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}', '-',
+                   '{{ feature_info_workspace.path }}', finalize]
+            stdin: '{{ feature_info_program }}'
+          changed_when: false
+          no_log: true
+
+        - name: Remove only verified owned workspace  # noqa: args[module]
+          sustainablelobster.legacy_windows.win_file:
+            path: '{{ feature_info_workspace.path }}'
+            state: absent
+
+        - name: Independently verify workspace absence and original staging
+          ansible.builtin.raw: >-
+            cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+            "import glob,json,os,sys,tempfile;
+            assert not os.path.exists(sys.argv[1]);
+            print(json.dumps(sorted(glob.glob(os.path.join(
+            tempfile.gettempdir(),'ansible-tmp-*')))))"
+            "{{ feature_info_workspace.path }}""
+          register: feature_info_staging_after
+          changed_when: false
+
+        - name: Require original staging after cleanup
+          ansible.builtin.assert:
+            that:
+              - >-
+                feature_info_staging_before.stdout | from_json ==
+                feature_info_staging_after.stdout | from_json
+
+        - name: Retain complete public results and exact cleanup observations
+          ansible.builtin.copy:
+            content: >-
+              {{ {'results': feature_info_results,
+                  'unavailable': feature_info_unavailable | default(none),
+                  'workspace': feature_info_workspace,
+                  'setup': feature_info_setup | default(none),
+                  'latest_native': feature_info_native | default(none),
+                  'latest_original': feature_info_original | default(none),
+                  'recovery': feature_info_recovery | default(none),
+                  'staging_before': feature_info_staging_before,
+                  'staging_after': feature_info_staging_after,
+                  'workspace_absent': true} | to_nice_json }}
+            dest: '{{ feature_info_capture.path }}'
+            mode: '0600'
+          delegate_to: localhost
+          vars: *local
+          changed_when: false
+          no_log: true
+
+        - name: Require every declared case and successful validation
+          ansible.builtin.assert:
+            that:
+              - >-
+                not (feature_info_setup.stdout | from_json).supported or
+                feature_info_results | length ==
+                feature_info_cases | length
+              - >-
+                feature_info_results |
+                selectattr('validated', 'equalto', true) |
+                list | length == feature_info_results | length

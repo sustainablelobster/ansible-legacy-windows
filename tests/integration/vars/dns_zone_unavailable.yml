@@ -1,0 +1,40 @@
+---
+dns_zone_boundary_program: |
+  import json, sys, types
+  assert sys.version_info[:3] == (3, 4, 4)
+  wmi = types.ModuleType('dns_zone_boundary_wmi')
+  exec({{ lookup('file',
+      (dns_zone_source_root | default(playbook_dir + '/../..')) +
+      '/plugins/module_utils/legacy_windows_wmi.py') | to_json }}, wmi.__dict__)
+  with wmi.WmiConnection() as connection:
+      services = connection.query('SELECT * FROM Win32_Service',
+          ['Name', 'DisplayName', 'StartMode', 'PathName', 'StartName',
+           'ServiceType', 'ErrorControl', 'DesktopInteract'])
+      network = connection.query(
+          'SELECT * FROM Win32_NetworkAdapterConfiguration',
+          ['Index', 'IPEnabled', 'IPAddress', 'IPSubnet', 'DefaultIPGateway',
+           'DNSServerSearchOrder', 'DNSDomain', 'DNSDomainSuffixSearchOrder',
+           'DHCPEnabled', 'DHCPServer', 'MACAddress'])
+      identity = connection.query('SELECT * FROM Win32_OperatingSystem',
+          ['Version', 'BuildNumber', 'LastBootUpTime'])
+  try:
+      with wmi.WmiConnection(r'ROOT\Microsoft\Windows\Dns') as connection:
+          provider = connection.query(
+              "SELECT * FROM meta_class WHERE __CLASS='PS_DnsServerZone'",
+              ['__CLASS'])
+  except OSError as error:
+      provider = {'error': str(error),
+                  'hresult': getattr(error, 'hresult', None)}
+  print(json.dumps({'services': {row['Name']: row for row in services},
+      'network': {row['Index']: row for row in network},
+      'identity': identity, 'provider': provider, 'runtime': sys.version},
+      sort_keys=True))
+dns_zone_boundary_cases:
+  - state: present
+    check: false
+  - state: present
+    check: true
+  - state: absent
+    check: false
+  - state: absent
+    check: true

@@ -1,0 +1,11 @@
+---
+# Copyright 2026 Joe Lustri
+# SPDX-License-Identifier: GPL-3.0-or-later
+- name: Select enabled file request implementations
+  ansible.builtin.include_tasks: uri_upload_file_request.yml
+  loop: >-
+    {{ (['upstream'] if uri_upload_include_upstream | bool else []) +
+       (['native'] if uri_upload_run_native | bool else []) }}
+  loop_control:
+    loop_var: uri_upload_engine
+    label: '{{ uri_upload_engine }}'

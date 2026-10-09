@@ -1,0 +1,82 @@
+---
+# SPDX-License-Identifier: GPL-3.0-or-later
+- name: Guard actual URI status guest and bind the bounded public matrix
+  hosts: legacy_windows
+  gather_facts: false
+  vars_files:
+    - vars/command_inputs.yml
+    - vars/uri_status.yml
+  tasks:
+    - name: Observe actual Python Windows MAC and original staging
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "exec(__import__('base64').b64decode(
+        '{{ command_inputs_observer | b64encode }}'))" "[10, 0]""
+      register: uri_status_identity
+      changed_when: false
+      no_log: true
+
+    - name: Require VM110 identity before any owned allocation
+      ansible.builtin.assert:
+        that:
+          - uri_status_identity.rc == 0
+          - >-
+            'BC-24-11-3E-87-91' in
+            (uri_status_identity.stdout | from_json).mac | upper
+
+    - name: Observe the released framework status enum without servicing
+      ansible.windows.win_powershell:
+        script: |
+          $Ansible.Changed = $false
+          foreach ($name in [Enum]::GetNames([Net.HttpStatusCode])) {
+              $value = [Enum]::Parse([Net.HttpStatusCode], $name)
+              [ordered]@{name=$name; value=[int]$value;
+                         display=$value.ToString()}
+          }
+          foreach ($code in @(0, 102, 103, 207, 208, 226, 308, 418, 421,
+                             425, 451, 599, -1)) {
+              $value = [Enum]::ToObject([Net.HttpStatusCode], $code)
+              [ordered]@{name=$null; value=$code; display=$value.ToString()}
+          }
+      register: uri_status_enum
+      no_log: true
+
+    - name: Allocate a private enum and identity capture
+      ansible.builtin.tempfile:
+        path: '{{ playbook_dir }}/../../tmp'
+        prefix: 'uri-status-enum-{{ inventory_hostname }}-'
+        suffix: .json
+      register: uri_status_enum_capture
+      delegate_to: localhost
+      vars: &local
+        ansible_connection: local
+        ansible_shell_type: sh
+        ansible_python_interpreter: '{{ ansible_playbook_python }}'
+      changed_when: false
+
+    - name: Save all raw enum identities before response comparisons
+      ansible.builtin.copy:
+        content: >-
+          {{ {'identity': uri_status_identity,
+              'enum': uri_status_enum} | to_nice_json }}
+        dest: '{{ uri_status_enum_capture.path }}'
+        mode: '0600'
+      delegate_to: localhost
+      vars: *local
+      changed_when: false
+      no_log: true
+
+    - name: Bind only the status matrix for the existing URI fixture
+      ansible.builtin.set_fact:
+        uri_cases: '{{ uri_status_cases }}'
+        uri_compare: true
+
+- name: Reuse the maintained public URI and owned server recovery fixture
+  ansible.builtin.import_playbook: win_uri.yml
+
+- name: Close the owner-private SSH connection after the URI fixture
+  hosts: legacy_windows
+  gather_facts: false
+  tasks:
+    - name: Reset the standard connection
+      ansible.builtin.meta: reset_connection

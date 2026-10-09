@@ -1,0 +1,181 @@
+---
+- name: Verify DSC3 async parity and portable-engine recovery
+  hosts: legacy_windows
+  gather_facts: false
+  vars_files:
+    - vars/dsc3_fixture.yml
+    - vars/dsc3_async.yml
+  tasks:
+    - name: Require actual target Python and retain global staging before writes
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import glob,json,os,sys,tempfile;assert sys.version_info[:3]==(3,4,4);
+        print(json.dumps(sorted(glob.glob(os.path.join(
+        tempfile.gettempdir(),'ansible-tmp-*')))))""
+      register: dsc3_staging_before
+      changed_when: false
+
+    - name: Allocate private complete controller capture
+      ansible.builtin.tempfile:
+        path: '{{ playbook_dir }}/../../tmp'
+        prefix: 'dsc3-async-{{ inventory_hostname }}-'
+        suffix: .json
+      delegate_to: localhost
+      vars: &controller
+        ansible_connection: local
+        ansible_shell_type: sh
+        ansible_python_interpreter: '{{ ansible_playbook_python }}'
+      register: dsc3_capture
+      changed_when: false
+
+    - name: Allocate an exclusively owned DSC workspace
+      sustainablelobster.legacy_windows.win_tempfile:
+        state: directory
+        prefix: legacy-windows-dsc-
+      register: dsc3_workspace
+
+    - name: Exercise original engine with mandatory owned recovery
+      block:
+        - name: Stage the accepted official portable engine archive
+          sustainablelobster.legacy_windows.win_copy:
+            src: '{{ dsc3_archive }}'
+            dest: '{{ dsc3_workspace.path }}\dsc.zip'
+
+        - name: Verify archive and journal original engine configuration and key
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}', '-',
+                   '{{ dsc3_workspace.path }}', setup]
+            stdin: '{{ dsc3_fixture }}'
+          register: dsc3_setup
+          no_log: true
+
+        - name: Select the observed engine and inherited process PATH
+          ansible.builtin.set_fact:
+            dsc3_engine: '{{ (dsc3_setup.stdout | from_json).engine }}'
+            dsc3_path_env: '{{ (dsc3_setup.stdout | from_json).path_env }}'
+          no_log: true
+
+        - name: Journal protected configuration and owned async directory
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}', '-',
+                   '{{ dsc3_workspace.path }}', setup]
+            stdin: '{{ dsc3_async_program }}'
+          register: dsc3_async_setup
+          changed_when: false
+          no_log: true
+
+        - name: Run each complete public native and original async request
+          ansible.builtin.include_tasks: tasks/dsc3_async_case.yml
+          loop: >-
+            {{ dsc3_async_cases | product(["native", "original"]) | list }}
+          loop_control:
+            loop_var: dsc3_async_case_phase
+            label: >-
+              {{ dsc3_async_case_phase[0].name }} /
+              {{ dsc3_async_case_phase[1] }}
+          vars:
+            dsc3_async_case: '{{ dsc3_async_case_phase[0] }}'
+            dsc3_async_phase: '{{ dsc3_async_case_phase[1] }}'
+      always:
+        - name: Await natural worker and engine exit before deleting owned cache
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}', '-',
+                   '{{ dsc3_workspace.path }}', cleanup]
+            stdin: '{{ dsc3_async_program }}'
+          register: dsc3_async_recovery
+          failed_when: false
+          changed_when: false
+          no_log: true
+
+        - name: Recover only the fixture-owned key and verify engine bytes
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}', '-',
+                   '{{ dsc3_workspace.path }}', cleanup]
+            stdin: '{{ dsc3_fixture }}'
+          register: dsc3_recovery
+          failed_when: false
+          changed_when: false
+          no_log: true
+
+        - name: Preserve full raw results and both recoveries before gates
+          ansible.builtin.copy:
+            dest: '{{ dsc3_capture.path }}'
+            mode: '0600'
+            content: >-
+              {{ {'workspace': dsc3_workspace.path,
+                'setup': dsc3_setup | default(none),
+                'async_setup': dsc3_async_setup | default(none),
+                'records': dsc3_async_records | default([]),
+                'interrupted_launch': dsc3_async_launch | default(none),
+                'interrupted_result': dsc3_async_result | default(none),
+                'native_launch': dsc3_async_native_launch | default(none),
+                'native_status': dsc3_async_native_status | default(none),
+                'original_launch': dsc3_async_original_launch | default(none),
+                'original_status': dsc3_async_original_status | default(none),
+                'async_recovery': dsc3_async_recovery,
+                'recovery': dsc3_recovery,
+                'staging_before': dsc3_staging_before,
+                'workspace_removed': false} | to_nice_json }}
+          delegate_to: localhost
+          vars: *controller
+          changed_when: false
+          no_log: true
+
+        - name: Require protected configuration worker cache and engine closure
+          ansible.builtin.assert:
+            that:
+              - dsc3_async_recovery.rc == 0
+              - (dsc3_async_recovery.stdout | from_json).restored
+              - (dsc3_async_recovery.stdout | from_json).staging == []
+              - (dsc3_async_recovery.stdout | from_json).cache_after == []
+              - (dsc3_async_recovery.stdout | from_json).engine_processes == []
+              - dsc3_recovery.rc == 0
+              - (dsc3_recovery.stdout | from_json).restored
+          no_log: true
+
+        - name: Delete only the verified owned portable-engine workspace
+          sustainablelobster.legacy_windows.win_file:
+            path: '{{ dsc3_workspace.path }}'
+            state: absent
+
+        - name: Verify workspace absence and literal original global staging
+          ansible.builtin.raw: >-
+            cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+            "import glob,json,os,sys,tempfile;
+            assert not os.path.exists(sys.argv[1]);
+            print(json.dumps(sorted(glob.glob(os.path.join(
+            tempfile.gettempdir(),'ansible-tmp-*')))))"
+            "{{ dsc3_workspace.path }}""
+          register: dsc3_staging_after
+          changed_when: false
+          failed_when: >-
+            dsc3_staging_after.rc != 0 or
+            (dsc3_staging_before.stdout | from_json) !=
+            (dsc3_staging_after.stdout | from_json)
+
+        - name: Preserve verified final workspace and staging observations
+          ansible.builtin.copy:
+            dest: '{{ dsc3_capture.path }}'
+            mode: '0600'
+            content: >-
+              {{ (lookup('ansible.builtin.file', dsc3_capture.path) |
+                  from_json) |
+                 combine({'workspace_removed': true,
+                          'staging_after': dsc3_staging_after}) |
+                          to_nice_json }}
+          delegate_to: localhost
+          vars: *controller
+          changed_when: false
+          no_log: true
+
+        - name: Reset this owner's SSH connection after exact owned cleanup
+          ansible.builtin.meta: reset_connection
+
+    - name: Verify public async fields and independently bounded engine clocks
+      ansible.builtin.command:
+        argv: ['{{ ansible_playbook_python }}',
+               '{{ playbook_dir }}/../../scripts/verify_dsc3_capture.py',
+               '{{ dsc3_capture.path }}', --paired]
+      delegate_to: localhost
+      vars: *controller
+      changed_when: false

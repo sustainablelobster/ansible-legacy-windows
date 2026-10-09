@@ -1,0 +1,187 @@
+---
+# SPDX-License-Identifier: GPL-3.0-or-later
+wait_fixture_code: |
+  import json, os, select, socket, struct, sys, time, traceback
+  root = os.path.abspath(sys.argv[1])
+  assert os.path.basename(root).startswith('legacy-windows-wait-')
+  assert sys.version_info[:3] == (3, 4, 4)
+  sockets = []
+
+  def owned_socket(listen=False):
+      connection = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+      sockets.append(connection)
+      connection.bind(('127.0.0.1', 0))
+      if listen:
+          connection.listen(8)
+      return connection
+
+  def close_connection(connection):
+      # A reset avoids leaving owned TIME_WAIT rows in drained-port tests.
+      connection.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER,
+                            struct.pack('HH', 1, 0))
+      connection.close()
+
+  try:
+      held_listener = owned_socket(True)
+      quiet_listener = owned_socket(True)
+      closed_reservation = owned_socket()
+      held_client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+      sockets.append(held_client)
+      held_client.connect(held_listener.getsockname())
+      held_server, address = held_listener.accept()
+      sockets.append(held_server)
+      assert address[0] == '127.0.0.1'
+      for name, contents in (
+              ('Caf\u00e9 \u96ea [owned].txt', b'first\r\nREADY\r\nlast'),
+              ('rewrite.txt', b'WAITING'), ('delete.txt', b'owned'),
+              ('empty.txt', b'')):
+          with open(os.path.join(root, name), 'wb') as stream:
+              stream.write(contents)
+      ready_temporary = os.path.join(root, 'ready.tmp')
+      with open(ready_temporary, 'w') as stream:
+          json.dump({'held': held_listener.getsockname()[1],
+                     'quiet': quiet_listener.getsockname()[1],
+                     'closed': closed_reservation.getsockname()[1]}, stream)
+      os.rename(ready_temporary, os.path.join(root, 'ready.json'))
+      listeners = [held_listener, quiet_listener]
+      accepted = []
+      scheduled = {}
+      completed = set()
+      actions = ('create', 'rewrite', 'delete', 'drain', 'close')
+      deadline = time.monotonic() + 600
+      while (not os.path.isfile(os.path.join(root, 'release'))
+             and time.monotonic() < deadline):
+          for action in actions:
+              trigger = os.path.join(root, 'trigger-' + action)
+              if action not in scheduled and os.path.isfile(trigger):
+                  scheduled[action] = time.monotonic() + 3
+              if (action not in scheduled or action in completed
+                      or time.monotonic() < scheduled[action]):
+                  continue
+              if action == 'create':
+                  with open(os.path.join(root, 'created.txt'), 'wb') as stream:
+                      stream.write(b'created')
+              elif action == 'rewrite':
+                  with open(os.path.join(root, 'rewrite.txt'), 'wb') as stream:
+                      stream.write(b'READY')
+              elif action == 'delete':
+                  os.remove(os.path.join(root, 'delete.txt'))
+              elif action == 'drain':
+                  close_connection(held_server)
+                  close_connection(held_client)
+              else:
+                  quiet_listener.close()
+                  listeners.remove(quiet_listener)
+              completed.add(action)
+          readable, unused_write, unused_error = select.select(
+              listeners, [], [], 0.05)
+          for listener in readable:
+              connection, address = listener.accept()
+              sockets.append(connection)
+              assert address[0] == '127.0.0.1'
+              # Let the client's connect call observe the completed handshake.
+              accepted.append((connection, time.monotonic() + 0.1))
+          retained = []
+          for connection, close_after in accepted:
+              if time.monotonic() >= close_after:
+                  close_connection(connection)
+              else:
+                  retained.append((connection, close_after))
+          accepted = retained
+      with open(os.path.join(root, 'exited.json'), 'w') as stream:
+          json.dump({'released': os.path.isfile(os.path.join(root, 'release')),
+                     'completed': sorted(completed)}, stream)
+  except BaseException:
+      with open(os.path.join(root, 'fixture-error.txt'), 'w') as stream:
+          stream.write(traceback.format_exc())
+      raise
+  finally:
+      for connection in sockets:
+          connection.close()
+
+wait_trigger_code: |
+  import os, sys
+  root, action = sys.argv[1:]
+  assert os.path.basename(root).startswith('legacy-windows-wait-')
+  assert action in ('create', 'rewrite', 'delete', 'drain', 'close')
+  assert not os.path.exists(os.path.join(root, 'fixture-error.txt'))
+  assert not os.path.exists(os.path.join(root, 'exited.json'))
+  if action == 'create':
+      assert not os.path.exists(os.path.join(root, 'created.txt'))
+  elif action == 'rewrite':
+      with open(os.path.join(root, 'rewrite.txt'), 'rb') as stream:
+          assert stream.read() == b'WAITING'
+  elif action == 'delete':
+      assert os.path.isfile(os.path.join(root, 'delete.txt'))
+  trigger = os.path.join(root, 'trigger-' + action)
+  assert not os.path.exists(trigger)
+  open(trigger, 'wb').close()
+  print('scheduled owned transition: ' + action)
+
+wait_cleanup_code: |
+  import ctypes, json, os, sys, tempfile
+  root = os.path.abspath(sys.argv[1])
+  assert os.path.basename(root).startswith('legacy-windows-wait-')
+  kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+  kernel.GetLongPathNameW.argtypes = [ctypes.c_wchar_p, ctypes.c_wchar_p,
+                                    ctypes.c_ulong]
+  kernel.GetLongPathNameW.restype = ctypes.c_ulong
+  temporary = ctypes.create_unicode_buffer(32768)
+  length = kernel.GetLongPathNameW(tempfile.gettempdir(), temporary,
+                                 len(temporary))
+  assert 0 < length < len(temporary)
+  assert os.path.normcase(os.path.dirname(root)) == os.path.normcase(
+      os.path.abspath(temporary.value))
+  open(os.path.join(root, 'release'), 'wb').close()
+  pid_path = os.path.join(root, 'fixture-pid')
+  if os.path.isfile(pid_path):
+      with open(pid_path) as stream:
+          pid = int(stream.read())
+      kernel.OpenProcess.argtypes = [ctypes.c_ulong, ctypes.c_int,
+                                     ctypes.c_ulong]
+      kernel.OpenProcess.restype = ctypes.c_void_p
+      kernel.WaitForSingleObject.argtypes = [ctypes.c_void_p, ctypes.c_ulong]
+      kernel.WaitForSingleObject.restype = ctypes.c_ulong
+      kernel.CloseHandle.argtypes = [ctypes.c_void_p]
+      kernel.CloseHandle.restype = ctypes.c_int
+      process = kernel.OpenProcess(0x100000, False, pid)
+      if process:
+          try:
+              assert kernel.WaitForSingleObject(process, 10000) == 0
+          finally:
+              assert kernel.CloseHandle(process)
+      else:
+          assert ctypes.get_last_error() == 87
+  error_path = os.path.join(root, 'fixture-error.txt')
+  fixture_error = None
+  if os.path.isfile(error_path):
+      with open(error_path) as stream:
+          fixture_error = stream.read()
+  exited_path = os.path.join(root, 'exited.json')
+  released = None
+  if os.path.isfile(exited_path):
+      with open(exited_path) as stream:
+          released = json.load(stream)['released']
+  kernel.GetFileAttributesW.argtypes = [ctypes.c_wchar_p]
+  kernel.GetFileAttributesW.restype = ctypes.c_ulong
+
+  def remove_owned(path):
+      attributes = kernel.GetFileAttributesW(path)
+      if attributes == 0xffffffff:
+          error = ctypes.get_last_error()
+          if error in (2, 3):
+              return
+          raise ctypes.WinError(error)
+      assert not attributes & 0x400, 'Unexpected reparse point: ' + path
+      if attributes & 0x10:
+          for name in os.listdir(path):
+              remove_owned(os.path.join(path, name))
+          os.rmdir(path)
+      else:
+          os.remove(path)
+  remove_owned(root)
+  assert kernel.GetFileAttributesW(root) == 0xffffffff
+  assert ctypes.get_last_error() in (2, 3)
+  assert fixture_error is None, fixture_error
+  assert released is not False, 'Owned fixture reached its hard deadline'
+  print('owned process exited and workspace removed')

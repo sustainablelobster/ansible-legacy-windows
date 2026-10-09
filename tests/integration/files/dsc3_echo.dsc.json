@@ -1,0 +1,10 @@
+{
+  "$schema": "https://aka.ms/dsc/schemas/v3/bundled/config/document.json",
+  "resources": [
+    {
+      "name": "file echo",
+      "type": "Microsoft.DSC.Debug/Echo",
+      "properties": {"output": "controller and remote file"}
+    }
+  ]
+}

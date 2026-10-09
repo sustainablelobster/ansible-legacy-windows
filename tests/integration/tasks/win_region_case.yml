@@ -1,0 +1,102 @@
+---
+- name: Read the complete independent native state before the request
+  sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+    argv:
+      - '{{ ansible_python_interpreter }}'
+      - '-'
+      - '{{ region_workspace.path }}'
+      - observe
+    stdin: '{{ region_fixture }}'
+  register: region_before
+  changed_when: false
+  check_mode: false
+  no_log: true
+
+- name: '{{ region_case.name }}'
+  block:
+    - name: Apply or predict the public region request  # noqa: args[module]
+      sustainablelobster.legacy_windows.win_region:
+        location: '{{ region_case.arguments.location | default(omit) }}'
+        format: '{{ region_case.arguments.format | default(omit) }}'
+        unicode_language: >-
+          {{ region_case.arguments.unicode_language | default(omit) }}
+        copy_settings: >-
+          {{ region_case.arguments.copy_settings | default(omit) }}
+      register: region_result
+      check_mode: '{{ region_case.check | default(false) }}'
+      diff: true
+  rescue:
+    - name: Require the declared validation failure
+      ansible.builtin.assert:
+        that:
+          - region_case.error is defined
+          - region_result is failed
+          - not region_result.changed
+          - region_result.msg == region_case.error
+
+- name: Read the complete independent native state after the request
+  sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+    argv:
+      - '{{ ansible_python_interpreter }}'
+      - '-'
+      - '{{ region_workspace.path }}'
+      - observe
+    stdin: '{{ region_fixture }}'
+  register: region_after
+  changed_when: false
+  check_mode: false
+  no_log: true
+
+- name: Derive a system-locale repeat from the measured active locale
+  ansible.builtin.set_fact:
+    region_expected_changed: >-
+      {{ region_case.changed | default(not region_legacy and
+      (region_before.stdout | from_json).system_locale | lower !=
+      region_case.arguments.unicode_language | default('') | lower) }}
+  no_log: true
+
+- name: Retain the complete public result before assertions
+  ansible.builtin.set_fact:
+    region_results: >-
+      {{ region_results + [{'case': region_case.name,
+      'input': region_case.arguments,
+      'check': region_case.check | default(false),
+      'result': region_result, 'before': region_before.stdout | from_json,
+      'after': region_after.stdout | from_json, 'validated': false}] }}
+  no_log: true
+
+- name: Verify results and exact non-writing behavior
+  ansible.builtin.assert:
+    that:
+      - region_result.changed == region_expected_changed
+      - (region_result is failed) == (region_case.error is defined)
+      - >-
+        region_result.restart_required | default(false) ==
+        region_case.restart | default(region_expected_changed if
+        region_case.system_repeat | default(false) else false)
+      - region_result.diff is not defined
+      - region_result.warnings | default([]) == []
+      - >-
+        not (region_case.check | default(false)) or
+        (region_before.stdout | from_json) == (region_after.stdout | from_json)
+      - >-
+        region_expected_changed or
+        (region_case.partial_change | default(false)) or
+        (region_before.stdout | from_json) == (region_after.stdout | from_json)
+  no_log: true
+
+# The source requests next-boot Nls defaults.
+# Active locale caches need not settle before a restart.
+- name: Verify exact pending system-locale registry defaults
+  ansible.builtin.assert:
+    that:
+      - (region_after.stdout | from_json).nls_defaults == region_case.pending
+  when: region_case.pending is defined
+  no_log: true
+
+- name: Mark this complete evidence row as validated
+  ansible.builtin.set_fact:
+    region_results: >-
+      {{ region_results[:-1] + [region_results[-1] |
+      combine({'validated': true})] }}
+  no_log: true

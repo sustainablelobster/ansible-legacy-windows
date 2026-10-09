@@ -1,0 +1,113 @@
+---
+- name: Observe independent native clock uptime memory and protected state
+  sustainablelobster.legacy_windows.win_command: # noqa: args[module]
+    argv:
+      - '{{ ansible_python_interpreter }}'
+      - '-'
+      - '{{ setup_workspace.path }}'
+      - observe_dynamic
+    stdin: '{{ setup_fixture }}'
+  register: setup_dynamic_before_native
+  changed_when: false
+  no_log: true
+
+- name: Gather the complete selected dynamic facts natively
+  sustainablelobster.legacy_windows.setup: # noqa: args[module]
+    gather_subset: ['!all', '!min', date_time, memory, uptime]
+  register: setup_dynamic_native
+  no_log: true
+
+- name: Observe independent native bounds after the native request
+  sustainablelobster.legacy_windows.win_command: # noqa: args[module]
+    argv:
+      - '{{ ansible_python_interpreter }}'
+      - '-'
+      - '{{ setup_workspace.path }}'
+      - observe_dynamic
+    stdin: '{{ setup_fixture }}'
+  register: setup_dynamic_after_native
+  changed_when: false
+  no_log: true
+
+- name: Observe independent native bounds before the released source request
+  sustainablelobster.legacy_windows.win_command: # noqa: args[module]
+    argv:
+      - '{{ ansible_python_interpreter }}'
+      - '-'
+      - '{{ setup_workspace.path }}'
+      - observe_dynamic
+    stdin: '{{ setup_fixture }}'
+  register: setup_dynamic_before_original
+  changed_when: false
+  no_log: true
+  when: setup_compare | bool
+
+- name: Gather identical complete dynamic facts through the untouched source
+  ansible.windows.setup:
+    gather_subset: ['!all', '!min', date_time, memory, uptime]
+  register: setup_dynamic_original
+  no_log: true
+  when: setup_compare | bool
+
+- name: Observe independent native bounds after the released source request
+  sustainablelobster.legacy_windows.win_command: # noqa: args[module]
+    argv:
+      - '{{ ansible_python_interpreter }}'
+      - '-'
+      - '{{ setup_workspace.path }}'
+      - observe_dynamic
+    stdin: '{{ setup_fixture }}'
+  register: setup_dynamic_after_original
+  changed_when: false
+  no_log: true
+  when: setup_compare | bool
+
+- name: Preserve every dynamic public field and independent observation
+  ansible.builtin.set_fact:
+    setup_dynamic_record:
+      name: Complete date memory and uptime facts with explicit native bounds
+      parameters: {gather_subset: ['!all', '!min', date_time, memory, uptime]}
+      native: '{{ setup_dynamic_native }}'
+      original: '{{ setup_dynamic_original if setup_compare | bool else none }}'
+      before_native: '{{ setup_dynamic_before_native }}'
+      after_native: '{{ setup_dynamic_after_native }}'
+      before_original: >-
+        {{ setup_dynamic_before_original if setup_compare | bool else none }}
+      after_original: >-
+        {{ setup_dynamic_after_original if setup_compare | bool else none }}
+      validated: false
+  no_log: true
+
+- name: Append the raw dynamic case before validation
+  ansible.builtin.set_fact:
+    setup_results: '{{ setup_results | default([]) + [setup_dynamic_record] }}'
+  no_log: true
+
+- name: Preserve complete raw dynamic evidence privately before validation
+  ansible.builtin.copy:
+    dest: '{{ setup_capture.path }}'
+    mode: '0600'
+    content: '{{ {"results": setup_results} | to_nice_json }}'
+  delegate_to: localhost
+  changed_when: false
+  no_log: true
+
+- name: Validate every field with literal comparisons and native bounds
+  ansible.builtin.command:
+    argv:
+      - '{{ ansible_playbook_python }}'
+      - '{{ playbook_dir }}/verify_setup_dynamic.py'
+      - '{{ setup_capture.path }}'
+  delegate_to: localhost
+  changed_when: false
+  register: setup_dynamic_validation
+  no_log: true
+
+- name: Retain the validated dynamic case with its exact qualifications
+  ansible.builtin.set_fact:
+    setup_results: >-
+      {{ setup_results[:-1] + [setup_dynamic_record |
+           combine({'validated': true,
+                    'qualification':
+                        setup_dynamic_validation.stdout | from_json})] }}
+  no_log: true

@@ -1,0 +1,128 @@
+---
+- name: Observe complete servicing state before the public request
+  sustainablelobster.legacy_windows.win_command:
+    argv: ['{{ ansible_python_interpreter }}', '-', observe,
+           '{{ hotfix_lifecycle_identifier }}',
+           '{{ hotfix_lifecycle_workspace }}\package.msu']
+    stdin: '{{ hotfix_lifecycle_program }}'
+  register: hotfix_lifecycle_before
+  changed_when: false
+  no_log: true
+
+- name: Execute and retain the selected public implementation
+  block:
+    - name: Request native hotfix lifecycle behavior  # noqa: args[module]
+      when: hotfix_lifecycle_engine == 'native'
+      sustainablelobster.legacy_windows.win_hotfix: >-
+        {{ hotfix_lifecycle_case.params }}
+      check_mode: '{{ hotfix_lifecycle_case.check | default(false) }}'
+      register: hotfix_lifecycle_native
+    - name: Request untouched released hotfix lifecycle behavior
+      when: hotfix_lifecycle_engine == 'original'
+      ansible.windows.win_hotfix: '{{ hotfix_lifecycle_case.params }}'
+      check_mode: '{{ hotfix_lifecycle_case.check | default(false) }}'
+      register: hotfix_lifecycle_original
+      vars:
+        ansible_shell_type: cmd
+        ansible_remote_tmp: '{{ hotfix_lifecycle_workspace }}'
+  rescue:
+    - name: Keep the unmodified failure result for comparison
+      ansible.builtin.debug:
+        msg: Public failure retained before validation.
+
+- name: Select the raw public result without rewriting failure or restart flags
+  ansible.builtin.set_fact:
+    hotfix_lifecycle_result: >-
+      {{ hotfix_lifecycle_native if hotfix_lifecycle_engine == 'native'
+         else hotfix_lifecycle_original }}
+
+- name: Retain an actual servicing restart request until its planned restart
+  ansible.builtin.set_fact:
+    hotfix_lifecycle_restart_required: >-
+      {{ hotfix_lifecycle_restart_required | default(false) or
+         hotfix_lifecycle_result.reboot_required | default(false) }}
+
+- name: Observe complete servicing state after the public request
+  sustainablelobster.legacy_windows.win_command:
+    argv: ['{{ ansible_python_interpreter }}', '-', observe,
+           '{{ hotfix_lifecycle_identifier }}',
+           '{{ hotfix_lifecycle_workspace }}\package.msu']
+    stdin: '{{ hotfix_lifecycle_program }}'
+  register: hotfix_lifecycle_after
+  changed_when: false
+  no_log: true
+
+- name: Append raw public and provider observations before assertions
+  ansible.builtin.set_fact:
+    hotfix_lifecycle_results: >-
+      {{ hotfix_lifecycle_results + [{
+         'name': hotfix_lifecycle_case.name,
+         'params': hotfix_lifecycle_case.params,
+         'check': hotfix_lifecycle_case.check | default(false),
+         'result': hotfix_lifecycle_result,
+         'before': hotfix_lifecycle_before,
+         'after': hotfix_lifecycle_after,
+         'validated': false}] }}
+
+- name: Persist this case before any behavior gate
+  ansible.builtin.copy:
+    content: '{{ hotfix_lifecycle_results | to_nice_json }}'
+    dest: '{{ hotfix_lifecycle_capture }}'
+    mode: '0600'
+  delegate_to: localhost
+  vars: &controller
+    ansible_connection: local
+    ansible_shell_type: sh
+    ansible_python_interpreter: '{{ ansible_playbook_python }}'
+  changed_when: false
+  no_log: true
+
+- name: Require the declared real change and failure behavior
+  ansible.builtin.assert:
+    that:
+      - >-
+        (hotfix_lifecycle_result is failed) ==
+        (hotfix_lifecycle_case.failed | default(false))
+      - >-
+        hotfix_lifecycle_result.changed ==
+        (hotfix_lifecycle_case.changed | default(false))
+      - >-
+        (hotfix_lifecycle_before.stdout | from_json).source ==
+        (hotfix_lifecycle_after.stdout | from_json).source
+
+- name: Require literal package, QFE and pending state for previews or rejection
+  when: >-
+    hotfix_lifecycle_case.check | default(false) or
+    hotfix_lifecycle_case.failed | default(false)
+  vars:
+    before_state: '{{ hotfix_lifecycle_before.stdout | from_json }}'
+    after_state: '{{ hotfix_lifecycle_after.stdout | from_json }}'
+  ansible.builtin.assert:
+    that:
+      - before_state.packages == after_state.packages
+      - before_state.qfe == after_state.qfe
+      - before_state.pending == after_state.pending
+      - before_state.protected == after_state.protected
+
+- name: Mark this independently declared behavior gate
+  ansible.builtin.set_fact:
+    hotfix_lifecycle_results: >-
+      {{ hotfix_lifecycle_results[:-1] +
+         [hotfix_lifecycle_results[-1] | combine({'validated': true})] }}
+
+- name: Satisfy the actual package restart before the stable repeat case
+  when: >-
+    hotfix_lifecycle_case.restart_after | default(false) and
+    hotfix_lifecycle_restart_required
+  block:
+    - name: Require a distinct boot and authenticated post-restart readiness
+      sustainablelobster.legacy_windows.win_reboot:
+        reboot_timeout: 600
+      register: hotfix_lifecycle_restart
+    - name: Retain the completed distinct-boot proof
+      ansible.builtin.set_fact:
+        hotfix_lifecycle_restart_required: false
+        hotfix_lifecycle_results: >-
+          {{ hotfix_lifecycle_results[:-1] +
+             [hotfix_lifecycle_results[-1] |
+              combine({'restart': hotfix_lifecycle_restart})] }}

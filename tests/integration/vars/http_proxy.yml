@@ -1,0 +1,209 @@
+---
+http_proxy_protocols: >-
+  {{ 'http=http-proxy.invalid:8080;https=https-proxy.invalid:8443;' ~
+     'ftp=ftp-proxy.invalid:8021;socks=socks-proxy.invalid:1080' }}
+http_proxy_cases:
+  - name: Direct access without arguments is already correct
+    params: {}
+    changed: false
+    expected: {proxy: null, bypass: null}
+
+  - name: A bypass requires a proxy
+    params: {bypass: bypass.invalid}
+    changed: false
+    error: "missing parameter(s) required by 'bypass': proxy"
+
+  - name: An explicit proxy excludes IE import
+    params: {proxy: proxy.invalid, source: ie}
+    changed: false
+    error: 'parameters are mutually exclusive: proxy, source'
+
+  - name: An explicit bypass excludes IE import
+    params: {bypass: bypass.invalid, source: ie}
+    changed: false
+    error: 'parameters are mutually exclusive: bypass, source'
+
+  - name: Invalid dictionary protocols report sorted keys
+    params:
+      proxy: {wrong2: proxy.invalid, wrong1: proxy.invalid}
+    changed: false
+    error: >-
+      Invalid keys found in proxy: wrong1, wrong2.
+      Valid keys are http, https, ftp, socks.
+
+  - name: Predict a string proxy without changing native settings
+    params: {proxy: proxy.invalid}
+    check: true
+    changed: true
+    expected: {proxy: proxy.invalid, bypass: null}
+
+  - name: Set a string proxy
+    params: {proxy: proxy.invalid}
+    changed: true
+    expected: {proxy: proxy.invalid, bypass: null}
+
+  - name: Repeat the string proxy
+    params: {proxy: proxy.invalid}
+    changed: false
+    expected: {proxy: proxy.invalid, bypass: null}
+
+  - name: Predict a NUL-containing proxy without native truncation
+    params: {proxy: "proxy.invalid\u0000truncated"}
+    check: true
+    changed: true
+    expected: {proxy: "proxy.invalid\u0000truncated", bypass: null}
+
+  - name: Native truncation fails readback and restores the previous proxy
+    params: {proxy: "proxy.invalid\u0000truncated"}
+    changed: false
+    diff_before_only: true
+    error: "Unknown error when trying to set proxy
+      'proxy.invalid\u0000truncated' or bypass ''"
+
+  - name: Case-only proxy comparison preserves the stored spelling
+    params: {proxy: PROXY.INVALID}
+    changed: false
+    expected: {proxy: PROXY.INVALID, bypass: null}
+
+  - name: Predict a port and bypass list
+    params:
+      proxy: proxy.invalid:8080
+      bypass: [first.invalid, second.invalid, '<local>']
+    check: true
+    changed: true
+    expected:
+      proxy: proxy.invalid:8080
+      bypass: first.invalid;second.invalid;<local>
+
+  - name: Set a port and bypass list
+    params:
+      proxy: proxy.invalid:8080
+      bypass: [first.invalid, second.invalid, '<local>']
+    changed: true
+    expected:
+      proxy: proxy.invalid:8080
+      bypass: first.invalid;second.invalid;<local>
+
+  - name: Comma-separated bypass repeats the list setting
+    params:
+      proxy: proxy.invalid:8080
+      bypass: first.invalid,second.invalid,<local>
+    changed: false
+    expected:
+      proxy: proxy.invalid:8080
+      bypass: first.invalid;second.invalid;<local>
+
+  - name: Case-only bypass comparison preserves the stored spelling
+    params:
+      proxy: proxy.invalid:8080
+      bypass: [FIRST.INVALID, SECOND.INVALID, '<LOCAL>']
+    changed: false
+    expected:
+      proxy: proxy.invalid:8080
+      bypass: FIRST.INVALID;SECOND.INVALID;<LOCAL>
+
+  - name: Explicit null removes the bypass but retains the proxy
+    params: {proxy: 'proxy.invalid:8080', bypass: null}
+    changed: true
+    expected: {proxy: 'proxy.invalid:8080', bypass: null}
+
+  - name: An empty bypass list repeats the cleared bypass
+    params: {proxy: 'proxy.invalid:8080', bypass: []}
+    changed: false
+    expected: {proxy: 'proxy.invalid:8080', bypass: null}
+
+  - name: Predict clearing with a null proxy
+    params: {proxy: null}
+    check: true
+    changed: true
+    expected: {proxy: null, bypass: null}
+
+  - name: Clear with a null proxy
+    params: {proxy: null}
+    changed: true
+    expected: {proxy: null, bypass: null}
+
+  - name: Omitting all parameters repeats direct access
+    params: {}
+    changed: false
+    expected: {proxy: null, bypass: null}
+
+  - name: Dictionary protocols are serialized in their defined order
+    params:
+      proxy:
+        socks: socks-proxy.invalid:1080
+        ftp: ftp-proxy.invalid:8021
+        https: https-proxy.invalid:8443
+        http: http-proxy.invalid:8080
+    changed: true
+    expected:
+      proxy: '{{ http_proxy_protocols }}'
+      bypass: null
+
+  - name: The equivalent protocol string is unchanged
+    params:
+      proxy: '{{ http_proxy_protocols }}'
+    changed: false
+    expected:
+      proxy: '{{ http_proxy_protocols }}'
+      bypass: null
+
+  - name: Empty strings remove the proxy and bypass
+    params: {proxy: '', bypass: ''}
+    changed: true
+    expected: {proxy: null, bypass: null}
+
+  - name: An empty protocol dictionary repeats direct access
+    params: {proxy: {}}
+    changed: false
+    expected: {proxy: null, bypass: null}
+
+  - name: Predict importing IE static settings while ignoring PAC and detection
+    prepare_ie: ie_static
+    params: {source: ie}
+    check: true
+    changed: true
+    expected:
+      proxy: ie-proxy.invalid:8181
+      bypass: ie-bypass.invalid;<local>
+
+  - name: Import only IE static proxy and bypass
+    params: {source: ie}
+    changed: true
+    expected:
+      proxy: ie-proxy.invalid:8181
+      bypass: ie-bypass.invalid;<local>
+
+  - name: Repeat the static IE import
+    params: {source: ie}
+    changed: false
+    expected:
+      proxy: ie-proxy.invalid:8181
+      bypass: ie-bypass.invalid;<local>
+
+  - name: Predict direct access when IE has only PAC and automatic detection
+    prepare_ie: ie_auto
+    params: {source: ie}
+    check: true
+    changed: true
+    expected: {proxy: null, bypass: null}
+
+  - name: PAC and automatic detection do not become a WinHTTP proxy
+    params: {source: ie}
+    changed: true
+    expected: {proxy: null, bypass: null}
+
+  - name: Repeat the PAC-only IE import
+    params: {source: ie}
+    changed: false
+    expected: {proxy: null, bypass: null}
+
+  - name: Recover with an explicit proxy after IE imports
+    params: {proxy: 'recovery.invalid:8080'}
+    changed: true
+    expected: {proxy: 'recovery.invalid:8080', bypass: null}
+
+  - name: Clear all settings by omitting parameters
+    params: {}
+    changed: true
+    expected: {proxy: null, bypass: null}

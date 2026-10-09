@@ -1,0 +1,213 @@
+---
+http_auth_server: |
+  # SPDX-License-Identifier: GPL-3.0-or-later
+  # The native SSPI provider, not this fixture, verifies authentication tokens.
+  import base64, ctypes, http.server, json, os, socket, socketserver, sys
+  import threading
+  from urllib.parse import urlsplit
+  root, token = sys.argv[1:3]
+  body = b'legacy download fixture\x00\xff\n'
+  dword, pointer = ctypes.c_uint32, ctypes.c_void_p
+  lock = threading.Lock()
+
+  class Handle(ctypes.Structure):
+      _fields_ = [('lower', ctypes.c_size_t), ('upper', ctypes.c_size_t)]
+
+  class Buffer(ctypes.Structure):
+      _fields_ = [('size', dword), ('kind', dword), ('data', pointer)]
+
+  class Buffers(ctypes.Structure):
+      _fields_ = [('version', dword), ('count', dword),
+                  ('buffers', ctypes.POINTER(Buffer))]
+
+  native = ctypes.WinDLL('secur32', use_last_error=True)
+  signatures = {
+      'AcquireCredentialsHandleW': [ctypes.c_wchar_p, ctypes.c_wchar_p,
+          dword, pointer, pointer, pointer, pointer, pointer, pointer],
+      'AcceptSecurityContext': [pointer, pointer, pointer, dword, dword,
+          pointer, pointer, pointer, pointer],
+      'QueryContextAttributesW': [pointer, dword, pointer],
+      'CompleteAuthToken': [pointer, pointer],
+      'DeleteSecurityContext': [pointer],
+      'FreeCredentialsHandle': [pointer],
+      'FreeContextBuffer': [pointer],
+  }
+  for name, arguments in signatures.items():
+      function = getattr(native, name)
+      function.argtypes, function.restype = arguments, ctypes.c_int32
+
+  def require(status):
+      assert status == 0, 'Native authentication failed: 0x{0:08X}'.format(
+          status & 0xffffffff)
+
+  credential, expiry = Handle(), ctypes.c_int64()
+  require(native.AcquireCredentialsHandleW(None, 'Negotiate', 1, None,
+      None, None, None, ctypes.byref(credential), ctypes.byref(expiry)))
+  kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+  kernel.GetCurrentProcess.restype = pointer
+  kernel.GetProcessTimes.argtypes = [pointer] + [pointer] * 4
+  kernel.GetProcessTimes.restype = ctypes.c_int32
+  times = [(dword * 2)() for _ in range(4)]
+  assert kernel.GetProcessTimes(kernel.GetCurrentProcess(),
+      *[ctypes.byref(value) for value in times])
+  creation = times[0][0] | (times[0][1] << 32)
+
+  class Server(socketserver.ThreadingMixIn, http.server.HTTPServer):
+      daemon_threads = True
+
+      def get_request(self):
+          connection, address = http.server.HTTPServer.get_request(self)
+          # Actual-machine-name requests avoid WinHTTP's loopback autologon
+          # exception. The listener still admits only this guest's own clients.
+          if address[0] not in ('127.0.0.1',
+                               socket.gethostbyname(socket.gethostname())):
+              connection.close()
+              raise OSError('Only same-guest clients may use this listener')
+          return connection, address
+
+  class Handler(http.server.BaseHTTPRequestHandler):
+      protocol_version = 'HTTP/1.1'
+
+      def setup(self):
+          http.server.BaseHTTPRequestHandler.setup(self)
+          self.context, self.identity = Handle(), None
+          self.rounds = 0
+          self.connection.settimeout(10)
+
+      def finish(self):
+          try:
+              if self.context.lower or self.context.upper:
+                  require(native.DeleteSecurityContext(
+                      ctypes.byref(self.context)))
+          finally:
+              http.server.BaseHTTPRequestHandler.finish(self)
+
+      def log_message(self, *args):
+          pass
+
+      def record(self, status):
+          headers = dict(self.headers)
+          for name in list(headers):
+              if name.lower() in ('authorization', 'proxy-authorization'):
+                  headers[name] = headers[name].split(' ', 1)[0] + ' [redacted]'
+          with lock:
+              with open(os.path.join(root, 'requests.jsonl'), 'a',
+                        encoding='utf-8') as stream:
+                  stream.write(json.dumps({'method': self.command,
+                      'path': self.path, 'headers': headers,
+                      'identity': self.identity.replace(chr(92), '/')
+                      if self.identity is not None else None,
+                      'status': status}) + '\n')
+
+      def respond(self, status, data=b'', challenge=None, proxy=False):
+          self.record(status)
+          self.send_response(status)
+          self.send_header('Content-Length', str(len(data)))
+          self.send_header('Last-Modified', 'Sat, 01 Jan 2000 00:00:00 GMT')
+          if urlsplit(self.path).path.startswith('/pac/'):
+              self.send_header('Content-Type',
+                  'application/x-ns-proxy-autoconfig')
+          if challenge is not None:
+              self.send_header('Proxy-Authenticate' if proxy else
+                  'WWW-Authenticate', challenge)
+          self.end_headers()
+          if self.command != 'HEAD':
+              self.wfile.write(data)
+
+      def authenticate(self, proxy):
+          if self.identity is not None:
+              return True
+          self.rounds += 1
+          if self.rounds > 6:
+              self.close_connection = True
+              self.respond(407 if proxy else 401, proxy=proxy)
+              return False
+          authorization = self.headers.get(
+              'Proxy-Authorization' if proxy else 'Authorization', '')
+          scheme, separator, encoded = authorization.partition(' ')
+          if not separator or scheme not in ('Negotiate', 'NTLM'):
+              self.respond(407 if proxy else 401,
+                  challenge='Negotiate', proxy=proxy)
+              return False
+          incoming = base64.b64decode(encoded, validate=True)
+          content = ctypes.create_string_buffer(incoming)
+          input_buffer = Buffer(len(incoming), 2, ctypes.cast(content, pointer))
+          inputs = Buffers(0, 1, ctypes.pointer(input_buffer))
+          output = ctypes.create_string_buffer(65536)
+          output_buffer = Buffer(len(output), 2, ctypes.cast(output, pointer))
+          outputs = Buffers(0, 1, ctypes.pointer(output_buffer))
+          attributes = dword()
+          previous = ctypes.byref(self.context) if (
+              self.context.lower or self.context.upper) else None
+          status = native.AcceptSecurityContext(ctypes.byref(credential),
+              previous, ctypes.byref(inputs), 0x800, 0x10,
+              ctypes.byref(self.context), ctypes.byref(outputs),
+              ctypes.byref(attributes), None) & 0xffffffff
+          if status in (0x90313, 0x90314):
+              require(native.CompleteAuthToken(ctypes.byref(self.context),
+                  ctypes.byref(outputs)))
+          challenge = scheme
+          if output_buffer.size:
+              challenge += ' ' + base64.b64encode(
+                  output.raw[:output_buffer.size]).decode('ascii')
+          if status in (0x90312, 0x90314):
+              self.respond(407 if proxy else 401,
+                  challenge=challenge, proxy=proxy)
+              return False
+          if status not in (0, 0x90313):
+              self.close_connection = True
+              self.respond(407 if proxy else 401, proxy=proxy)
+              return False
+          name = pointer()
+          require(native.QueryContextAttributesW(
+              ctypes.byref(self.context), 1, ctypes.byref(name)))
+          try:
+              self.identity = ctypes.wstring_at(name)
+          finally:
+              require(native.FreeContextBuffer(name))
+          self.final_challenge = challenge if output_buffer.size else None
+          return True
+
+      def handle_request(self):
+          path = urlsplit(self.path).path
+          proxy = self.path.startswith('http://')
+          if path == '/health/' + token:
+              self.respond(200, token.encode('ascii'))
+          elif path == '/pac/' + token:
+              script = ('function FindProxyForURL(url, host) { return '
+                  '"PROXY 127.0.0.1:' + str(self.server.server_address[1]) +
+                  '"; }')
+              self.respond(200, script.encode('ascii'))
+          elif self.authenticate(proxy):
+              if proxy and path == '/origin-with-proxy':
+                  self.respond(401, challenge='Negotiate')
+              else:
+                  self.respond(200, body,
+                      challenge=getattr(self, 'final_challenge', None),
+                      proxy=proxy)
+
+      do_GET = handle_request
+      do_HEAD = handle_request
+
+  server = None
+  try:
+      server = Server(('0.0.0.0', 0), Handler)
+      metadata = os.path.join(root, 'server.json')
+      with open(metadata + '.tmp', 'w', encoding='utf-8') as stream:
+          json.dump({'pid': os.getpid(), 'creation': creation,
+              'token': token, 'port': server.server_address[1]}, stream)
+          stream.flush()
+          os.fsync(stream.fileno())
+      os.replace(metadata + '.tmp', metadata)
+      timer = threading.Timer(1200, server.shutdown)
+      timer.daemon = True
+      timer.start()
+      server.serve_forever(poll_interval=.1)
+  finally:
+      if server is not None:
+          server.server_close()
+      require(native.FreeCredentialsHandle(ctypes.byref(credential)))
+
+# Later vars_files override the ordinary anonymous listener. A play's vars
+# have lower precedence, so the replacement must live beside this definition.
+get_url_server: "{{ http_auth_server }}"

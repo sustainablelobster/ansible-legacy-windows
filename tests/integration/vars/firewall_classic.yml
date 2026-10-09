@@ -1,0 +1,43 @@
+---
+# Explicit classic-capability proof; use with win_firewall.yml only on an
+# authorized host whose independent fixture discovers Domain/Standard profiles.
+firewall_unsupported_cases:
+  - name: Preview classic Domain enabling without writing
+    seed: {profile: Domain, property: Enabled, value: 0}
+    params: &enable {profiles: [Domain], state: enabled}
+    check: true
+    changed: true
+  - name: Enable the genuine classic Domain profile
+    params: *enable
+    changed: true
+  - name: Repeat enabled classic Domain
+    params: *enable
+    changed: false
+  - name: Preview classic Domain disabling without writing
+    params: &disable
+      profiles: [Domain]
+      state: disabled
+      inbound_action: allow
+      outbound_action: block
+    check: true
+    changed: true
+  - name: Disable classic Domain and ignore both action options
+    params: *disable
+    changed: true
+  - name: Repeat disabled classic Domain
+    params: *disable
+    changed: false
+  - name: Reject absent Private Public profiles before changing Domain
+    params: {state: enabled}
+    changed: false
+    failed: true
+    message: Private/Public profiles are unavailable
+  - name: Reject unavailable actions before enabling classic Domain
+    params:
+      profiles: [Domain]
+      state: enabled
+      inbound_action: block
+      outbound_action: allow
+    changed: false
+    failed: true
+    message: cannot configure default inbound or outbound actions

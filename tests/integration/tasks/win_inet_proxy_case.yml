@@ -1,0 +1,101 @@
+---
+- name: '{{ inet_proxy_case.name }}'
+  block:
+    - name: Apply or predict WinINet settings  # noqa: args[module]
+      sustainablelobster.legacy_windows.win_inet_proxy:
+        auto_detect: '{{ inet_proxy_case.params.auto_detect | default(omit) }}'
+        auto_config_url: >-
+          {{ inet_proxy_case.params.auto_config_url | default(omit) }}
+        proxy: '{{ inet_proxy_case.params.proxy | default(omit) }}'
+        bypass: '{{ inet_proxy_case.params.bypass | default(omit) }}'
+        connection: '{{ inet_proxy_case.params.connection | default(omit) }}'
+      register: inet_proxy_result
+      check_mode: '{{ inet_proxy_case.check | default(false) }}'
+      diff: true
+  rescue:
+    - name: Require the declared WinINet failure
+      ansible.builtin.assert:
+        that:
+          - inet_proxy_case.error is defined
+          - inet_proxy_result is failed
+          - inet_proxy_result.msg == inet_proxy_case.error
+          - not inet_proxy_result.changed
+
+- name: Independently read LAN named-connection and WinHTTP settings
+  sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+    argv:
+      - '{{ ansible_python_interpreter }}'
+      - '-'
+      - '{{ inet_proxy_workspace.path }}'
+      - observe
+    stdin: '{{ inet_proxy_fixture }}'
+  register: inet_proxy_observation
+  changed_when: false
+  check_mode: false
+
+- name: Verify public diffs native settings and connection isolation
+  vars:
+    observation: '{{ inet_proxy_observation.stdout | from_json }}'
+    target: '{{ inet_proxy_case.target | default("lan") }}'
+    other: '{{ "lan" if target == "connection" else "connection" }}'
+    previous: '{{ inet_proxy_previous[target ~ "_values"] }}'
+    before:
+      auto_detect: '{{ previous.auto_detect }}'
+      auto_config_url: '{{ previous.auto_config_url }}'
+      server: '{{ previous.proxy }}'
+      bypass: '{{ previous.bypass }}'
+    writes: >-
+      {{ inet_proxy_case.changed and not
+         (inet_proxy_case.check | default(false)) }}
+  ansible.builtin.assert:
+    that:
+      - inet_proxy_result.changed == inet_proxy_case.changed
+      - (inet_proxy_case.error is defined) == (inet_proxy_result is failed)
+      - inet_proxy_result.warnings | default([]) == []
+      - inet_proxy_result.stdout is not defined
+      - inet_proxy_result.stderr is not defined
+      - inet_proxy_result.rc is not defined
+      - inet_proxy_case.error is defined or inet_proxy_result.msg is not defined
+      - >-
+        (inet_proxy_case.error is defined and not
+         (inet_proxy_case.diff_before_only | default(false))) or
+        inet_proxy_result.diff.before == before
+      - >-
+        inet_proxy_case.error is defined or
+        inet_proxy_result.diff.after == inet_proxy_case.expected
+      - >-
+        inet_proxy_case.error is not defined or
+        inet_proxy_case.diff_before_only | default(false) or
+        inet_proxy_result.diff is not defined
+      - >-
+        not (inet_proxy_case.diff_before_only | default(false)) or
+        inet_proxy_result.diff.after is not defined
+      - observation.winhttp == inet_proxy_previous.winhttp
+      - observation.other_entries == inet_proxy_previous.other_entries
+      - observation.connection_exists
+      - observation[other] == inet_proxy_previous[other]
+      - >-
+        observation.registry[''].security ==
+        inet_proxy_previous.registry[''].security
+      - >-
+        observation.registry.Connections.security ==
+        inet_proxy_previous.registry.Connections.security
+      - >-
+        writes or inet_proxy_case.diff_before_only | default(false) or
+        observation == inet_proxy_previous
+      - >-
+        writes or observation[target ~ '_values'] == previous
+      - >-
+        not writes or
+        observation[target ~ '_values'] == inet_proxy_case.expected
+
+- name: Retain the entire public result and independent before and after states
+  vars:
+    record:
+      case: '{{ inet_proxy_case.name }}'
+      result: '{{ inet_proxy_result }}'
+      before: '{{ inet_proxy_previous }}'
+      snapshot: '{{ inet_proxy_observation.stdout | from_json }}'
+  ansible.builtin.set_fact:
+    inet_proxy_previous: '{{ record.snapshot }}'
+    inet_proxy_results: '{{ inet_proxy_results | default([]) + [record] }}'

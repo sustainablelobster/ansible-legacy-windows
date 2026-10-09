@@ -1,0 +1,225 @@
+---
+- name: Initialize the isolated service case record
+  ansible.builtin.set_fact:
+    service_before: {}
+    service_after: {}
+    service_result: null
+    service_case_validated: false
+  no_log: true
+
+- name: Capture native observations around the public service call
+  vars:
+    service_case_capture:
+      name: '{{ service_case.name }}'
+      params: >-
+        {{ service_case.params | combine({'password': 'REDACTED'})
+           if service_case.params.password is defined
+           else service_case.params }}
+      check: '{{ service_case.check | default(false) }}'
+      validated: '{{ service_case_validated }}'
+      result: '{{ service_result }}'
+      before: '{{ service_before }}'
+      after: '{{ service_after }}'
+  block:
+    - name: Require the resolved request to match the ownership journal
+      ansible.builtin.assert:
+        that:
+          - >-
+            service_case.params.name in [service_names.primary,
+            service_names.companion, service_names.primary + ' display']
+          - >-
+            service_case.params.path | default(service_commands.primary)
+            in service_commands.values()
+      no_log: true
+
+    - name: Independently observe both services before the call
+      sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+        argv:
+          - '{{ ansible_python_interpreter }}'
+          - '-'
+          - '{{ service_workspace.path }}'
+          - observe
+        stdin: '{{ service_fixture }}'
+      register: service_before
+      changed_when: false
+      check_mode: false
+      no_log: true
+
+    - name: Retain the complete public result, including expected failure
+      block:
+        - name: Apply the service request # noqa: args[module]
+          sustainablelobster.legacy_windows.win_service: >-
+            {{ service_case.params }}
+          check_mode: '{{ service_case.check | default(false) }}'
+          diff: true
+          register: service_result
+          no_log: true
+      rescue:
+        - name: Keep the failed result for observation and later validation
+          ansible.builtin.assert:
+            that: service_result is failed
+          no_log: true
+
+    - name: Independently observe both services after the call
+      sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+        argv:
+          - '{{ ansible_python_interpreter }}'
+          - '-'
+          - '{{ service_workspace.path }}'
+          - observe
+        stdin: '{{ service_fixture }}'
+      register: service_after
+      changed_when: false
+      check_mode: false
+      no_log: true
+
+    - name: Preserve raw evidence before asserting behavior
+      ansible.builtin.copy:
+        content: >-
+          {{ service_capture | combine({
+             'results': service_results + [service_case_capture]
+             }) | to_nice_json }}
+        dest: '{{ service_capture_file.path }}'
+        mode: '0600'
+      delegate_to: localhost
+      vars: &service_local
+        ansible_connection: local
+        ansible_shell_type: sh
+        ansible_python_interpreter: '{{ ansible_playbook_python }}'
+      changed_when: false
+      no_log: true
+
+    - name: Validate public change, failure, and check-mode nonmutation
+      ansible.builtin.assert:
+        that:
+          - service_result.changed == service_case.changed
+          - >-
+            (service_result is failed)
+            == (service_case.failed | default(false))
+          - service_result.exists | default(none) == service_case.exists
+          - >-
+            service_case.message | default('')
+            in service_result.msg | default('')
+          - >-
+            (not (service_case.check | default(false))
+            and (service_case.changed
+            or (service_case.partial_write | default(false))))
+            or (service_before.stdout | from_json)
+            == (service_after.stdout | from_json)
+      no_log: true
+
+    - name: Validate fields omitted by the original outer failure boundary
+      ansible.builtin.assert:
+        that: item not in service_result
+      loop: '{{ service_case.public_absent | default([]) }}'
+      no_log: true
+
+    - name: Validate real service status
+      ansible.builtin.assert:
+        that:
+          - >-
+            (service_after.stdout | from_json)[
+            service_case.role | default('primary')].status.state
+            == service_case.native_state
+      when: service_case.native_state is defined
+      no_log: true
+
+    - name: Validate the dispatcher identity and usable own primary token
+      vars:
+        identity: >-
+          {{ (service_after.stdout | from_json)[
+             service_case.role | default('primary')].dispatcher.identity }}
+      ansible.builtin.assert:
+        that:
+          - identity.sid == service_case.expected_sid
+          - identity.primary_token_duplicate
+          - identity.duplicate_error is none
+      when: service_case.expected_sid is defined
+      no_log: true
+
+    - name: Require secret-free public results and retained request parameters
+      ansible.builtin.assert:
+        that:
+          - >-
+            service_credentials_passwords |
+            select('in', service_result | to_json) | list | length == 0
+          - >-
+            service_credentials_passwords |
+            select('in', service_case_capture | to_json) | list | length == 0
+      when: service_credentials_passwords is defined
+      no_log: true
+
+    - name: Validate requested public fields
+      ansible.builtin.assert:
+        that: service_result[item.key] == item.value
+      loop: '{{ service_case.public | default({}) | dict2items }}'
+      no_log: true
+
+    - name: Validate the public binding in the requested after-diff
+      ansible.builtin.assert:
+        that: service_result.diff.after[item.key] == item.value
+      loop: '{{ service_case.public_after | default({}) | dict2items }}'
+      no_log: true
+
+    - name: Validate independent native configuration
+      ansible.builtin.assert:
+        that:
+          - >-
+            (service_after.stdout | from_json)[
+            service_case.role | default('primary')].registry[item.key]
+            == item.value
+      loop: '{{ service_case.registry | default({}) | dict2items }}'
+      no_log: true
+
+    - name: Validate the companion state after a dependency operation
+      ansible.builtin.assert:
+        that: >-
+          (service_after.stdout | from_json).companion.status.state
+          == service_case.companion_state
+      when: service_case.companion_state is defined
+      no_log: true
+
+    - name: Validate removed native registry values
+      ansible.builtin.assert:
+        that:
+          - >-
+            item not in (service_after.stdout | from_json)[
+            service_case.role | default('primary')].registry
+      loop: '{{ service_case.registry_absent | default([]) }}'
+      no_log: true
+
+    - name: Validate primary state after a forced dependent stop
+      ansible.builtin.assert:
+        that: >-
+          (service_after.stdout | from_json).primary.status.state
+          == service_case.primary_state
+      when: service_case.primary_state is defined
+      no_log: true
+
+    - name: Validate actual SCM and registry absence
+      ansible.builtin.assert:
+        that:
+          - (service_after.stdout | from_json).primary.status is none
+          - (service_after.stdout | from_json).primary.registry is none
+      when: service_case.absent | default(false)
+      no_log: true
+
+    - name: Record completed validation
+      ansible.builtin.set_fact:
+        service_case_validated: true
+      no_log: true
+  always:
+    - name: Retain the case even if observation or validation failed
+      ansible.builtin.set_fact:
+        service_results: '{{ service_results + [service_case_capture] }}'
+      no_log: true
+
+    - name: Save private service evidence
+      ansible.builtin.copy:
+        content: '{{ service_capture | to_nice_json }}'
+        dest: '{{ service_capture_file.path }}'
+        mode: '0600'
+      delegate_to: localhost
+      vars: *service_local
+      changed_when: false
+      no_log: true

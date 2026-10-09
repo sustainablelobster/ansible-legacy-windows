@@ -1,0 +1,502 @@
+---
+package_helper_names:
+  - legacy_windows_module
+  - legacy_windows_text
+  - legacy_windows_process
+  - legacy_windows_account
+  - legacy_windows_group
+  - legacy_windows_owner
+  - legacy_windows_link
+  - legacy_windows_acl_inheritance
+  - legacy_windows_acl
+  - legacy_windows_package_msi
+  - legacy_windows_package
+  - legacy_windows_wmi
+  - legacy_windows_service
+package_program: |
+  # SPDX-License-Identifier: GPL-3.0-or-later
+  import base64
+  import ctypes
+  import hashlib
+  import json
+  import os
+  import subprocess
+  import sys
+  import tempfile
+  import types
+  import winreg
+
+  assert sys.version_info[:3] == (3, 4, 4)
+  {% for name in package_helper_names %}
+  helper=types.ModuleType('{{ name }}')
+  sys.modules[helper.__name__]=helper
+  source='{{ lookup("file",
+      playbook_dir + "/../../plugins/module_utils/" + name + ".py")
+      | b64encode }}'
+  exec(compile(base64.b64decode(source),helper.__name__+'.py','exec'),helper.__dict__)
+  {% endfor %}
+  import legacy_windows_acl as acl
+  import legacy_windows_package_msi as msi
+  import legacy_windows_package as package
+  import legacy_windows_service as service
+  from legacy_windows_wmi import WmiConnection
+
+  ROOT, OPERATION = sys.argv[1:3]
+  JOURNAL = os.path.join(ROOT, "package-journal.json")
+  GOOD = "{223D9A13-653B-4231-A365-EDDC30B4F226}"
+  IDS = (
+      GOOD,
+      "{223D9A13-653B-4231-A365-EDDC30B4F227}",
+      "{223D9A13-653B-4231-A365-EDDC30B4F228}",
+  )
+  DIGESTS = {
+      "good": (
+          "6736380c8c81d6bf1cc9bb6f59a6fc4713"
+          "ad276eeff434fc6b35e443cafbae55"
+      ),
+      "bad": (
+          "6dbc593a709033c2cbbc61eaaf9844e124"
+          "741dd4dd072321e8ca3223b4df07ee"
+      ),
+      "reboot": (
+          "3f2f50091d894ed40bb67750e01847a18"
+          "ba2ed2c609c624279bb66e1188ada0e"
+      ),
+  }
+
+
+  def encode(value):
+      if isinstance(value, bytes):
+          return {"raw_bytes": base64.b64encode(value).decode("ascii")}
+      raise TypeError("Unsupported journal value")
+
+
+  def decode(value):
+      return (
+          base64.b64decode(value["raw_bytes"])
+          if set(value) == {"raw_bytes"}
+          else value
+      )
+
+
+  def write(record):
+      with open(JOURNAL, "w", encoding="utf-8") as stream:
+          json.dump(record, stream, default=encode, sort_keys=True)
+          stream.flush()
+          os.fsync(stream.fileno())
+
+
+  def read():
+      with open(JOURNAL, encoding="utf-8") as stream:
+          record = json.load(stream, object_hook=decode)
+      assert record["workspace"] == ROOT
+      return record
+
+
+  def now():
+      kernel = ctypes.WinDLL("kernel32")
+      kernel.GetSystemTimeAsFileTime.argtypes = [
+          ctypes.POINTER(ctypes.c_uint64)
+      ]
+      kernel.GetSystemTimeAsFileTime.restype = None
+      value = ctypes.c_uint64()
+      kernel.GetSystemTimeAsFileTime(ctypes.byref(value))
+      return value.value
+
+
+  def states():
+      with msi.WindowsInstaller() as installer:
+          return {
+              identifier: installer.product_state(identifier)
+              for identifier in IDS
+          }
+
+
+  def products():
+      library = ctypes.WinDLL("msi")
+      library.MsiEnumProductsW.argtypes = [ctypes.c_uint32, ctypes.c_wchar_p]
+      library.MsiEnumProductsW.restype = ctypes.c_uint32
+      rows = []
+      index = 0
+      while True:
+          value = ctypes.create_unicode_buffer(39)
+          status = library.MsiEnumProductsW(index, value)
+          if status == 259:
+              break
+          assert status == 0, status
+          rows.append(value.value)
+          index += 1
+      return rows
+
+
+  def services():
+      with WmiConnection() as connection:
+          rows = connection.query(
+              "SELECT * FROM Win32_Service",
+              [
+                  "Name",
+                  "DisplayName",
+                  "StartMode",
+                  "PathName",
+                  "StartName",
+                  "State",
+              ],
+          )
+      return {
+          row["Name"]: {
+              key: value
+              for key, value in row.items()
+              if key != "State" or row["Name"] in ("MSIServer", "BvSshServer")
+          }
+          for row in rows
+      }
+
+
+  def pending():
+      paths = (
+          r"SYSTEM\CurrentControlSet\Control\Session Manager",
+          (
+              r"SOFTWARE\Microsoft\Windows\CurrentVersion"
+              r"\Component Based Servicing\RebootPending"
+          ),
+          (
+              r"SOFTWARE\Microsoft\Windows\CurrentVersion"
+              r"\WindowsUpdate\Auto Update\RebootRequired"
+          ),
+      )
+      result = {}
+      for path in paths:
+          try:
+              with winreg.OpenKey(
+                  winreg.HKEY_LOCAL_MACHINE, path, 0, winreg.KEY_READ
+              ) as key:
+                  if path.endswith("Session Manager"):
+                      try:
+                          value, kind = winreg.QueryValueEx(
+                              key, "PendingFileRenameOperations"
+                          )
+                          result[path] = {"kind": kind, "value": value}
+                      except FileNotFoundError:
+                          result[path] = None
+                  else:
+                      result[path] = []
+                      for index in range(winreg.QueryInfoKey(key)[1]):
+                          result[path].append(winreg.EnumValue(key, index))
+          except FileNotFoundError:
+              result[path] = None
+      return result
+
+
+  def validate_workspace():
+      kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+      kernel.GetLongPathNameW.argtypes = [
+          ctypes.c_wchar_p,
+          ctypes.c_wchar_p,
+          ctypes.c_uint32,
+      ]
+      kernel.GetLongPathNameW.restype = ctypes.c_uint32
+
+      def long_path(path):
+          buffer = ctypes.create_unicode_buffer(32768)
+          count = kernel.GetLongPathNameW(path, buffer, len(buffer))
+          assert 0 < count < len(buffer)
+          return os.path.normcase(buffer.value.rstrip("\\"))
+
+      assert os.path.basename(ROOT).startswith("legacy-windows-package-test-")
+      assert long_path(os.path.dirname(ROOT)) == long_path(
+          tempfile.gettempdir()
+      )
+      assert not os.path.islink(ROOT)
+
+
+  def file_state(path):
+      with open(path, "rb") as stream:
+          content = stream.read()
+      stat = os.stat(path)
+      kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+      kernel.GetFileAttributesW.argtypes = [ctypes.c_wchar_p]
+      kernel.GetFileAttributesW.restype = ctypes.c_uint32
+      attributes = kernel.GetFileAttributesW(path)
+      assert attributes != 0xFFFFFFFF
+      with acl.open_acl(acl.resolve_target(path, True)) as (
+          permissions,
+          _writer,
+      ):
+          return {
+              "bytes": content,
+              "mtime": stat.st_mtime_ns,
+              "attributes": attributes,
+              "acl": permissions,
+          }
+
+
+  def source_files():
+      return {
+          name: file_state(os.path.join(ROOT, name + ".msi"))
+          for name in DIGESTS
+          if os.path.isfile(os.path.join(ROOT, name + ".msi"))
+      }
+
+
+  def output_files():
+      folder = os.path.join(ROOT, "application")
+      result = {}
+      for directory, _folders, files in os.walk(folder):
+          for name in files:
+              path = os.path.join(directory, name)
+              result[os.path.relpath(path, folder)] = file_state(path)
+      return result
+
+
+  def uninstall_keys():
+      result = {}
+      access = winreg.KEY_READ | (
+          0x100 if ctypes.sizeof(ctypes.c_void_p) == 8 else 0
+      )
+      for hive_name, hive in (
+          ("HKLM", winreg.HKEY_LOCAL_MACHINE),
+          ("HKCU", winreg.HKEY_CURRENT_USER),
+      ):
+          for branch in ("SOFTWARE", r"SOFTWARE\Wow6432Node"):
+              for identifier in IDS:
+                  path = (
+                      branch
+                      + r"\Microsoft\Windows\CurrentVersion\Uninstall"
+                      + "\\"
+                      + identifier
+                  )
+                  label = hive_name + "\\" + path
+                  try:
+                      with winreg.OpenKey(hive, path, 0, access) as key:
+                          result[label] = [
+                              winreg.EnumValue(key, index)
+                              for index in range(winreg.QueryInfoKey(key)[1])
+                          ]
+                  except FileNotFoundError:
+                      result[label] = None
+      return result
+
+
+  def product_catalogue():
+      with msi.WindowsInstaller() as installer:
+          return [
+              {"id": identifier, "state": installer.product_state(identifier)}
+              for identifier in products()
+          ]
+
+
+  def snapshot():
+      return {
+          "products": product_catalogue(),
+          "states": states(),
+          "pending": pending(),
+          "services": services(),
+          "sources": source_files(),
+          "outputs": output_files(),
+          "uninstall_keys": uninstall_keys(),
+      }
+
+
+  def protected(snapshot_value):
+      value = dict(snapshot_value)
+      value["products"] = [
+          row for row in value["products"] if row["id"] != GOOD
+      ]
+      value["states"] = {
+          identifier: state
+          for identifier, state in value["states"].items()
+          if identifier != GOOD
+      }
+      value["services"] = {
+          name: dict(row) for name, row in value["services"].items()
+      }
+      value["services"].get("MSIServer", {}).pop("State", None)
+      value.pop("outputs")
+      value["uninstall_keys"] = {
+          key: entry
+          for key, entry in value["uninstall_keys"].items()
+          if not key.endswith(GOOD)
+      }
+      return value
+
+
+  def installer_command(state):
+      executable = os.path.join(
+          os.environ["SystemRoot"], "System32", "msiexec.exe"
+      )
+      arguments = [
+          executable,
+          "/i" if state == "present" else "/x",
+          os.path.join(ROOT, "good.msi") if state == "present" else GOOD,
+          "/qn",
+          "/norestart",
+          "/L*V",
+          os.path.join(ROOT, "fixture-" + state + ".log"),
+      ]
+      command = subprocess.list2cmdline(arguments)
+      if state == "present":
+          # MSI's property parser requires quotes around the value, not the
+          # entire assignment; the latter opens help on the legacy engine.
+          command += ' INSTALLDIR="' + os.path.join(ROOT, "application") + '"'
+      with subprocess.Popen(
+          command, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+      ) as child:
+          stdout, stderr = child.communicate()
+          assert child.returncode == 0, (child.returncode, stdout, stderr)
+
+
+  def restore_source_acls(record):
+      for name, before in record.get("sources", {}).items():
+          path = os.path.join(ROOT, name + ".msi")
+          current = file_state(path)
+          assert {
+              key: value for key, value in current.items() if key != "acl"
+          } == {key: value for key, value in before.items() if key != "acl"}
+          with acl.open_acl(acl.resolve_target(path, True)) as (
+              _snapshot,
+              writer,
+          ):
+              writer(before["acl"])
+
+
+  def restore_service(before):
+      current = services()
+      if current.get("MSIServer") == before.get("MSIServer"):
+          return
+      original = before["MSIServer"]
+      running = current["MSIServer"]
+      assert original["State"] == "Stopped" and running["State"] == "Running"
+      assert {
+          key: value for key, value in original.items() if key != "State"
+      } == {key: value for key, value in running.items() if key != "State"}
+      service.control("MSIServer", "stopped")
+
+
+  def journal():
+      assert not os.listdir(ROOT)
+      record = {
+          "workspace": ROOT,
+          "before": snapshot(),
+          "complete": False,
+          "verified": False,
+      }
+      assert all(state == -1 for state in record["before"]["states"].values())
+      assert all(
+          value is None
+          for value in record["before"]["uninstall_keys"].values()
+      )
+      write(record)
+      return {
+          "journaled": True,
+          "runtime": sys.version,
+          "pointer_size": ctypes.sizeof(ctypes.c_void_p),
+          "before": record["before"],
+      }
+
+
+  def setup():
+      record = read()
+      assert record["complete"] is False
+      for name, digest in DIGESTS.items():
+          with open(os.path.join(ROOT, name + ".msi"), "rb") as stream:
+              assert hashlib.sha256(stream.read()).hexdigest() == digest
+      with msi.WindowsInstaller() as installer:
+          for name, identifier in zip(("good", "reboot", "bad"), IDS):
+              assert (
+                  installer.product_code(os.path.join(ROOT, name + ".msi"))
+                  == identifier
+              )
+      record["sources"] = source_files()
+      record["complete"] = True
+      write(record)
+      restore_service(record["before"]["services"])
+      return {"ready": True, "sha256": DIGESTS, "product_ids": IDS}
+
+
+  def prepare():
+      record = read()
+      assert record["complete"] is True and not record["verified"]
+      state = sys.argv[3]
+      assert state in ("present", "absent")
+      if states()[GOOD] == 5:
+          installer_command("absent")
+      assert states()[GOOD] == -1
+      assert not output_files()
+      restore_source_acls(record)
+      if state == "present":
+          installer_command("present")
+          assert states()[GOOD] == 5
+          assert set(output_files()) == {"moo.exe", "cow.exe"}
+      restore_source_acls(record)
+      restore_service(record["before"]["services"])
+      result = snapshot()
+      expected = dict(record["before"])
+      expected["sources"] = record["sources"]
+      assert protected(result) == protected(expected)
+      return result
+
+
+  def cleanup():
+      if not os.path.exists(JOURNAL):
+          assert not os.listdir(ROOT)
+          return {"restored": True, "journal_absent": True}
+      record = read()
+      current = snapshot()
+      assert all(
+          current["states"][identifier]
+          == record["before"]["states"][identifier]
+          for identifier in IDS
+          if identifier != GOOD
+      )
+      if current["states"][GOOD] == 5:
+          installer_command("absent")
+      assert states() == record["before"]["states"]
+      restore_source_acls(record)
+      restore_service(record["before"]["services"])
+      final = snapshot()
+      expected = dict(record["before"])
+      expected["sources"] = record.get("sources", {})
+      assert final == expected, [
+          (key, final[key], expected[key])
+          for key in final
+          if final[key] != expected[key]
+      ]
+      record["verified"] = True
+      write(record)
+      return {
+          "restored": True,
+          "complete": record["complete"],
+          "before": expected,
+          "after": final,
+      }
+
+
+  def finalize():
+      if not os.path.exists(JOURNAL):
+          assert not os.listdir(ROOT)
+          return {"finalized": True, "journal_absent": True}
+      record = read()
+      assert record["verified"] is True
+      expected = dict(record["before"])
+      expected["sources"] = record.get("sources", {})
+      assert snapshot() == expected
+      os.remove(JOURNAL)
+      return {"finalized": True}
+
+
+  validate_workspace()
+  if OPERATION == "journal":
+      result = journal()
+  elif OPERATION == "setup":
+      result = setup()
+  elif OPERATION == "prepare":
+      result = prepare()
+  elif OPERATION == "observe":
+      result = snapshot()
+  elif OPERATION == "cleanup":
+      result = cleanup()
+  elif OPERATION == "finalize":
+      result = finalize()
+  else:
+      raise ValueError("Unknown package fixture operation: " + OPERATION)
+  print(json.dumps(result, default=encode, sort_keys=True))

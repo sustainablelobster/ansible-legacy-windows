@@ -1,0 +1,227 @@
+---
+- name: Demonstrate the native and released owned MSIX lifecycle
+  hosts: legacy_windows
+  gather_facts: false
+  vars_files:
+    - vars/package_msix.yml
+  vars:
+    package_msix_results: []
+    package_msix_capture_prefix: >-
+      {{ playbook_dir + '/../../tmp/codex/evidence/package-msix-public-v41' }}
+    package_msix_staging: >-
+      import glob,json,os,sys,tempfile;assert sys.version_info[:3]==(3,4,4);
+      print(json.dumps(sorted(glob.glob(os.path.join(tempfile.gettempdir(),'ansible-tmp-*')))))
+    # SERVICE_STATUS_PROCESS fields are runtime observations, not configuration.
+    # Keep every raw field in the capture; unknown fields remain in this check.
+    package_msix_service_config_check: >-
+      import json,sys;data=json.load(sys.stdin);
+      runtime=('state','process_id','controls_accepted','checkpoint',
+      'wait_hint_ms','win32_exit_code','service_exit_code','service_flags');
+      before=[{key:value for key,value in row.items() if key not in runtime}
+      for row in data['before']];
+      after=[{key:value for key,value in row.items() if key not in runtime}
+      for row in data['after']];
+      assert before==after,'Service names or persistent configuration changed';
+      print(json.dumps({'persistent_service_configuration_literal':True}))
+  tasks:
+    - name: Capture global staging without staged modules
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "{{ package_msix_staging }}""
+      register: package_msix_staging_before
+      changed_when: false
+    - name: Allocate a uniquely owned empty fixture workspace
+      sustainablelobster.legacy_windows.win_tempfile:
+        state: directory
+        prefix: legacy-windows-msix-v41-
+      register: package_msix_workspace
+    - name: Record complete original service configuration and runtime
+      sustainablelobster.legacy_windows.win_service_info:
+      register: package_msix_services_before
+      no_log: true
+    - name: Exercise the owned complete MSIX lifecycle
+      block:
+        - name: Copy private fixture code and exact target-compatible helpers
+          sustainablelobster.legacy_windows.win_copy:
+            src: '{{ item.source }}'
+            dest: '{{ package_msix_workspace.path }}\{{ item.name }}'
+          loop:
+            - source: fixtures/package_msix_fixture.py
+              name: package_msix_fixture.py
+            - source: ../../plugins/module_utils/legacy_windows_package_msix.py
+              name: legacy_windows_package_msix.py
+            - source: >-
+                ../../plugins/module_utils/legacy_windows_certificate_store.py
+              name: legacy_windows_certificate_store.py
+            - source: ../../plugins/module_utils/legacy_windows_module.py
+              name: legacy_windows_module.py
+            - source: >-
+                {{ playbook_dir + '/../../tmp/codex/artifacts/' +
+                   'package-msix-sdk-native-subset-v43.zip' }}
+              name: sdk.zip
+            - source: >-
+                {{ playbook_dir + '/../../tmp/codex/artifacts/' +
+                   'package-msix-inputs-v41/cert.der' }}
+              name: cert.der
+            - source: >-
+                {{ playbook_dir + '/../../tmp/codex/artifacts/' +
+                   'package-msix-inputs-v41/cert.pfx' }}
+              name: cert.pfx
+          no_log: true
+        - name: Journal original state and prepare the owned signed package
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - '{{ package_msix_workspace.path }}\package_msix_fixture.py'
+              - '{{ package_msix_workspace.path }}'
+              - setup
+          register: package_msix_setup
+          no_log: true
+        - name: Bind exact generated package identity
+          ansible.builtin.set_fact:
+            package_msix_ready: '{{ package_msix_setup.stdout | from_json }}'
+          no_log: true
+        - name: Exercise public preview install repeat resolve and removal
+          ansible.builtin.include_tasks: tasks/win_package_msix_case.yml
+          loop: '{{ package_msix_selected_cases }}'
+          loop_control:
+            loop_var: package_msix_case
+            label: '{{ package_msix_case.name }}'
+      always:
+        - name: Recover only the journal-owned package trust and policy
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - '{{ package_msix_workspace.path }}\package_msix_fixture.py'
+              - '{{ package_msix_workspace.path }}'
+              - cleanup
+          register: package_msix_cleanup
+          failed_when: false
+          no_log: true
+        - name: Preserve complete cleanup and all partial operation results
+          ansible.builtin.copy:
+            content: >-
+              {{ {'workspace': package_msix_workspace,
+              'setup': package_msix_setup | default(none),
+              'results': package_msix_results,
+              'cleanup': package_msix_cleanup} | to_nice_json }}
+            dest: >-
+              {{ package_msix_capture_prefix }}-{{ inventory_hostname }}.json
+            mode: '0600'
+          delegate_to: localhost
+          vars:
+            ansible_connection: local
+            ansible_shell_type: sh
+            ansible_python_interpreter: '{{ ansible_playbook_python }}'
+          changed_when: false
+          no_log: true
+        - name: Require literal package certificate key and policy recovery
+          ansible.builtin.assert:
+            that: package_msix_cleanup.rc == 0
+          no_log: true
+        - name: Remove only the fully recovered owned fixture workspace
+          sustainablelobster.legacy_windows.win_file:
+            path: '{{ package_msix_workspace.path }}'
+            state: absent
+        - name: Capture literal final global staging
+          ansible.builtin.raw: >-
+            cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+            "{{ package_msix_staging }}""
+          register: package_msix_staging_after
+          changed_when: false
+        - name: Restore only an originally stopped AppX deployment service
+          when: >-
+            (package_msix_services_before.services |
+            selectattr('name', 'equalto', 'AppXSvc') | first).state == 'stopped'
+          sustainablelobster.legacy_windows.win_service:
+            name: AppXSvc
+            state: stopped
+          no_log: true
+        - name: Record complete final service configuration and runtime
+          sustainablelobster.legacy_windows.win_service_info:
+          register: package_msix_services_before_license_cleanup
+          no_log: true
+        - name: Preserve raw closure observations before the licensing idle gate
+          ansible.builtin.copy:
+            content: >-
+              {{ {'workspace': package_msix_workspace,
+              'setup': package_msix_setup | default(none),
+              'results': package_msix_results, 'cleanup': package_msix_cleanup,
+              'staging_before': package_msix_staging_before,
+              'staging_after': package_msix_staging_after,
+              'services_before': package_msix_services_before,
+              'services_before_license_cleanup':
+              package_msix_services_before_license_cleanup} | to_nice_json }}
+            dest: >-
+              {{ package_msix_capture_prefix }}-{{ inventory_hostname }}.json
+            mode: '0600'
+          delegate_to: localhost
+          vars:
+            ansible_connection: local
+            ansible_shell_type: sh
+            ansible_python_interpreter: '{{ ansible_playbook_python }}'
+          changed_when: false
+          no_log: true
+        - name: Wait for the licensing trigger to return to its stopped state
+          when: >-
+            (package_msix_services_before.services |
+            selectattr('name', 'equalto', 'ClipSVC') | first).state == 'stopped'
+          sustainablelobster.legacy_windows.win_service_info:
+            name: ClipSVC
+          register: package_msix_license_idle
+          until: package_msix_license_idle.services[0].state == 'stopped'
+          retries: 12
+          delay: 5
+          # Retain a busy trigger as a failed diagnostic.
+          # Do not stop it by force.
+          ignore_errors: true
+          no_log: true
+        - name: Record final service configuration after licensing recovery
+          sustainablelobster.legacy_windows.win_service_info:
+          register: package_msix_services_after
+          no_log: true
+        - name: Compare service names and persistent configuration literally
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}', '-c',
+                   '{{ package_msix_service_config_check }}']
+            stdin: >-
+              {{ {'before': package_msix_services_before.services,
+              'after': package_msix_services_after.services} | to_json }}
+          register: package_msix_service_configuration
+          changed_when: false
+          failed_when: false
+          no_log: true
+        - name: Preserve all exact final closure fields before gates
+          ansible.builtin.copy:
+            content: >-
+              {{ {'workspace': package_msix_workspace,
+              'setup': package_msix_setup | default(none),
+              'results': package_msix_results, 'cleanup': package_msix_cleanup,
+              'staging_before': package_msix_staging_before,
+              'staging_after': package_msix_staging_after,
+              'services_before': package_msix_services_before,
+              'license_idle': package_msix_license_idle | default(none),
+              'services_after': package_msix_services_after,
+              'service_configuration': package_msix_service_configuration}
+              | to_nice_json }}
+            dest: >-
+              {{ package_msix_capture_prefix }}-{{ inventory_hostname }}.json
+            mode: '0600'
+          delegate_to: localhost
+          vars:
+            ansible_connection: local
+            ansible_shell_type: sh
+            ansible_python_interpreter: '{{ ansible_playbook_python }}'
+          changed_when: false
+          no_log: true
+        - name: Require exact global staging closure
+          ansible.builtin.assert:
+            that: >-
+              (package_msix_staging_before.stdout | from_json) ==
+              (package_msix_staging_after.stdout | from_json)
+        - name: Require original service names and persistent configuration
+          ansible.builtin.assert:
+            that: package_msix_service_configuration.rc == 0
+          no_log: true
+        - name: Close the standard owner-private reused SSH connection
+          ansible.builtin.meta: reset_connection

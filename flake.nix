@@ -16,6 +16,7 @@
           mypy
           pre-commit-hooks
           pylint
+          pyftpdlib
           pytest
           yamllint
         ]
@@ -25,13 +26,17 @@
       devShells.${system}.default = pkgs.mkShellNoCC {
         packages = [
           python
+          pkgs.actionlint
           pkgs.ansible-lint
           pkgs.codespell
+          pkgs.gh
           pkgs.git
           pkgs.just
           pkgs.nixfmt
+          pkgs.openssl
           pkgs.pre-commit
           pkgs.rumdl
+          pkgs.shellcheck
           pkgs.vermin
         ];
       };

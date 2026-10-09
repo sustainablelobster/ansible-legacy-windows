@@ -1,0 +1,108 @@
+---
+- name: Reboot and verify hostname activation
+  ansible.builtin.include_tasks: win_hostname_reboot.yml
+  when: hostname_case.reboot | default(false)
+
+- name: Exercise the public hostname request
+  when: not (hostname_case.reboot | default(false))
+  block:
+    - name: '{{ hostname_case.name }}'
+      block:
+        - name: Apply or predict the hostname request  # noqa: args[module]
+          sustainablelobster.legacy_windows.win_hostname:
+            name: '{{ hostname_case.request | default(omit) }}'
+          register: hostname_result
+          check_mode: '{{ hostname_case.check | default(false) }}'
+          diff: true
+      rescue:
+        - name: Require the declared validation failure
+          ansible.builtin.assert:
+            that:
+              - hostname_case.error is defined
+              - hostname_result is failed
+              - hostname_result.msg == hostname_case.error
+              - not hostname_result.changed
+
+    - name: Read independent active pending and WMI names
+      sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+        argv:
+          - '{{ ansible_python_interpreter }}'
+          - '-'
+          - '{{ hostname_workspace.path }}'
+          - observe
+        stdin: '{{ hostname_fixture }}'
+      register: hostname_observation
+      changed_when: false
+      check_mode: false
+
+    - name: Verify public results and exact non-writing behavior
+      vars:
+        observation: '{{ hostname_observation.stdout | from_json }}'
+      ansible.builtin.assert:
+        that:
+          - hostname_result.changed == hostname_case.changed
+          - (hostname_case.error is defined) == (hostname_result is failed)
+          - hostname_result.warnings | default([]) == []
+          - hostname_result.stdout is not defined
+          - hostname_result.stderr is not defined
+          - hostname_case.error is defined or hostname_result.msg is not defined
+          - >-
+            hostname_case.early_error | default(false) or
+            hostname_result.old_name ==
+            hostname_previous_snapshot.names.effective_name
+          - >-
+            hostname_case.early_error | default(false) or
+            hostname_result.reboot_required == hostname_case.reboot_required
+          - >-
+            hostname_case.early_error | default(false) or
+            hostname_result.diff.before == hostname_result.old_name
+          - >-
+            hostname_case.early_error | default(false) or
+            hostname_result.diff.after == hostname_case.request
+          - >-
+            not (hostname_case.early_error | default(false)) or
+            (hostname_result.old_name is not defined and
+             hostname_result.reboot_required is not defined and
+             hostname_result.diff is not defined)
+          - >-
+            not (hostname_case.check | default(false)) or
+            observation == hostname_previous_snapshot
+          - >-
+            hostname_case.changed or
+            observation == hostname_previous_snapshot
+          - observation.boot_id == hostname_previous_snapshot.boot_id
+          - >-
+            observation.names.native == hostname_previous_snapshot.names.native
+          - >-
+            observation.names.wmi_dns_available ==
+            hostname_previous_snapshot.names.wmi_dns_available
+          - >-
+            observation.names.wmi_dns_hostname ==
+            hostname_previous_snapshot.names.wmi_dns_hostname
+          - >-
+            observation.names.effective_name ==
+            hostname_previous_snapshot.names.effective_name
+          - >-
+            observation.names.registry.active ==
+            hostname_previous_snapshot.names.registry.active
+          - >-
+            observation.names.registry.hostname ==
+            hostname_previous_snapshot.names.registry.hostname
+          - >-
+            hostname_case.pending is not defined or
+            observation.names.registry.pending.value | upper ==
+            hostname_case.pending | upper
+          - >-
+            hostname_case.pending is not defined or
+            observation.names.registry.nv_hostname.value | upper ==
+            hostname_case.pending | upper
+
+    - name: Retain the complete public result and independent name observation
+      vars:
+        record:
+          case: '{{ hostname_case.name }}'
+          result: '{{ hostname_result }}'
+          snapshot: '{{ hostname_observation.stdout | from_json }}'
+      ansible.builtin.set_fact:
+        hostname_previous_snapshot: '{{ record.snapshot }}'
+        hostname_results: '{{ hostname_results | default([]) + [record] }}'

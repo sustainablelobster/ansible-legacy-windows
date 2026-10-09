@@ -1,0 +1,33 @@
+---
+updates_runas_mode: paired
+updates_runas_system_account: 'NT AUTHORITY\SYSTEM'
+updates_runas_capture: >-
+  {{ playbook_dir }}/../../tmp/codex/evidence/win-updates-runas-result.json
+updates_runas_cases:
+  - {actor: administrator, check: false, state: searched}
+  - {actor: administrator, check: true, state: installed}
+  - {actor: system, check: false, state: searched}
+  - {actor: system, check: true, state: installed}
+updates_runas_source_cases: '{{ updates_runas_cases }}'
+updates_runas_sources: |
+  WMI_SOURCE = {{ lookup('ansible.builtin.file',
+    playbook_dir + '/../../plugins/module_utils/legacy_windows_wmi.py')
+    | to_json }}
+  BASE_SOURCE = {{ lookup('ansible.builtin.file',
+    playbook_dir + '/fixtures/native_async.py') | to_json }}
+updates_runas_monitor_source: |
+  {{ updates_runas_sources }}
+  {{ lookup('ansible.builtin.file',
+    playbook_dir + '/fixtures/win_updates_runas.py') }}
+updates_runas_program: |
+  {{ updates_runas_sources }}
+  MONITOR_SOURCE = {{ updates_runas_monitor_source | to_json }}
+  {{ lookup('ansible.builtin.file',
+    playbook_dir + '/fixtures/win_updates_runas.py') }}
+updates_runas_global_program: >-
+  import glob,json,os,sys,tempfile;assert sys.version_info[:3]==(3,4,4);
+  roots=sorted(set([tempfile.gettempdir(),
+  os.path.join(os.environ['SystemRoot'],'Temp')]));
+  print(json.dumps({root:{pattern:sorted(glob.glob(os.path.join(root,pattern)))
+  for pattern in ['ansible-tmp-*','legacy-windows-updates-*']}
+  for root in roots},sort_keys=True))

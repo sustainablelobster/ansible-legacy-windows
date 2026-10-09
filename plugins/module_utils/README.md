@@ -1,7 +1,8 @@
 # Module utilities
 
-Place helpers shared by modules here when a concrete module needs them.
+Helpers imported by Windows payloads, including their dependencies, must remain
+compatible with Python 3.4.4 and newer. Use the standard library and native
+Windows APIs; keep controller-only dependencies out of target imports.
 
-Every helper imported on Windows, including its dependencies, must run under
-Python 3.4.4. Keep controller-only dependencies out of target imports. See the
-[compatibility contract](../../docs/compatibility.md).
+Add shared helpers only for a concrete module need. See
+[Development](../../docs/development.md) for testing and runtime boundaries.

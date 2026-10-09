@@ -1,0 +1,379 @@
+---
+- name: Verify the Windows Python execution path
+  hosts: legacy_windows
+  gather_facts: false
+  vars:
+    workspace_path: '{{ shell_workspace.stdout | from_json }}'
+    cleanup_code: |
+      import base64, ctypes, json, os, tempfile
+      root = json.loads(base64.b64decode(
+          '{{ shell_workspace.stdout | b64encode }}').decode('utf-8'))
+      assert os.path.basename(root).startswith('legacy-windows-shell-')
+      assert os.path.normcase(os.path.dirname(root)) == os.path.normcase(
+          os.path.abspath(tempfile.gettempdir()))
+      kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+      kernel.GetFileAttributesW.argtypes = [ctypes.c_wchar_p]
+      kernel.GetFileAttributesW.restype = ctypes.c_ulong
+
+      def remove_owned(path):
+          attributes = kernel.GetFileAttributesW(path)
+          if attributes == 0xffffffff:
+              error = ctypes.get_last_error()
+              if error in (2, 3):
+                  return
+              raise ctypes.WinError(error)
+          if attributes & 0x10:
+              if not attributes & 0x400:
+                  for name in os.listdir(path):
+                      remove_owned(os.path.join(path, name))
+              os.rmdir(path)
+          else:
+              os.remove(path)
+      remove_owned(root)
+      assert kernel.GetFileAttributesW(root) == 0xffffffff
+      print('owned workspace removed without following links')
+    numeric_cases:
+      - value: !!float 1.25
+        expected: '1.25'
+      - value: !!float 1.0
+        expected: '1.0'
+      - value: !!float -0.0
+        expected: '0.0'
+      - value: !!float 1.2345678901234567
+        expected: '1.2345678901234567'
+      - value: !!float 0.0001
+        expected: '0.0001'
+      - value: !!float 1e-05
+        expected: '1E-05'
+      - value: !!float 1000000000000000.0
+        expected: '1000000000000000.0'
+      - value: !!float 1e16
+        expected: '1E+16'
+      - value: !!float 1.2345678901234567e20
+        expected: '1.23456789012346E+20'
+      - value: !!float 1.000000000000025e16
+        expected: '1.00000000000003E+16'
+      - value: !!float -1.000000000000025e16
+        expected: '-1.00000000000003E+16'
+      - value: !!float 9.999999999999999e-05
+        expected: '0.0001'
+      - value: !!float 1.7976931348623157e308
+        expected: '1.79769313486232E+308'
+      - value: !!float 5e-324
+        expected: '4.94065645841247E-324'
+  tasks:
+    - name: Record the target runtime and temporary directories
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import glob, json, os, platform, shutil, sys, tempfile;
+        print(json.dumps({'version': list(sys.version_info[:3]),
+        'executable': sys.executable, 'platform': platform.platform(),
+        'powershell_directory': os.path.isdir(os.path.join(
+        os.environ['SystemRoot'], 'System32', 'WindowsPowerShell')),
+        'powershell_on_path': shutil.which('powershell.exe') is not None,
+        'temporary_directories': sorted(glob.glob(os.path.join(
+        tempfile.gettempdir(), 'ansible-tmp-*')))}))""
+      register: runtime_before
+      changed_when: false
+      check_mode: false
+
+    - name: Require the intended interpreter
+      ansible.builtin.assert:
+        that:
+          - (runtime_before.stdout | from_json).version == [3, 4, 4]
+          - >-
+            (runtime_before.stdout | from_json).powershell_directory ==
+            (legacy_windows_expect_powershell | default(false) | bool)
+          - >-
+            (runtime_before.stdout | from_json).powershell_on_path ==
+            (legacy_windows_expect_powershell | default(false) | bool)
+
+    - name: Return the default response
+      # args[module] assumes AnsibleModule, not WANT_JSON argument files.
+      sustainablelobster.legacy_windows.win_ping:  # noqa: args[module]
+      register: default_ping
+
+    - name: Repeat the default response
+      # WANT_JSON arguments are checked by these runtime assertions instead.
+      sustainablelobster.legacy_windows.win_ping:  # noqa: args[module]
+      register: repeated_ping
+
+    - name: Preserve Unicode and shell metacharacters in data
+      # WANT_JSON arguments are checked by these runtime assertions instead.
+      sustainablelobster.legacy_windows.win_ping:  # noqa: args[module]
+        data: 'Café 雪 & | < > ^ %PATH% ! "quoted" \\path'
+      register: custom_ping
+
+    - name: Preserve an explicit null value
+      # WANT_JSON arguments are checked by these runtime assertions instead.
+      sustainablelobster.legacy_windows.win_ping:  # noqa: args[module]
+        data: null
+      register: null_ping
+
+    - name: Execute in check mode
+      # WANT_JSON arguments are checked by these runtime assertions instead.
+      sustainablelobster.legacy_windows.win_ping:  # noqa: args[module]
+      check_mode: true
+      register: check_ping
+
+    - name: Verify successful responses never report changes
+      ansible.builtin.assert:
+        that:
+          - default_ping.ping == 'pong'
+          - repeated_ping.ping == 'pong'
+          - check_ping.ping == 'pong'
+          - custom_ping.ping == expected_data
+          - null_ping.ping is none
+          - default_ping is not changed
+          - repeated_ping is not changed
+          - custom_ping is not changed
+          - null_ping is not changed
+          - check_ping is not changed
+      vars:
+        expected_data: 'Café 雪 & | < > ^ %PATH% ! "quoted" \\path'
+
+    - name: Require float inputs for numeric conversion tests
+      ansible.builtin.assert:
+        that:
+          - item.value is float
+          - item.expected is string
+      loop: '{{ numeric_cases }}'
+      loop_control:
+        label: '{{ item.expected }}'
+
+    - name: Match measured upstream numeric data conversion
+      # WANT_JSON arguments are checked by these runtime assertions instead.
+      sustainablelobster.legacy_windows.win_ping:  # noqa: args[module]
+        data: '{{ item.value }}'
+      loop: '{{ numeric_cases }}'
+      loop_control:
+        label: '{{ item.expected }}'
+      register: numeric_ping
+
+    - name: Verify each numeric response remains unchanged
+      ansible.builtin.assert:
+        that:
+          - item is not changed
+          - item.ping == item.item.expected
+      loop: '{{ numeric_ping.results }}'
+      loop_control:
+        label: '{{ item.item.expected }}'
+
+    - name: Repeat subnormal numeric data
+      # WANT_JSON arguments are checked by these runtime assertions instead.
+      sustainablelobster.legacy_windows.win_ping:  # noqa: args[module]
+        data: '{{ (numeric_cases | last).value }}'
+      register: repeated_numeric_ping
+
+    - name: Convert subnormal numeric data in check mode
+      # WANT_JSON arguments are checked by these runtime assertions instead.
+      sustainablelobster.legacy_windows.win_ping:  # noqa: args[module]
+        data: '{{ (numeric_cases | last).value }}'
+      check_mode: true
+      register: check_numeric_ping
+
+    - name: Verify repeated and check-mode numeric responses
+      ansible.builtin.assert:
+        that:
+          - repeated_numeric_ping is not changed
+          - check_numeric_ping is not changed
+          - repeated_numeric_ping.ping == (numeric_cases | last).expected
+          - check_numeric_ping.ping == (numeric_cases | last).expected
+
+    - name: Verify an intentional module failure
+      block:
+        - name: Request the documented crash behavior
+          # WANT_JSON arguments are checked by the failure assertion below.
+          sustainablelobster.legacy_windows.win_ping:  # noqa: args[module]
+            data: CrAsH
+          register: crash_ping
+
+        - name: Reject unexpected success from crash data
+          ansible.builtin.fail:
+            msg: The crash request unexpectedly succeeded
+      rescue:
+        - name: Verify the crash result
+          ansible.builtin.assert:
+            that:
+              - crash_ping is failed
+              - crash_ping is not changed
+              - >-
+                crash_ping.msg ==
+                'Unhandled exception while executing module: boom'
+
+    - name: Verify unsupported parameters are rejected
+      block:
+        - name: Supply an unknown parameter
+          # This deliberately invalid argument must reach the target payload.
+          sustainablelobster.legacy_windows.win_ping:  # noqa: args[module]
+            unsupported: value
+          register: unknown_ping
+
+        - name: Reject unexpected acceptance of an unknown parameter
+          ansible.builtin.fail:
+            msg: An unsupported parameter was unexpectedly accepted
+      rescue:
+        - name: Verify the unsupported parameter result
+          ansible.builtin.assert:
+            that:
+              - unknown_ping is failed
+              - unknown_ping is not changed
+              - "'Unsupported parameters' in unknown_ping.msg"
+              - "'unsupported' in unknown_ping.msg"
+
+    - name: Allocate a private workspace for path handling tests
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import json, tempfile;
+        print(json.dumps(tempfile.mkdtemp(prefix='legacy-windows-shell-')))""
+      register: shell_workspace
+      changed_when: true
+      check_mode: false
+
+    - name: Verify paths with Unicode and shell metacharacters
+      block:
+        - name: Execute with a nontrivial temporary path
+          # WANT_JSON arguments are checked by the runtime assertion below.
+          sustainablelobster.legacy_windows.win_ping:  # noqa: args[module]
+          vars:
+            ansible_remote_tmp: >-
+              {{ shell_workspace.stdout | from_json }}\Café 雪 & %literal%!
+          register: path_ping
+
+        - name: Verify the response through the custom temporary directory
+          ansible.builtin.assert:
+            that:
+              - path_ping.ping == 'pong'
+              - path_ping is not changed
+
+        - name: Exercise cleanup after successful and failed child commands
+          block:
+            - name: Create task-local junctions  # noqa: args[module]
+              # The dedicated staging parent contains only this owned task.
+              # WANT_JSON arguments and child outcomes are asserted below.
+              sustainablelobster.legacy_windows.win_command:
+                argv:
+                  - '{{ ansible_python_interpreter }}'
+                  - -c
+                  - |
+                    import ctypes, json, os, struct, sys, tempfile
+                    root = os.path.abspath(sys.argv[1])
+                    status = int(sys.argv[2])
+                    assert sys.version_info[:3] == (3, 4, 4)
+                    assert os.path.basename(root).startswith(
+                        'legacy-windows-shell-')
+                    assert os.path.normcase(os.path.dirname(root)) == (
+                        os.path.normcase(os.path.abspath(tempfile.gettempdir())))
+                    staging = os.path.join(root, 'cleanup-staging')
+                    tasks = os.listdir(staging)
+                    assert len(tasks) == 1
+                    assert tasks[0].startswith('ansible-tmp-')
+                    task = os.path.join(staging, tasks[0])
+                    target = os.path.join(root, 'preserved-' + str(status))
+                    missing = os.path.join(root, 'missing-' + str(status))
+                    os.mkdir(target)
+                    os.mkdir(missing)
+                    with open(os.path.join(target, 'sentinel'), 'wb') as stream:
+                        stream.write(b'preserved outside task directory')
+                    os.mkdir(os.path.join(task, 'nested'))
+                    kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+                    kernel.CreateFileW.argtypes = [ctypes.c_wchar_p,
+                        ctypes.c_ulong, ctypes.c_ulong, ctypes.c_void_p,
+                        ctypes.c_ulong, ctypes.c_ulong, ctypes.c_void_p]
+                    kernel.CreateFileW.restype = ctypes.c_void_p
+                    kernel.CloseHandle.argtypes = [ctypes.c_void_p]
+                    kernel.CloseHandle.restype = ctypes.c_int
+                    kernel.DeviceIoControl.argtypes = [ctypes.c_void_p,
+                        ctypes.c_ulong, ctypes.c_void_p, ctypes.c_ulong,
+                        ctypes.c_void_p, ctypes.c_ulong,
+                        ctypes.POINTER(ctypes.c_ulong), ctypes.c_void_p]
+                    kernel.DeviceIoControl.restype = ctypes.c_int
+                    for name, destination in (
+                            ('live', target), ('nested/live', target),
+                            ('broken', missing)):
+                        path = os.path.join(task, name)
+                        os.mkdir(path)
+                        handle = kernel.CreateFileW(path, 0x40000000, 0,
+                            None, 3, 0x02200000, None)
+                        assert handle != ctypes.c_void_p(-1).value
+                        try:
+                            substitute = ('\\??\\' + destination).encode(
+                                'utf-16-le')
+                            printable = destination.encode('utf-16-le')
+                            names = (substitute + b'\0\0'
+                                + printable + b'\0\0')
+                            data = struct.pack('<IHHHHHH', 0xA0000003,
+                                8 + len(names), 0, 0, len(substitute),
+                                len(substitute) + 2, len(printable)) + names
+                            received = ctypes.c_ulong()
+                            buffer = ctypes.create_string_buffer(data)
+                            if not kernel.DeviceIoControl(handle, 0x900a4,
+                                    buffer, len(data), None, 0,
+                                    ctypes.byref(received), None):
+                                raise ctypes.WinError(ctypes.get_last_error())
+                        finally:
+                            assert kernel.CloseHandle(handle)
+                    os.rmdir(missing)
+                    print(json.dumps({'junctions': 3}))
+                    sys.exit(status)
+                  - '{{ workspace_path }}'
+                  - '{{ item | string }}'
+              vars:
+                ansible_remote_tmp: '{{ workspace_path }}\cleanup-staging'
+              loop: [0, 23]
+              register: junction_commands
+
+            - name: Reject unexpected success for the nonzero child exit
+              ansible.builtin.fail:
+                msg: The expected child failure was not reported
+          rescue:
+            - name: Verify both child outcomes reached their junction fixtures
+              ansible.builtin.assert:
+                that:
+                  - junction_commands.results | length == 2
+                  - item.rc == item.item
+                  - item is changed
+                  - (item.stdout | from_json).junctions == 3
+                  - (item is failed) == (item.item != 0)
+              loop: '{{ junction_commands.results }}'
+              loop_control:
+                label: '{{ item.item }}'
+
+        - name: Prove task cleanup preserved both junction targets
+          ansible.builtin.raw: >-
+            cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+            "import base64, json, os;
+            root = json.loads(base64.b64decode(
+            '{{ shell_workspace.stdout | b64encode }}').decode('utf-8'));
+            assert os.listdir(os.path.join(root, 'cleanup-staging')) == [];
+            expected = b'preserved outside task directory';
+            assert all(open(os.path.join(root, 'preserved-' + str(status),
+            'sentinel'), 'rb').read() == expected for status in (0, 23));
+            print('junction targets preserved and task directories removed')""
+          changed_when: false
+          check_mode: false
+      always:
+        - name: Remove only the allocated path-test workspace
+          ansible.builtin.raw: >-
+            cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+            "import base64;
+            exec(base64.b64decode('{{ cleanup_code | b64encode }}'))""
+          changed_when: true
+          check_mode: false
+
+    - name: Check temporary directories after successes and failures
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import glob, json, os, tempfile;
+        print(json.dumps(sorted(glob.glob(os.path.join(tempfile.gettempdir(),
+        'ansible-tmp-*')))))""
+      register: temporary_after
+      changed_when: false
+      check_mode: false
+
+    - name: Verify task directories were removed
+      ansible.builtin.assert:
+        that:
+          - >-
+            (temporary_after.stdout | from_json) ==
+            (runtime_before.stdout | from_json).temporary_directories

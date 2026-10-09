@@ -1,0 +1,263 @@
+---
+- name: Observe public zero-timeout behavior and exact owned HTTP recovery
+  hosts: legacy_windows
+  gather_facts: false
+  vars_files:
+    - vars/get_url_fixture.yml
+    - vars/http_zero.yml
+  vars:
+    http_zero_results: []
+    http_zero_staging_program: >-
+      import glob,json,os,sys,tempfile;assert sys.version_info[:3]==(3,4,4);
+      print(json.dumps({prefix:sorted(glob.glob(os.path.join(tempfile.gettempdir(),prefix)))
+      for prefix in ('ansible-tmp-*','legacy-windows-package-url-*')}))
+  tasks:
+    - name: Verify the target interpreter and original global request staging
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "{{ http_zero_staging_program }}""
+      register: http_zero_staging_before
+      changed_when: false
+    - name: Require the exact selected matrix before starting owned work
+      ansible.builtin.assert:
+        that:
+          - http_zero_mode in ['source', 'native', 'paired']
+          - http_zero_selected_cases | length > 0
+          - >-
+            http_zero_selected_cases |
+            map(attribute='name') | unique |
+            length == http_zero_selected_cases | length
+          - >-
+            http_zero_selected_cases | map(attribute='module') |
+            difference(['get_url', 'uri', 'package']) == []
+          - >-
+            http_zero_selected_cases |
+            selectattr('module', 'equalto', 'package') |
+            rejectattr('check', 'equalto', true) | list | length == 0
+    - name: Allocate private complete capture
+      ansible.builtin.tempfile:
+        state: file
+        path: '{{ playbook_dir }}/../../tmp'
+        prefix: 'http-zero-{{ inventory_hostname }}-'
+        suffix: .json
+      register: http_zero_capture
+      delegate_to: localhost
+      vars: &local
+        ansible_connection: local
+        ansible_shell_type: sh
+        ansible_python_interpreter: '{{ ansible_playbook_python }}'
+      changed_when: false
+    - name: Select the literal body-aware server over imported fixture defaults
+      ansible.builtin.set_fact:
+        get_url_server: >-
+          {{ lookup('ansible.builtin.file', playbook_dir +
+                    '/fixtures/http_zero_server.py', rstrip=false) }}
+    - name: Perform observations within one birth-identified fixture journal
+      block:
+        - name: Allocate owned controller TLS material
+          when: get_url_tls | default(false) | bool
+          ansible.builtin.tempfile:
+            state: directory
+            path: '{{ playbook_dir }}/../../tmp'
+            prefix: http-zero-tls-
+          register: get_url_tls_workspace
+          delegate_to: localhost
+          vars: *local
+          changed_when: false
+        - name: Generate disposable TLS fixture certificate with pinned OpenSSL
+          when: get_url_tls | default(false) | bool
+          ansible.builtin.command:
+            argv:
+              - openssl
+              - req
+              - -x509
+              - -newkey
+              - rsa:2048
+              - -nodes
+              - -days
+              - '1'
+              - -subj
+              - /CN=localhost
+              - -addext
+              - subjectAltName=DNS:localhost,IP:127.0.0.1
+              - -keyout
+              - '{{ get_url_tls_workspace.path }}/server-key.pem'
+              - -out
+              - '{{ get_url_tls_workspace.path }}/server-cert.pem'
+          delegate_to: localhost
+          vars: *local
+          changed_when: false
+        - name: Read only disposable TLS fixture certificate and key
+          when: get_url_tls | default(false) | bool
+          ansible.builtin.slurp:
+            src: '{{ get_url_tls_workspace.path }}/server-{{ item }}.pem'
+          loop: [cert, key]
+          register: get_url_tls_files
+          delegate_to: localhost
+          vars: *local
+          changed_when: false
+          no_log: true
+        - name: Bind optional disposable TLS fixture material
+          ansible.builtin.set_fact:
+            get_url_tls_material: >-
+              {{ {'cert': get_url_tls_files.results[0].content,
+                  'key': get_url_tls_files.results[1].content}
+                 if get_url_tls | default(false) | bool else {} }}
+          no_log: true
+        - name: Allocate only the owned empty HTTP workspace
+          sustainablelobster.legacy_windows.win_tempfile:  # noqa: args[module]
+            state: directory
+            prefix: legacy-windows-get-url-http-zero-
+          register: get_url_workspace
+        - name: Start the immutable server with the maintained ownership journal
+          sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+            argv: >-
+              {{ [ansible_python_interpreter, '-', get_url_workspace.path,
+                  'setup'] +
+                 ([get_url_tls_material | to_json | b64encode]
+                  if get_url_tls | default(false) | bool else []) }}
+            stdin: '{{ get_url_program }}'
+          register: get_url_setup
+          changed_when: false
+          no_log: true
+        - name: Bind literal owned HTTP and file endpoints
+          ansible.builtin.set_fact:
+            get_url_setup_data: '{{ get_url_setup.stdout | from_json }}'
+        - name: Observe each case without assuming its timeout outcome
+          ansible.builtin.include_tasks: tasks/http_zero_case.yml
+          loop: '{{ http_zero_selected_cases }}'
+          loop_control:
+            loop_var: http_zero_case
+            label: '{{ http_zero_case.name }}'
+      always:
+        # Controller PEM lifetime must close even if target recovery gates fail;
+        # retain the target ownership journal for separate bounded recovery.
+        - name: Retain target recovery and close owned controller TLS material
+          block:
+            - name: Recover the recorded server birth and owned files
+              when: get_url_workspace.path is defined
+              # noqa: args[module]
+              sustainablelobster.legacy_windows.win_command:
+                argv: ['{{ ansible_python_interpreter }}', '-',
+                       '{{ get_url_workspace.path }}', cleanup]
+                stdin: '{{ get_url_program }}'
+              register: http_zero_recovery
+              changed_when: false
+              failed_when: false
+              no_log: true
+            - name: Retain raw recovery before asserting its outcome
+              ansible.builtin.copy:
+                content: >-
+                  {{ {'results': http_zero_results,
+                      'setup': get_url_setup | default(none),
+                      'workspace': get_url_workspace | default(none),
+                      'connection_probe':
+                        http_zero_connect_before | default(none),
+                      'staging_before': http_zero_staging_before,
+                      'recovery': http_zero_recovery | default(none)} |
+                      combine({'tls_workspace':
+                               get_url_tls_workspace | default(none)}
+                              if get_url_tls | default(false) | bool else {}) |
+                      to_nice_json }}
+                dest: '{{ http_zero_capture.path }}'
+                mode: '0600'
+              delegate_to: localhost
+              vars: *local
+              changed_when: false
+              no_log: true
+            - name: Require literal protected files and exact server exit
+              ansible.builtin.assert:
+                that:
+                  - http_zero_recovery.rc == 0
+                  - (http_zero_recovery.stdout | from_json).restored
+                  - (http_zero_recovery.stdout | from_json).server_stopped
+            - name: Re-observe and finalize the recovered ownership journal
+              # noqa: args[module]
+              sustainablelobster.legacy_windows.win_command:
+                argv: ['{{ ansible_python_interpreter }}', '-',
+                       '{{ get_url_workspace.path }}', finalize]
+                stdin: '{{ get_url_program }}'
+              changed_when: false
+              no_log: true
+            - name: Remove only the verified recovered workspace
+              sustainablelobster.legacy_windows.win_file:  # noqa: args[module]
+                path: '{{ get_url_workspace.path }}'
+                state: absent
+            - name: Independently verify owned absence and global staging
+              ansible.builtin.raw: >-
+                cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+                "import os,sys;assert not os.path.exists(sys.argv[1]);
+                {{ http_zero_staging_program }}"
+                "{{ get_url_workspace.path }}""
+              register: http_zero_staging_after
+              changed_when: false
+            - name: Require exact original global staging
+              ansible.builtin.assert:
+                that: >-
+                  (http_zero_staging_before.stdout | from_json) ==
+                  (http_zero_staging_after.stdout | from_json)
+            - name: >-
+                Preserve the complete immutable public wire and recovery capture
+              ansible.builtin.copy:
+                content: >-
+                  {{ {'results': http_zero_results, 'setup': get_url_setup,
+                      'workspace': get_url_workspace, 'mode': http_zero_mode,
+                      'connection_probe':
+                        http_zero_connect_before | default(none),
+                      'cases': http_zero_selected_cases,
+                      'staging_before': http_zero_staging_before,
+                      'staging_after': http_zero_staging_after,
+                      'recovery': http_zero_recovery,
+                      'workspace_absent': true} |
+                      combine({'tls_workspace':
+                               get_url_tls_workspace | default(none)}
+                              if get_url_tls | default(false) | bool else {}) |
+                      to_nice_json }}
+                dest: '{{ http_zero_capture.path }}'
+                mode: '0600'
+              delegate_to: localhost
+              vars: *local
+              changed_when: false
+              no_log: true
+            - name: Close this lease's reused standard SSH connection
+              ansible.builtin.meta: reset_connection
+          always:
+            - name: Remove only owned controller TLS material
+              when: get_url_tls_workspace.path is defined
+              ansible.builtin.file:
+                path: '{{ get_url_tls_workspace.path }}'
+                state: absent
+              delegate_to: localhost
+              vars: *local
+              changed_when: false
+    - name: Require complete declared public observations
+      ansible.builtin.assert:
+        that: >-
+          http_zero_results | length == http_zero_selected_cases | length *
+          (2 if http_zero_mode == 'paired' else 1)
+    - name: Verify all paired public values literal wire and final recovery
+      when: http_zero_mode == 'paired'
+      ansible.builtin.command:
+        argv:
+          - '{{ ansible_playbook_python }}'
+          - '{{ playbook_dir }}/../../scripts/verify_http_zero_capture.py'
+          - '{{ http_zero_capture.path }}'
+      delegate_to: localhost
+      vars: *local
+      changed_when: false
+    - name: Verify the six independent DNS and refused connection observations
+      when: >-
+        http_zero_mode == 'paired' and
+        http_zero_selected_cases | length == 6 and
+        http_zero_selected_cases | selectattr('connection_failure', 'defined') |
+        list | length == http_zero_selected_cases | length
+      ansible.builtin.command:
+        argv:
+          - '{{ ansible_playbook_python }}'
+          - -m
+          - scripts.verify_http_zero_connect_capture
+          - '{{ http_zero_capture.path }}'
+        chdir: '{{ playbook_dir }}/../..'
+      delegate_to: localhost
+      vars: *local
+      changed_when: false

@@ -1,0 +1,47 @@
+---
+acl_inheritance_targets: [directory, file, key]
+acl_inheritance_cases:
+  - name: Confirm inheritance is initially enabled
+    state: present
+    changed: false
+  - name: Predict preserving inherited entries
+    state: absent
+    reorganize: true
+    check: true
+    changed: true
+  - name: Disable inheritance and remove inherited entries
+    state: absent
+    changed: true
+    permissions: removed
+  - name: Repeat the disabled inheritance request
+    state: absent
+    changed: false
+  - name: Predict enabling inheritance with reorganization
+    state: present
+    reorganize: true
+    check: true
+    changed: true
+  - name: Enable inheritance with reorganization
+    state: present
+    reorganize: true
+    changed: true
+  - name: Repeat enabled inheritance with reorganization
+    state: present
+    reorganize: true
+    changed: false
+  - name: Disable inheritance while retaining entries
+    state: absent
+    reorganize: true
+    changed: true
+    permissions: copied
+  - name: Repeat disabled inheritance with null reorganization
+    state: absent
+    reorganize: null
+    changed: false
+  - name: Predict enabling inheritance without reorganization
+    state: present
+    check: true
+    changed: true
+  - name: Enable inheritance without reorganization
+    state: present
+    changed: true

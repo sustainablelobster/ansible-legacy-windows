@@ -1,0 +1,138 @@
+---
+- name: Select complete public child-wait request
+  ansible.builtin.set_fact:
+    package_children_request: >-
+      {{ {'provider': 'registry',
+      'product_id': (package_children_setup.stdout | from_json).identifier,
+      'state': package_children_case.state | default('present'),
+      'wait_for_children': package_children_case.wait | default(true),
+      'chdir': package_children_workspace.path} |
+      combine({'path': (package_children_setup.stdout | from_json).installer,
+      'arguments': ['-S',
+      (package_children_setup.stdout | from_json).tree_program,
+      package_children_workspace.path, 'parent', 'install',
+      package_children_case.code | default(0) | string,
+      package_children_case.delay | default(1) | string, '0']}
+      if package_children_case.state | default('present') == 'present'
+      else {}) }}
+
+- name: Establish exact owned native prerequisite
+  sustainablelobster.legacy_windows.win_command:
+    argv: ['{{ ansible_python_interpreter }}', '-',
+           '{{ package_children_workspace.path }}', prepare,
+           '{{ package_children_case.initial | default("absent") }}']
+    stdin: '{{ package_children_program }}'
+  register: package_children_before
+  changed_when: false
+  no_log: true
+
+- name: Capture native complete public behavior
+  block:
+    - name: Execute native child-wait request  # noqa: args[module]
+      sustainablelobster.legacy_windows.win_package: >-
+        {{ package_children_request }}
+      environment:
+        PYTHONHOME: >-
+          {{ (package_children_setup.stdout | from_json).python_home }}
+      check_mode: '{{ package_children_case.check | default(false) }}'
+      register: package_children_native
+  rescue:
+    - name: Retain exact native failure
+      ansible.builtin.debug:
+        msg: Native child-wait failure retained.
+
+- name: Observe real native file registry and process effects
+  sustainablelobster.legacy_windows.win_command:
+    argv: ['{{ ansible_python_interpreter }}', '-',
+           '{{ package_children_workspace.path }}', observe]
+    stdin: '{{ package_children_program }}'
+  register: package_children_after_native
+  changed_when: false
+  no_log: true
+
+- name: Establish identical original prerequisite after owned tree settles
+  when: package_compare | bool
+  sustainablelobster.legacy_windows.win_command:
+    argv: ['{{ ansible_python_interpreter }}', '-',
+           '{{ package_children_workspace.path }}', prepare,
+           '{{ package_children_case.initial | default("absent") }}']
+    stdin: '{{ package_children_program }}'
+  register: package_children_before_original
+  changed_when: false
+  no_log: true
+
+- name: Capture complete untouched released behavior
+  when: package_compare | bool
+  block:
+    - name: Execute released child-wait request
+      ansible.windows.win_package: '{{ package_children_request }}'
+      environment:
+        PYTHONHOME: >-
+          {{ (package_children_setup.stdout | from_json).python_home }}
+      check_mode: '{{ package_children_case.check | default(false) }}'
+      register: package_children_original
+      vars:
+        ansible_shell_type: cmd
+        ansible_remote_tmp: '{{ package_children_workspace.path }}'
+  rescue:
+    - name: Retain exact original failure
+      ansible.builtin.debug:
+        msg: Original child-wait failure retained.
+
+- name: Observe original real file registry and process effects
+  when: package_compare | bool
+  sustainablelobster.legacy_windows.win_command:
+    argv: ['{{ ansible_python_interpreter }}', '-',
+           '{{ package_children_workspace.path }}', observe]
+    stdin: '{{ package_children_program }}'
+  register: package_children_after_original
+  changed_when: false
+  no_log: true
+
+- name: Retain every raw value before any comparison
+  ansible.builtin.set_fact:
+    package_children_results: >-
+      {{ package_children_results + [{'name': package_children_case.name,
+      'request': package_children_request, 'expected': package_children_case,
+      'native': package_children_native,
+      'original': package_children_original | default(none),
+      'before': package_children_before,
+      'before_original': package_children_before_original | default(none),
+      'after_native': package_children_after_native,
+      'after_original': package_children_after_original | default(none),
+      'validated': false}] }}
+
+- name: Persist whole running capture
+  ansible.builtin.copy:
+    content: >-
+      {{ {'results': package_children_results,
+      'journal': package_children_journal,
+      'setup': package_children_setup} | to_nice_json }}
+    dest: '{{ package_children_capture.path }}'
+    mode: '0600'
+  delegate_to: localhost
+  vars: &controller
+    ansible_connection: local
+    ansible_shell_type: sh
+    ansible_python_interpreter: '{{ ansible_playbook_python }}'
+  changed_when: false
+  no_log: true
+
+- name: Independently compare complete public results real trees and effects
+  ansible.builtin.command:
+    argv: >-
+      {{ [ansible_playbook_python,
+      playbook_dir + '/files/package_children_compare.py',
+      package_children_capture.path,
+      package_compare | bool | ternary('paired', 'native'),
+      '--growing'] +
+      package_children_reference_args }}
+  delegate_to: localhost
+  vars: *controller
+  changed_when: false
+
+- name: Mark only passing whole observations
+  ansible.builtin.set_fact:
+    package_children_results: >-
+      {{ package_children_results[:-1] +
+      [package_children_results[-1] | combine({'validated': true})] }}

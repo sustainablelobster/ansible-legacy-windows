@@ -1,0 +1,249 @@
+---
+- name: Verify owned certificate stores keys exports and exact recovery
+  hosts: legacy_windows
+  gather_facts: false
+  vars_files:
+    - vars/certificate_store.yml
+    - vars/certificate_store_fixture.yml
+  vars:
+    certificate_store_cases: >-
+      {{ certificate_store_binding_cases + certificate_store_lifecycle_cases }}
+    certificate_store_capture:
+      observation_scope: >-
+        Complete CurrentUser/LocalMachine SystemCertificates and service-store
+        registry trees with values and owner/group/DACL bytes. Installed CAPI
+        provider container catalogues in user/machine scopes with readable
+        public keys and owner/group/DACL bytes, plus Microsoft Software KSP
+        user/machine key names, RSA public keys, export policy and readable
+        owner/group/DACL bytes. Unavailable providers/properties retain native
+        error codes. No SACL or private-key-content snapshot is claimed.
+        Owned-store certificate DER/provider metadata and tracked file hashes
+        are read independently around every call. Full recorded original state
+        must match after certificate, persisted-key and owned-service cleanup.
+      results: '{{ certificate_store_results }}'
+      workspace: '{{ certificate_store_workspace.path | default(none) }}'
+      setup: '{{ certificate_store_setup.stdout | default("") }}'
+      original_preparation: >-
+        {{ certificate_store_original_preparation | default({}) }}
+      retained_comparison: >-
+        {{ certificate_store_retained_comparison | default(false) | bool }}
+      original_only: >-
+        {{ certificate_store_original_only | default(false) | bool }}
+      cleanup: '{{ certificate_store_cleanup | default({}) }}'
+      staging_before: >-
+        {{ certificate_store_staging_before.stdout | default("") }}
+      staging_after: >-
+        {{ certificate_store_staging_after.stdout | default("") }}
+  tasks:
+    - name: Allocate private controller evidence
+      ansible.builtin.tempfile:
+        state: file
+        prefix: certificate-store-{{ inventory_hostname }}-
+        suffix: .json
+        path: '{{ playbook_dir }}/../../tmp'
+      register: certificate_store_capture_file
+      delegate_to: localhost
+      vars: &local
+        ansible_connection: local
+        ansible_shell_type: sh
+        ansible_python_interpreter: '{{ ansible_playbook_python }}'
+      changed_when: false
+      check_mode: false
+
+    - name: Record private certificate evidence location
+      ansible.builtin.debug:
+        msg: >-
+          Certificate Store evidence: {{ certificate_store_capture_file.path }}
+
+    - name: Initialize retained public certificate results
+      ansible.builtin.set_fact:
+        certificate_store_results: []
+
+    - name: Require actual Python 3.4.4 and read existing staging
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import glob,json,os,sys,tempfile;
+        assert sys.version_info[:3] == (3,4,4);
+        print(json.dumps(sorted(glob.glob(os.path.join(tempfile.gettempdir(),
+        'ansible-tmp-*')) + glob.glob(os.path.join(tempfile.gettempdir(),
+        'legacy-windows-certificate-store-*')))))""
+      register: certificate_store_staging_before
+      changed_when: false
+
+    - name: Exercise only initially absent journal-owned certificate resources
+      block:
+        - name: Allocate a unique owned recovery workspace
+          sustainablelobster.legacy_windows.win_tempfile: # noqa: args[module]
+            state: directory
+            prefix: legacy-windows-certificate-store-demo-
+          register: certificate_store_workspace
+          check_mode: false
+
+        - name: Journal original native state before creating owned inputs
+          sustainablelobster.legacy_windows.win_command: # noqa: args[module]
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - '-'
+              - '{{ certificate_store_workspace.path }}'
+              - setup
+            stdin: '{{ certificate_store_program }}'
+          register: certificate_store_setup
+          check_mode: false
+
+        - name: Require a complete flushed journal before public operations
+          ansible.builtin.assert:
+            that: [(certificate_store_setup.stdout | from_json).journaled]
+
+        - name: Retain unique owned certificate and service identities
+          ansible.builtin.set_fact:
+            certificate_store_names: >-
+              {{ (certificate_store_setup.stdout | from_json).context }}
+
+        - name: Validate native certificate lifecycle and failure behavior
+          ansible.builtin.include_tasks: tasks/win_certificate_store_case.yml
+          loop: >-
+            {{ certificate_store_native_cases |
+            default(certificate_store_cases) }}
+          loop_control:
+            loop_var: certificate_store_case
+            label: '{{ certificate_store_case.name }}'
+          vars:
+            certificate_store_engine: native
+          when: not (certificate_store_original_only | default(false) | bool)
+
+        - name: Compare unchanged original on modern Windows
+          when: certificate_store_names.modern
+          block:
+            - name: Restore the owned input baseline for original replay
+              sustainablelobster.legacy_windows.win_command:
+                argv:
+                  - '{{ ansible_python_interpreter }}'
+                  - '-'
+                  - '{{ certificate_store_workspace.path }}'
+                  - prepare-original
+                stdin: '{{ certificate_store_program }}'
+              register: certificate_store_original_preparation
+              check_mode: false
+
+            - name: Require identical owned inputs for the original replay
+              ansible.builtin.assert:
+                that:
+                  - certificate_store_original_preparation.stdout |
+                    from_json == certificate_store_names
+
+            - name: Validate original behavior using identical owned inputs
+              ansible.builtin.include_tasks:
+                file: tasks/win_certificate_store_case.yml
+              loop: '{{ certificate_store_cases }}'
+              loop_control:
+                loop_var: certificate_store_case
+                label: '{{ certificate_store_case.name }}'
+              vars:
+                certificate_store_engine: original
+
+            - name: Compare complete literal public dictionaries
+              vars:
+                native: >-
+                  {{ certificate_store_results |
+                  selectattr('engine', 'equalto', 'native') | list }}
+                original: >-
+                  {{ certificate_store_results |
+                  selectattr('engine', 'equalto', 'original') | list }}
+              ansible.builtin.assert:
+                that:
+                  - native | length == certificate_store_cases | length
+                  - original | length == certificate_store_cases | length
+                  - native | selectattr('validated') | list | length ==
+                    certificate_store_cases | length
+                  - original | selectattr('validated') | list | length ==
+                    certificate_store_cases | length
+                  - native | map(attribute='result') | list ==
+                    original | map(attribute='result') | list
+              when:
+                - not (certificate_store_original_only | default(false) | bool)
+                - >-
+                  not (certificate_store_retained_comparison |
+                  default(false) | bool)
+
+            - name: Require every original request and independent validation
+              vars:
+                original: >-
+                  {{ certificate_store_results |
+                  selectattr('engine', 'equalto', 'original') | list }}
+              ansible.builtin.assert:
+                that:
+                  - original | length == certificate_store_cases | length
+                  - original | selectattr('validated') | list | length ==
+                    certificate_store_cases | length
+      always:
+        - name: Recover and retain exact original-state evidence
+          block:
+            - name: Recover owned resources # noqa: args[module]
+              sustainablelobster.legacy_windows.win_command:
+                argv:
+                  - '{{ ansible_python_interpreter }}'
+                  - '-'
+                  - '{{ certificate_store_workspace.path }}'
+                  - cleanup
+                stdin: '{{ certificate_store_program }}'
+              when: certificate_store_workspace.path is defined
+              register: certificate_store_cleanup
+              check_mode: false
+
+            - name: Save raw cleanup before equality assertions
+              ansible.builtin.copy:
+                content: '{{ certificate_store_capture | to_nice_json }}'
+                dest: '{{ certificate_store_capture_file.path }}'
+                mode: '0600'
+              delegate_to: localhost
+              vars: *local
+              changed_when: false
+
+            - name: Require exact full recorded baseline before deleting journal
+              vars:
+                cleanup: '{{ certificate_store_cleanup.stdout | from_json }}'
+              ansible.builtin.assert:
+                that:
+                  - cleanup.restored
+                  - >-
+                    cleanup.journal_absent | default(false) or
+                    cleanup.before == cleanup.after
+              when: certificate_store_workspace.path is defined
+
+            - name: Remove only the verified owned journal and workspace
+              sustainablelobster.legacy_windows.win_file: # noqa: args[module]
+                path: '{{ certificate_store_workspace.path }}'
+                state: absent
+              when: certificate_store_workspace.path is defined
+              check_mode: false
+
+            - name: Independently verify workspace journal and staging absence
+              ansible.builtin.raw: >-
+                cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+                "import glob,json,os,sys,tempfile;
+                assert not os.path.exists(sys.argv[1]);
+                print(json.dumps(sorted(glob.glob(os.path.join(
+                tempfile.gettempdir(),'ansible-tmp-*')) + glob.glob(
+                os.path.join(tempfile.gettempdir(),
+                'legacy-windows-certificate-store-*')))))"
+                "{{ certificate_store_workspace.path }}""
+              when: certificate_store_workspace.path is defined
+              register: certificate_store_staging_after
+              changed_when: false
+              check_mode: false
+
+            - name: Require original staging equality
+              ansible.builtin.assert:
+                that:
+                  - certificate_store_staging_after.stdout | from_json ==
+                    certificate_store_staging_before.stdout | from_json
+              when: certificate_store_workspace.path is defined
+          always:
+            - name: Preserve public observations even when recovery fails
+              ansible.builtin.copy:
+                content: '{{ certificate_store_capture | to_nice_json }}'
+                dest: '{{ certificate_store_capture_file.path }}'
+                mode: '0600'
+              delegate_to: localhost
+              vars: *local
+              changed_when: false

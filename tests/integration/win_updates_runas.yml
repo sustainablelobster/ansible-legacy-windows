@@ -1,0 +1,198 @@
+---
+# SPDX-License-Identifier: GPL-3.0-or-later
+- name: Measure Updates Runas public searches and actual backend identities
+  hosts: legacy_windows
+  gather_facts: false
+  vars_files:
+    - vars/win_updates_runas.yml
+  tasks:
+    - name: Require the bounded snapshot-protected operation selection
+      ansible.builtin.assert:
+        that:
+          - updates_runas_mode in ['observe', 'smoke', 'paired']
+          - >-
+            updates_runas_mode == 'observe' or
+            updates_runas_snapshot_protected | default(false)
+    - name: Record original staging and worker roots without module staging
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "{{ updates_runas_global_program }}""
+      register: updates_runas_global_before
+      changed_when: false
+    - name: Observe original account SID without becoming another account
+      sustainablelobster.legacy_windows.win_whoami:
+      register: updates_runas_account
+      no_log: true
+    - name: Observe protected configuration and original update policies
+      sustainablelobster.legacy_windows.win_command:
+        argv: ['{{ ansible_python_interpreter }}', '-', unused, observe]
+        stdin: '{{ updates_runas_program }}'
+      register: updates_runas_before
+      changed_when: false
+      no_log: true
+    - name: Observe the complete original service configuration and runtime
+      sustainablelobster.legacy_windows.win_service_info:
+      register: updates_runas_services_before
+      no_log: true
+    - name: Execute only the new Runas search and check-mode cohort
+      when: updates_runas_mode in ['smoke', 'paired']
+      block:
+        - name: Require the existing controlled missing managed-source policy
+          ansible.builtin.assert:
+            that: >-
+              'WUServer' not in
+              ((updates_runas_before.stdout | from_json).
+               protected.updates_policy | default([], true) |
+               map('first') | list)
+        - name: Allocate an exclusively owned identity-observation workspace
+          sustainablelobster.legacy_windows.win_tempfile:
+            state: directory
+            prefix: legacy-windows-updates-runas-
+          register: updates_runas_workspace
+        - name: Start the birth-identified read-only SYSTEM process observer
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}', '-',
+                   '{{ updates_runas_workspace.path }}', start]
+            stdin: '{{ updates_runas_program }}'
+          become: true
+          become_method: ansible.builtin.runas
+          become_user: 'NT AUTHORITY\SYSTEM'
+          register: updates_runas_monitor
+          no_log: true
+        - name: Require actual observer readiness before any Updates request
+          ansible.builtin.assert:
+            that: updates_runas_monitor.rc == 0
+        - name: Capture native searched and installed-preview Runas results
+          when: updates_runas_mode == 'paired'
+          sustainablelobster.legacy_windows.win_updates:
+            state: '{{ item.state }}'
+            server_selection: managed_server
+            category_names: ['*']
+            reject_list: ['.*']
+          check_mode: '{{ item.check }}'
+          become: true
+          become_method: ansible.builtin.runas
+          become_user: >-
+            {{ ansible_user if item.actor == "administrator"
+               else updates_runas_system_account }}
+          vars:
+            ansible_become_password: >-
+              {{ ansible_password if item.actor == "administrator" else none }}
+            ansible_remote_tmp: '{{ updates_runas_workspace.path }}\staging'
+          loop: '{{ updates_runas_cases }}'
+          register: updates_runas_native
+          ignore_errors: true
+          no_log: true
+        - name: Capture untouched released searched and preview Runas results
+          when: updates_runas_mode == 'paired'
+          ansible.windows.win_updates:
+            state: '{{ item.state }}'
+            server_selection: managed_server
+            category_names: ['*']
+            reject_list: ['.*']
+          check_mode: '{{ item.check }}'
+          become: true
+          become_method: ansible.builtin.runas
+          become_user: >-
+            {{ ansible_user if item.actor == "administrator"
+               else updates_runas_system_account }}
+          vars:
+            ansible_become_password: >-
+              {{ ansible_password if item.actor == "administrator" else none }}
+            ansible_remote_tmp: '{{ updates_runas_workspace.path }}\staging'
+            ansible_shell_type: cmd
+          loop: '{{ updates_runas_source_cases }}'
+          register: updates_runas_original
+          ignore_errors: true
+          no_log: true
+      always:
+        - name: Close only the birth-identified observer after all public calls
+          when: updates_runas_monitor is defined
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}', '-',
+                   '{{ updates_runas_workspace.path }}', stop]
+            stdin: '{{ updates_runas_program }}'
+          become: true
+          become_method: ansible.builtin.runas
+          become_user: 'NT AUTHORITY\SYSTEM'
+          register: updates_runas_monitor_closed
+          failed_when: false
+          no_log: true
+        - name: Preserve partial startup and public results before failure
+          ansible.builtin.copy:
+            dest: '{{ updates_runas_capture }}.partial.json'
+            mode: '0600'
+            content: >-
+              {{ {'account': updates_runas_account,
+                  'before': updates_runas_before,
+                  'services_before': updates_runas_services_before,
+                  'monitor': updates_runas_monitor | default(none),
+                  'monitor_closed':
+                    updates_runas_monitor_closed | default(none),
+                  'workspace': updates_runas_workspace | default(none),
+                  'native': updates_runas_native | default(none),
+                  'original': updates_runas_original | default(none)}
+                 | to_nice_json }}
+          delegate_to: localhost
+          vars:
+            ansible_connection: local
+            ansible_shell_type: sh
+            ansible_python_interpreter: '{{ ansible_playbook_python }}'
+          changed_when: false
+          no_log: true
+        - name: Remove only the owned workspace after literal process closure
+          when:
+            - updates_runas_monitor_closed is defined
+            - updates_runas_monitor_closed.rc | default(-1) == 0
+          sustainablelobster.legacy_windows.win_file:
+            path: '{{ updates_runas_workspace.path }}'
+            state: absent
+    - name: Observe all protected effects before controller snapshot recovery
+      sustainablelobster.legacy_windows.win_command:
+        argv: ['{{ ansible_python_interpreter }}', '-', unused, observe]
+        stdin: '{{ updates_runas_program }}'
+      register: updates_runas_after
+      changed_when: false
+      no_log: true
+    - name: Observe all service effects without claiming runtime stasis
+      sustainablelobster.legacy_windows.win_service_info:
+      register: updates_runas_services_after
+      no_log: true
+    - name: Record final global staging and worker roots before rollback
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "{{ updates_runas_global_program }}""
+      register: updates_runas_global_after
+      changed_when: false
+    - name: Verify the prior owned workspace is absent after snapshot recovery
+      when: updates_runas_absence_check is defined
+      sustainablelobster.legacy_windows.win_stat:
+        path: '{{ updates_runas_absence_check }}'
+      register: updates_runas_absence
+    - name: Preserve complete failed or successful public and identity evidence
+      ansible.builtin.copy:
+        dest: '{{ updates_runas_capture }}'
+        mode: '0600'
+        content: >-
+          {{ {'mode': updates_runas_mode, 'cases': updates_runas_cases,
+              'account': updates_runas_account,
+              'before': updates_runas_before, 'after': updates_runas_after,
+              'services_before': updates_runas_services_before,
+              'services_after': updates_runas_services_after,
+              'native': updates_runas_native | default(none),
+              'original': updates_runas_original | default(none),
+              'monitor': updates_runas_monitor | default(none),
+              'monitor_closed': updates_runas_monitor_closed | default(none),
+              'workspace': updates_runas_workspace | default(none),
+              'absence': updates_runas_absence | default(none),
+              'global_before': updates_runas_global_before,
+              'global_after': updates_runas_global_after} | to_nice_json }}
+      delegate_to: localhost
+      vars:
+        ansible_connection: local
+        ansible_shell_type: sh
+        ansible_python_interpreter: '{{ ansible_playbook_python }}'
+      changed_when: false
+      no_log: true
+    - name: Close only this owner's standard SSH control connection
+      ansible.builtin.meta: reset_connection

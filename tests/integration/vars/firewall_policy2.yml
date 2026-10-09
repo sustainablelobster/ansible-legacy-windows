@@ -1,0 +1,49 @@
+---
+firewall_policy2_cases:
+  - name: Preview enabling native Domain and both available actions
+    seed: {profile: Domain, property: Enabled, value: 0}
+    params: &policy2_actions
+      profiles: [Domain]
+      state: enabled
+      inbound_action: allow
+      outbound_action: block
+    check: true
+    changed: true
+  - name: Enable native Domain and both actions
+    params: *policy2_actions
+    changed: true
+  - name: Repeat native enabled Domain and both actions
+    params: *policy2_actions
+    changed: false
+  - name: Apply both reverse native action values
+    params: &policy2_reverse
+      profiles: [Domain]
+      state: enabled
+      inbound_action: block
+      outbound_action: allow
+    changed: true
+  - name: Repeat both reverse native action values
+    params: *policy2_reverse
+    changed: false
+  - name: Preview disabling native Domain without applying actions
+    params: &policy2_disabled
+      profiles: [Domain]
+      state: disabled
+      inbound_action: allow
+      outbound_action: block
+    check: true
+    changed: true
+  - name: Disable native Domain without applying actions
+    params: *policy2_disabled
+    changed: true
+  - name: Repeat disabled native Domain and ignored actions
+    params: *policy2_disabled
+    changed: false
+  - name: Reject unavailable configured reset before enabling native Domain
+    params:
+      profiles: [Domain]
+      state: enabled
+      inbound_action: not_configured
+    changed: false
+    failed: true
+    message: NotConfigured

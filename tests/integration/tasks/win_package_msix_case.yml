@@ -1,0 +1,224 @@
+---
+- name: Select the exact MSIX public request
+  ansible.builtin.set_fact:
+    package_msix_request: >-
+      {{ {'provider': package_msix_case.provider | default('msix'),
+      'state': package_msix_case.state | default('present')} |
+      combine({'product_id': package_msix_ready.full_name}
+      if package_msix_case.by_full_name | default(false) else
+      {'product_id': package_msix_ready.name}
+      if package_msix_case.by_name | default(false) else
+      {'path': package_msix_ready.unsigned_package}
+      if package_msix_case.unsigned | default(false) else
+      {'path': package_msix_ready.package}) |
+      combine({'creates_path': package_msix_ready.package}
+      if package_msix_case.force | default(false) else {}) |
+      combine({'checksum': package_msix_case.checksum}
+      if package_msix_case.checksum is defined else {}) |
+      combine({'arguments': package_msix_case.arguments,
+      'wait_for_children': true}
+      if package_msix_case.wait | default(false) else {}) }}
+- name: Prepare the exact owned native prerequisite
+  sustainablelobster.legacy_windows.win_command:
+    argv:
+      - '{{ ansible_python_interpreter }}'
+      - '{{ package_msix_workspace.path }}\package_msix_fixture.py'
+      - '{{ package_msix_workspace.path }}'
+      - prepare
+      - '{{ package_msix_case.initial }}'
+  register: package_msix_before_native
+  changed_when: false
+  no_log: true
+- name: Retain the complete native public operation including failures
+  block:
+    # The same complete request is sent to the released and native modules.
+    - name: Execute native MSIX public request  # noqa: args[module]
+      sustainablelobster.legacy_windows.win_package: >-
+        {{ package_msix_request }}
+      check_mode: '{{ package_msix_case.check | default(false) }}'
+      register: package_msix_native
+  rescue:
+    - name: Preserve native MSIX failure without normalization
+      ansible.builtin.debug:
+        msg: Native MSIX failure retained literally.
+- name: Observe native package certificate key and policy effects
+  sustainablelobster.legacy_windows.win_command:
+    argv:
+      - '{{ ansible_python_interpreter }}'
+      - '{{ package_msix_workspace.path }}\package_msix_fixture.py'
+      - '{{ package_msix_workspace.path }}'
+      - observe
+  register: package_msix_after_native
+  changed_when: false
+  no_log: true
+- name: Prepare the identical owned original prerequisite
+  sustainablelobster.legacy_windows.win_command:
+    argv:
+      - '{{ ansible_python_interpreter }}'
+      - '{{ package_msix_workspace.path }}\package_msix_fixture.py'
+      - '{{ package_msix_workspace.path }}'
+      - prepare
+      - '{{ package_msix_case.initial }}'
+  register: package_msix_before_original
+  changed_when: false
+  no_log: true
+- name: Retain untouched released complete public operation including failures
+  block:
+    - name: Execute untouched source MSIX request
+      ansible.windows.win_package: '{{ package_msix_request }}'
+      check_mode: '{{ package_msix_case.check | default(false) }}'
+      register: package_msix_original
+      vars:
+        ansible_shell_type: cmd
+        ansible_remote_tmp: '{{ package_msix_workspace.path }}'
+  rescue:
+    - name: Preserve original MSIX failure without normalization
+      ansible.builtin.debug:
+        msg: Original MSIX failure retained literally.
+- name: Observe original package certificate key and policy effects
+  sustainablelobster.legacy_windows.win_command:
+    argv:
+      - '{{ ansible_python_interpreter }}'
+      - '{{ package_msix_workspace.path }}\package_msix_fixture.py'
+      - '{{ package_msix_workspace.path }}'
+      - observe
+  register: package_msix_after_original
+  changed_when: false
+  no_log: true
+- name: Accumulate every raw operation before asserting
+  ansible.builtin.set_fact:
+    package_msix_results: >-
+      {{ package_msix_results + [{'name': package_msix_case.name,
+      'request': package_msix_request, 'expected': package_msix_case,
+      'native': package_msix_native, 'original': package_msix_original,
+      'before_native': package_msix_before_native,
+      'after_native': package_msix_after_native,
+      'before_original': package_msix_before_original,
+      'after_original': package_msix_after_original}] }}
+  no_log: true
+- name: Resolve the actual native and source deployment ActivityIds
+  when: package_msix_case.deployment_failure | default(false)
+  ansible.builtin.set_fact:
+    native_activity: >-
+      {{ package_msix_native.stderr |
+      regex_findall('\[ActivityId\] ([0-9a-f-]{36})') }}
+    original_activity: >-
+      {{ package_msix_original.stderr |
+      regex_findall('\[ActivityId\] ([0-9a-f-]{36})') }}
+  no_log: true
+- name: Require one operation identity repeated by the diagnostic command
+  when: package_msix_case.deployment_failure | default(false)
+  ansible.builtin.assert:
+    that:
+      - native_activity | length == 1
+      - original_activity | length == 1
+      - >-
+        package_msix_native.stderr |
+        regex_findall('Get-AppPackageLog -ActivityID ([0-9a-f-]{36})') ==
+        native_activity
+      - >-
+        package_msix_original.stderr |
+        regex_findall('Get-AppPackageLog -ActivityID ([0-9a-f-]{36})') ==
+        original_activity
+  no_log: true
+- name: Retain Windows events for each generated deployment identity
+  when: package_msix_case.deployment_failure | default(false)
+  ansible.windows.win_powershell:
+    depth: 4
+    parameters:
+      Ids: '{{ native_activity + original_activity }}'
+    script: |
+      param([String[]]$Ids)
+      $Ansible.Changed = $false
+      foreach ($id in $Ids) {
+          @{ ActivityId = $id; Events = @(Get-AppPackageLog -ActivityID $id |
+            ForEach-Object {
+              @{ Time = $_.Time; ID = $_.ID;
+                 Message = $_.Message }
+          }) }
+      }
+  vars:
+    ansible_shell_type: cmd
+    ansible_remote_tmp: '{{ package_msix_workspace.path }}'
+  register: package_msix_deployment_events
+  no_log: true
+- name: Retain unmodified event identity proof alongside public results
+  when: package_msix_case.deployment_failure | default(false)
+  ansible.builtin.set_fact:
+    package_msix_results: >-
+      {{ package_msix_results[:-1] + [package_msix_results[-1] |
+      combine({'deployment_events': package_msix_deployment_events})] }}
+  no_log: true
+- name: Require both deployment identities to belong to the exact owned input
+  when: package_msix_case.deployment_failure | default(false)
+  vars:
+    marker: >-
+      {{ 'unsigned%20package.appx' if package_msix_case.unsigned |
+      default(false) else package_msix_ready.full_name }}
+  ansible.builtin.assert:
+    that:
+      - package_msix_deployment_events.output | length == 2
+      - >-
+        package_msix_deployment_events.output[0].ActivityId ==
+        native_activity[0]
+      - >-
+        package_msix_deployment_events.output[1].ActivityId ==
+        original_activity[0]
+      - >-
+        marker in (package_msix_deployment_events.output[0].Events |
+        map(attribute='Message') | join('\n'))
+      - >-
+        marker in (package_msix_deployment_events.output[1].Events |
+        map(attribute='Message') | join('\n'))
+  no_log: true
+- name: Persist all raw operations before any gate
+  ansible.builtin.copy:
+    content: >-
+      {{ {"results": package_msix_results,
+      "setup": package_msix_setup} | to_nice_json }}
+    dest: '{{ package_msix_capture_prefix }}-{{ inventory_hostname }}.json'
+    mode: '0600'
+  delegate_to: localhost
+  vars:
+    ansible_connection: local
+    ansible_shell_type: sh
+    ansible_python_interpreter: '{{ ansible_playbook_python }}'
+  changed_when: false
+  no_log: true
+- name: Require whole public equality without omitting returned fields
+  vars:
+    native_public: >-
+      {{ package_msix_native | dict2items |
+      rejectattr('key', 'in', ['invocation', 'exception']) | items2dict }}
+    original_public: >-
+      {{ package_msix_original | dict2items |
+      rejectattr('key', 'in', ['invocation', 'exception']) | items2dict }}
+    native_comparison: >-
+      {{ native_public | combine({'stderr': native_public.stderr |
+      replace(native_activity[0], '__owned_deployment_activity__'),
+      'stderr_lines': native_public.stderr_lines |
+      map('replace', native_activity[0], '__owned_deployment_activity__') |
+      list}) if package_msix_case.deployment_failure |
+      default(false) else native_public }}
+    original_comparison: >-
+      {{ original_public | combine({'stderr': original_public.stderr |
+      replace(original_activity[0], '__owned_deployment_activity__'),
+      'stderr_lines': original_public.stderr_lines |
+      map('replace', original_activity[0], '__owned_deployment_activity__') |
+      list}) if package_msix_case.deployment_failure |
+      default(false) else original_public }}
+  ansible.builtin.assert:
+    that:
+      - >-
+        (native_comparison | to_json(sort_keys=true)) ==
+        (original_comparison | to_json(sort_keys=true))
+      - package_msix_native.changed == package_msix_case.changed
+      - >-
+        package_msix_native.failed | default(false) ==
+        package_msix_case.failed | default(false)
+      - >-
+        (package_msix_after_native.stdout | from_json |
+        to_json(sort_keys=true)) ==
+        (package_msix_after_original.stdout | from_json |
+        to_json(sort_keys=true))
+  no_log: true

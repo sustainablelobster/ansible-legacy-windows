@@ -1,0 +1,57 @@
+---
+# SPDX-License-Identifier: GPL-3.0-or-later
+powershell_poll_program: |
+  RESOURCE_SOURCE = {{ lookup('ansible.builtin.file', playbook_dir +
+    '/fixtures/win_powershell.py') | to_json }}
+  ASYNC_SOURCE = {{ lookup('ansible.builtin.file', playbook_dir +
+    '/fixtures/native_async.py') | to_json }}
+  WMI_SOURCE = {{ lookup('ansible.builtin.file', playbook_dir +
+    '/../../plugins/module_utils/legacy_windows_wmi.py') | to_json }}
+  FILE_SCRIPT = {{ lookup('ansible.builtin.file', playbook_dir +
+    '/fixtures/win_powershell_async.ps1') | to_json }}
+  POLL_BASE_SOURCE = {{ lookup('ansible.builtin.file', playbook_dir +
+    '/fixtures/win_powershell_async.py') | to_json }}
+  {{ lookup('ansible.builtin.file', playbook_dir +
+    '/fixtures/win_powershell_poll.py') }}
+powershell_poll_setup_program: |
+  MONITOR_SOURCE = {{ powershell_poll_program | to_json }}
+  {{ powershell_poll_program }}
+powershell_poll_header: |
+  [CmdletBinding(SupportsShouldProcess)]
+  param([string]$MarkerPath, [string]$ReleasePath, [string]$OutputPath)
+  [IO.File]::WriteAllText($MarkerPath, [string]$PID)
+  $timer = [Diagnostics.Stopwatch]::StartNew()
+  while (-not [IO.File]::Exists($ReleasePath)) {
+      if ($timer.Elapsed.TotalSeconds -gt 90) {
+          throw 'owned async release missing'
+      }
+      Start-Sleep -Milliseconds 100
+  }
+powershell_poll_cases:
+  - name: Structured inline output automatically polled
+    params:
+      depth: 4
+      script: |
+        $Ansible.Changed=$false
+        $Ansible.Result=@{nested=@{rows=@(1,$null,'λ');yes=$true};number=2.5}
+        ,@(@{name='one';count=1},@{name='two';count=2})
+        Write-Information -MessageData @{label='information λ'} `
+            -Tags first,second -InformationAction Continue
+  - name: Controller UTF8 file automatically polled
+    local: true
+    params:
+      parameters: {Text: 'controller parameter λ'}
+  - name: Supported ShouldProcess preview remains nonmutating
+    check: true
+    changed: true
+    params:
+      script: |
+        if ($PSCmdlet.ShouldProcess($OutputPath, 'write owned output')) {
+            [IO.File]::WriteAllText($OutputPath, 'owned λ')
+        }
+        $Ansible.Result=@{check=$Ansible.CheckMode}
+  - name: Genuine engine failure automatically polled
+    failed: true
+    params:
+      script: >-
+        $Ansible.Changed=$false;'before λ';throw 'async failure λ';'after λ'

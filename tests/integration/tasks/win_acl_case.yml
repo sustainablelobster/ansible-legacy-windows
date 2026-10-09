@@ -1,0 +1,79 @@
+---
+- name: '{{ acl_case.name ~ " on " ~ acl_target }}'
+  sustainablelobster.legacy_windows.win_acl:  # noqa: args[module]
+    path: '{{ acl_path }}'
+    user: '{{ acl_guest_sid }}'
+    rights: '{{ acl_case.rights }}'
+    type: '{{ acl_case.type | default("allow") }}'
+    state: '{{ acl_case.state | default("present") }}'
+    inherit: '{{ acl_case.inherit | default(omit) }}'
+    propagation: '{{ acl_case.propagation | default(omit) }}'
+  check_mode: '{{ acl_case.check | default(false) }}'
+  diff: true
+  register: acl_result
+
+- name: Read native permissions and verify unchanged object contents
+  sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+    argv:
+      - '{{ ansible_python_interpreter }}'
+      - '-'
+      - '{{ acl_workspace.path }}'
+      - observe
+      - '{{ acl_kind }}'
+    stdin: '{{ acl_inheritance_fixture }}'
+  register: acl_observation
+  changed_when: false
+  check_mode: false
+
+- name: Require exact public results and unchanged check-mode state
+  vars:
+    snapshot: '{{ (acl_observation.stdout | from_json).snapshot }}'
+  ansible.builtin.assert:
+    that:
+      - acl_result.changed == acl_case.changed
+      - acl_result.warnings | default([]) == []
+      - acl_result.msg is not defined
+      - acl_result.diff is not defined
+      - not (acl_case.check | default(false)) or snapshot == acl_previous
+      - acl_case.changed or snapshot == acl_previous
+
+- name: Require exact access entries and preserve unrelated permissions
+  vars:
+    observed: '{{ (acl_observation.stdout | from_json).snapshot[item.value] }}'
+    original: '{{ acl_baseline[item.value] }}'
+    entries: >-
+      {{ observed.aces | selectattr("sid", "equalto", acl_guest_sid) | list }}
+    expected: '{{ acl_case.entries[item.key] | default([]) }}'
+  ansible.builtin.assert:
+    fail_msg: >-
+      {{ {'path': item.value, 'expected': expected, 'actual': entries,
+          'baseline': original, 'observation': observed} | to_json }}
+    that:
+      - entries | map(attribute='type') | list == expected | map('first') | list
+      - >-
+        entries | map(attribute='flags') | list ==
+        expected | map(attribute=1) | list
+      - >-
+        entries | map(attribute='mask') | list ==
+        expected | map(attribute=2) | list
+      - observed.protected == original.protected
+      - observed.null_dacl == original.null_dacl
+      - >-
+        observed.aces | rejectattr('sid', 'equalto', acl_guest_sid) |
+        map(attribute='raw') | sort ==
+        original.aces | map(attribute='raw') | sort
+  loop: '{{ acl_paths | dict2items }}'
+  loop_control:
+    label: '{{ item.key }}'
+
+- name: Retain complete public results and ordered native snapshots
+  vars:
+    snapshot: '{{ (acl_observation.stdout | from_json).snapshot }}'
+    record:
+      target: '{{ acl_target }}'
+      case: '{{ acl_case.name }}'
+      result: '{{ acl_result }}'
+      snapshot: '{{ snapshot }}'
+  ansible.builtin.set_fact:
+    acl_previous: '{{ snapshot }}'
+    acl_results: '{{ acl_results | default([]) + [record] }}'

@@ -1,0 +1,113 @@
+---
+- name: Verify failed reboot requests without changing the boot
+  hosts: legacy_windows
+  gather_facts: false
+  vars:
+    reboot_failure_cases:
+      - {reboot_timeout: invalid}
+      - {unknown_argument: true}
+      - boot_time_command: >-
+          Write-Output 'owned boot output';
+          [Console]::Error.WriteLine('owned boot error'); exit 7
+  tasks:
+    - name: Allocate a unique private controller evidence file
+      ansible.builtin.tempfile:
+        state: file
+        path: '{{ playbook_dir }}/../../tmp'
+        prefix: 'reboot-failures-{{ inventory_hostname }}-'
+        suffix: .json
+      register: reboot_failure_evidence
+      delegate_to: localhost
+      changed_when: false
+      vars:
+        ansible_connection: local
+        ansible_shell_type: sh
+        ansible_python_interpreter: '{{ ansible_playbook_python }}'
+
+    - name: Require Python 3.4.4 and capture staging before requests
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import glob,json,os,sys,tempfile;
+        assert sys.version_info[:3] == (3,4,4);
+        print(json.dumps(sorted(glob.glob(os.path.join(
+        tempfile.gettempdir(),'ansible-tmp-*')))))""
+      register: reboot_failure_staging_before
+      changed_when: false
+
+    - name: Read independent boot information before failed requests
+      sustainablelobster.legacy_windows.win_reboot_info:
+      register: reboot_failure_before
+
+    - name: Exercise pre-reboot failures and retain original failure flags
+      block:
+        - name: Run native action failures
+          # Dynamic requests deliberately include invalid arguments.
+          sustainablelobster.legacy_windows.win_reboot:  # noqa: args[module]
+            '{{ item }}'
+          loop: '{{ reboot_failure_cases }}'
+          register: reboot_native_failures
+          ignore_errors: true
+
+        - name: Run the same failures with the unchanged original action
+          when: reboot_compare | default(false) | bool
+          ansible.windows.win_reboot: '{{ item }}'
+          loop: '{{ reboot_failure_cases }}'
+          register: reboot_source_failures
+          ignore_errors: true
+
+        - name: Require native failures without successful reboot flags
+          ansible.builtin.assert:
+            that:
+              - item.failed
+              - not item.changed
+              - not item.rebooted | default(false)
+          loop: '{{ reboot_native_failures.results }}'
+          loop_control:
+            label: '{{ item.item }}'
+
+        - name: Read independent boot information after failed requests
+          sustainablelobster.legacy_windows.win_reboot_info:
+          register: reboot_failure_after
+
+        - name: Require complete public boot and reboot-marker equality
+          ansible.builtin.assert:
+            that: reboot_failure_after == reboot_failure_before
+      always:
+        - name: Observe staging after failure paths
+          ansible.builtin.raw: >-
+            cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+            "import glob,json,os,tempfile;
+            print(json.dumps(sorted(glob.glob(os.path.join(
+            tempfile.gettempdir(),'ansible-tmp-*')))))""
+          register: reboot_failure_staging_after
+          changed_when: false
+          ignore_errors: true
+          ignore_unreachable: true
+
+        - name: Retain complete requests and unmodified failed results
+          ansible.builtin.copy:
+            content: >-
+              {{ {'parameters': reboot_failure_cases,
+                  'native': reboot_native_failures | default(none),
+                  'source': reboot_source_failures | default(none),
+                  'before': reboot_failure_before,
+                  'after': reboot_failure_after | default(none),
+                  'staging_before': reboot_failure_staging_before,
+                  'staging_after': reboot_failure_staging_after}
+                 | to_nice_json }}
+            dest: '{{ reboot_failure_evidence.path }}'
+            mode: '0600'
+          delegate_to: localhost
+          changed_when: false
+          vars:
+            ansible_connection: local
+            ansible_shell_type: sh
+            ansible_python_interpreter: '{{ ansible_playbook_python }}'
+
+        - name: Require exact global staging equality
+          ansible.builtin.assert:
+            that:
+              - not reboot_failure_staging_after.failed | default(false)
+              - not reboot_failure_staging_after.unreachable | default(false)
+              - reboot_failure_staging_before.stdout | from_json ==
+                reboot_failure_staging_after.stdout | from_json

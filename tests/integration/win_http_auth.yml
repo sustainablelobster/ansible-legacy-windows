@@ -1,0 +1,650 @@
+---
+- name: Prove native HTTP and proxy authentication identity
+  hosts: legacy_windows
+  gather_facts: false
+  vars_files:
+    - vars/get_url_fixture.yml
+    - vars/http_auth_fixture.yml
+    - vars/http_default_proxy_fixture.yml
+  vars:
+    http_auth_evidence_dir: "{{ playbook_dir }}/../../tmp/codex/evidence"
+    http_auth_compare: false
+    http_auth_password: >-
+      {{ ansible_password | default(ansible_ssh_pass | default('')) }}
+  tasks:
+    - name: Record actual runtime operating system and default identity
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import ctypes,glob,json,os,socket,struct,sys,tempfile;
+        assert sys.version_info[:3] == (3,4,4);
+        version=ctypes.create_string_buffer(284);
+        struct.pack_into('I',version,0,284);
+        assert ctypes.WinDLL('ntdll').RtlGetVersion(ctypes.byref(version))==0;
+        name=ctypes.create_unicode_buffer(256);size=ctypes.c_uint32(len(name));
+        identity=ctypes.WinDLL('secur32').GetUserNameExW;
+        assert identity(2,name,ctypes.byref(size));
+        print(json.dumps(dict(python=sys.version,computer=socket.gethostname(),
+        identity=name.value.replace(chr(92),'/'),
+        windows=list(struct.unpack_from('III',version,4)),
+        staging=sorted(path for prefix in
+        ('ansible-tmp-','legacy-windows-package-url-') for path in
+        glob.glob(os.path.join(tempfile.gettempdir(),prefix+'*'))))))""
+      register: auth_runtime
+      changed_when: false
+
+    - name: Read the allocated guest network identity
+      # Keep GETMAC's native output-format switch unchanged.
+      ansible.builtin.raw: getmac /FO CSV /NH  # codespell:ignore fo
+      register: auth_network
+      changed_when: false
+
+    - name: Require actual authorized guest identity
+      ansible.builtin.assert:
+        that:
+          - http_auth_expected_mac in auth_network.stdout | upper | replace('-',
+            '')
+          - (auth_runtime.stdout | from_json).windows[:2] ==
+            http_auth_expected_version
+          - http_auth_password | length > 0
+
+    - name: Allocate private evidence directory
+      ansible.builtin.tempfile:
+        state: directory
+        path: "{{ http_auth_evidence_dir }}"
+        prefix: "http-auth-{{ inventory_hostname }}-"
+      register: auth_controller
+      delegate_to: localhost
+      vars: &local
+        ansible_connection: local
+        ansible_shell_type: sh
+        ansible_python_interpreter: "{{ ansible_playbook_python }}"
+      changed_when: false
+
+    - name: Exercise native authentication with a uniquely owned listener
+      block:
+        - name: Allocate owned listener outputs # noqa: args[module]
+          sustainablelobster.legacy_windows.win_tempfile:
+            state: directory
+            prefix: legacy-windows-get-url-auth-
+          register: auth_workspace
+
+        - name: Start native SSPI listener # noqa: args[module]
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - "{{ ansible_python_interpreter }}"
+              - "-"
+              - "{{ auth_workspace.path }}"
+              - setup
+            stdin: "{{ get_url_program }}"
+          register: auth_setup
+          changed_when: false
+          no_log: true
+
+        - name: Bind the actual machine-name authentication endpoint
+          ansible.builtin.set_fact:
+            auth_endpoint: >-
+              {{ 'http://{0}:{1}'.format(
+                  (auth_runtime.stdout | from_json).computer,
+                  (auth_setup.stdout | from_json).server.port) }}
+
+        - name: Mark independent request history # noqa: args[module]
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - "{{ ansible_python_interpreter }}"
+              - "-"
+              - "{{ auth_workspace.path }}"
+              - prepare
+              - e30=
+            stdin: "{{ get_url_program }}"
+          changed_when: false
+
+        - name: Require anonymous requests to be challenged
+          block:
+            - name: Request without any credentials # noqa: args[module]
+              sustainablelobster.legacy_windows.win_uri:
+                url: "{{ auth_endpoint }}/anonymous"
+                use_proxy: false
+                url_timeout: 10
+              register: auth_anonymous
+          rescue:
+            - name: Retain expected native challenge
+              ansible.builtin.set_fact:
+                auth_anonymous: "{{ ansible_failed_result }}"
+
+        - name: Require an active authentication endpoint before credentials
+          ansible.builtin.assert:
+            that:
+              - auth_anonymous is failed
+              - auth_anonymous.status_code == 401
+              - not auth_anonymous.changed
+
+        - name: Verify explicit credentials # noqa: args[module]
+          sustainablelobster.legacy_windows.win_uri:
+            url: "{{ auth_endpoint }}/explicit"
+            url_username: "{{ ansible_user }}"
+            url_password: "{{ http_auth_password }}"
+            use_proxy: false
+            url_timeout: 10
+          register: auth_explicit
+          no_log: true
+
+        - name: Keep proxy credentials away from direct origin
+          block:
+            - name: Ask only for default proxy credentials # noqa: args[module]
+              sustainablelobster.legacy_windows.win_uri:
+                url: "{{ auth_endpoint }}/no-origin-credentials"
+                proxy_use_default_credential: true
+                use_proxy: false
+                url_timeout: 10
+              register: auth_no_origin
+          rescue:
+            - name: Retain expected origin challenge
+              ansible.builtin.set_fact:
+                auth_no_origin: "{{ ansible_failed_result }}"
+
+        - name: Require origin credential separation
+          ansible.builtin.assert:
+            that:
+              - auth_no_origin is failed
+              - auth_no_origin.status_code == 401
+
+        - name: Verify default credentials # noqa: args[module]
+          sustainablelobster.legacy_windows.win_uri:
+            url: "{{ auth_endpoint }}/default"
+            use_default_credential: true
+            use_proxy: false
+            url_timeout: 10
+          register: auth_default
+
+        - name: Verify supplied loopback origin identity
+          sustainablelobster.legacy_windows.win_uri:
+            url: "{{ (auth_setup.stdout | from_json).http }}/loopback-explicit"
+            url_username: "{{ ansible_user }}"
+            url_password: "{{ http_auth_password }}"
+            use_proxy: false
+            url_timeout: 10
+          register: auth_loopback_explicit
+          no_log: true
+
+        - name: Reject wrong loopback origin credentials
+          block:
+            - name: Send wrong password to loopback origin
+              sustainablelobster.legacy_windows.win_uri:
+                url: "{{ (auth_setup.stdout | from_json).http }}/loopback-wrong"
+                url_username: "{{ ansible_user }}"
+                url_password: deliberately-wrong
+                use_proxy: false
+                url_timeout: 10
+              register: auth_loopback_wrong
+          rescue:
+            - name: Retain failed loopback credentials
+              ansible.builtin.set_fact:
+                auth_loopback_wrong: "{{ ansible_failed_result }}"
+
+        - name: Reject wrong forced-Basic credentials at a Negotiate endpoint
+          block:
+            - name: Bind the explicitly supplied forced-Basic identity
+              sustainablelobster.legacy_windows.win_uri:
+                url: >-
+                  {{ (auth_setup.stdout | from_json).http
+                  }}/loopback-forced-wrong
+                url_username: "{{ ansible_user }}"
+                url_password: deliberately-wrong
+                force_basic_auth: true
+                use_proxy: false
+                url_timeout: 10
+              register: auth_loopback_forced_wrong
+          rescue:
+            - name: Retain failed forced-Basic credentials
+              ansible.builtin.set_fact:
+                auth_loopback_forced_wrong: "{{ ansible_failed_result }}"
+
+        - name: Reject the wrong native account password
+          block:
+            - name: Send deliberately incorrect credentials # noqa: args[module]
+              sustainablelobster.legacy_windows.win_uri:
+                url: "{{ auth_endpoint }}/wrong"
+                url_username: "{{ ansible_user }}"
+                url_password: deliberately-wrong
+                use_proxy: false
+                url_timeout: 10
+              register: auth_wrong
+          rescue:
+            - name: Retain expected authentication rejection
+              ansible.builtin.set_fact:
+                auth_wrong: "{{ ansible_failed_result }}"
+
+        - name: Download with default credentials # noqa: args[module]
+          sustainablelobster.legacy_windows.win_get_url:
+            url: "{{ auth_endpoint }}/download"
+            dest: "{{ auth_workspace.path }}\\output\\result.bin"
+            use_default_credential: true
+            use_proxy: false
+            url_timeout: 10
+          register: auth_download
+
+        - name: Repeat authenticated download # noqa: args[module]
+          sustainablelobster.legacy_windows.win_get_url:
+            url: "{{ auth_endpoint }}/download"
+            dest: "{{ auth_workspace.path }}\\output\\result.bin"
+            use_default_credential: true
+            use_proxy: false
+            url_timeout: 10
+          register: auth_repeat
+
+        - name: Preview package with default credentials # noqa: args[module]
+          sustainablelobster.legacy_windows.win_package:
+            path: "{{ auth_endpoint }}/package.bin"
+            provider: registry
+            product_id: >-
+              legacy-http-auth-{{
+              (auth_setup.stdout | from_json).server.token }}
+            use_default_credential: true
+            use_proxy: false
+            url_timeout: 10
+          check_mode: true
+          register: auth_package
+
+        - name: Compare untouched upstream default proxy authentication
+          when: http_auth_compare | bool
+          ansible.windows.win_uri:
+            url: http://legacy-windows-owned.invalid/upstream-proxy-default
+            proxy_url: "{{ auth_endpoint }}"
+            proxy_use_default_credential: true
+            url_timeout: 10
+          register: auth_upstream_proxy
+          failed_when: false
+          vars:
+            ansible_shell_type: cmd
+            ansible_remote_tmp: "{{ auth_workspace.path }}"
+
+        - name: Compare untouched upstream bypassed origin challenge
+          when: http_auth_compare | bool
+          ansible.windows.win_uri:
+            url: >-
+              http://localhost:{{
+              (auth_setup.stdout | from_json).server.port
+              }}/upstream-origin-with-proxy
+            proxy_url: "{{ auth_endpoint }}"
+            proxy_use_default_credential: true
+            url_timeout: 10
+          register: auth_upstream_origin
+          failed_when: false
+          vars:
+            ansible_shell_type: cmd
+            ansible_remote_tmp: "{{ auth_workspace.path }}"
+
+        - name: Verify default proxy credentials # noqa: args[module]
+          sustainablelobster.legacy_windows.win_uri:
+            url: http://legacy-windows-owned.invalid/proxy-default
+            proxy_url: "{{ auth_endpoint }}"
+            proxy_use_default_credential: true
+            url_timeout: 10
+          register: auth_proxy_default
+
+        - name: Verify explicit proxy credentials # noqa: args[module]
+          sustainablelobster.legacy_windows.win_uri:
+            url: http://legacy-windows-owned.invalid/proxy-explicit
+            proxy_url: "{{ auth_endpoint }}"
+            proxy_username: "{{ ansible_user }}"
+            proxy_password: "{{ http_auth_password }}"
+            url_timeout: 10
+          register: auth_proxy_explicit
+          no_log: true
+
+        - name: Keep authenticated proxy identity away from origin
+          block:
+            - name: Challenge origin after proxy logon # noqa: args[module]
+              sustainablelobster.legacy_windows.win_uri:
+                url: >-
+                  http://localhost:{{
+                  (auth_setup.stdout | from_json).server.port
+                  }}/origin-with-proxy
+                proxy_url: "{{ auth_endpoint }}"
+                proxy_use_default_credential: true
+                url_timeout: 10
+              register: auth_proxy_origin
+          rescue:
+            - name: Retain independent origin rejection
+              ansible.builtin.set_fact:
+                auth_proxy_origin: "{{ ansible_failed_result }}"
+
+        - name: Require no origin identity after proxy logon
+          ansible.builtin.assert:
+            that:
+              - auth_proxy_origin is failed
+              - auth_proxy_origin.status_code == none
+              - not auth_proxy_origin.changed
+              - "'cannot safely isolate' in auth_proxy_origin.msg"
+
+        - name: Reject wrong explicit proxy identity
+          block:
+            - name: Verify supplied loopback proxy identity
+              sustainablelobster.legacy_windows.win_uri:
+                url: http://legacy-windows-owned.invalid/proxy-loopback
+                proxy_url: "{{ (auth_setup.stdout | from_json).http }}"
+                proxy_username: "{{ ansible_user }}"
+                proxy_password: "{{ http_auth_password }}"
+                url_timeout: 10
+              register: auth_proxy_loopback
+              no_log: true
+
+            - name: Send wrong proxy password to loopback proxy
+              sustainablelobster.legacy_windows.win_uri:
+                url: http://legacy-windows-owned.invalid/proxy-wrong
+                proxy_url: "{{ (auth_setup.stdout | from_json).http }}"
+                proxy_username: "{{ ansible_user }}"
+                proxy_password: deliberately-wrong
+                url_timeout: 10
+              register: auth_proxy_wrong
+          rescue:
+            - name: Retain actual proxy rejection
+              ansible.builtin.set_fact:
+                auth_proxy_wrong: "{{ ansible_failed_result }}"
+
+        - name: Require wrong proxy credentials to fail
+          ansible.builtin.assert:
+            that:
+              - auth_proxy_wrong is failed
+              - auth_proxy_loopback.status_code == 200
+              - auth_proxy_wrong.status_code in [none, 407]
+              - not auth_proxy_wrong.changed
+              - "'deliberately-wrong' not in auth_proxy_wrong.msg"
+
+        - name: Refuse unsolicited origin authentication behind proxy
+          block:
+            - name: Challenge a DNS origin after successful proxy logon
+              sustainablelobster.legacy_windows.win_uri:
+                url: http://legacy-windows-owned.invalid/origin-with-proxy
+                proxy_url: "{{ auth_endpoint }}"
+                proxy_use_default_credential: true
+                url_timeout: 10
+              register: auth_proxy_dns_origin
+          rescue:
+            - name: Retain protected DNS origin challenge
+              ansible.builtin.set_fact:
+                auth_proxy_dns_origin: "{{ ansible_failed_result }}"
+
+        - name: Require only authorized proxy identity
+          ansible.builtin.assert:
+            that:
+              - auth_proxy_dns_origin is failed
+              - auth_proxy_dns_origin.status_code == 401
+
+        - name: Allocate proxy recovery journal # noqa: args[module]
+          sustainablelobster.legacy_windows.win_tempfile:
+            state: directory
+            prefix: legacy-windows-http-proxy-
+          register: auth_proxy_workspace
+
+        - name: Journal original LAN configuration # noqa: args[module]
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - "{{ ansible_python_interpreter }}"
+              - "-"
+              - "{{ auth_proxy_workspace.path }}"
+              - setup
+            stdin: "{{ http_default_proxy_program }}"
+          register: auth_proxy_setup
+          changed_when: false
+          no_log: true
+
+        - name: Configure the owned default IE proxy # noqa: args[module]
+          sustainablelobster.legacy_windows.win_inet_proxy:
+            auto_detect: false
+            proxy: >-
+              {{ auth_endpoint | regex_replace('^http://', '') }}
+          register: auth_default_proxy_config
+
+        - name: Request through default IE proxy # noqa: args[module]
+          sustainablelobster.legacy_windows.win_uri:
+            url: http://legacy-windows-owned.invalid/default-proxy
+            proxy_use_default_credential: true
+            url_timeout: 10
+          register: auth_default_proxy
+
+        - name: Configure only the owned PAC URL # noqa: args[module]
+          sustainablelobster.legacy_windows.win_inet_proxy:
+            auto_detect: false
+            auto_config_url: >-
+              {{ [(auth_setup.stdout | from_json).http, 'pac',
+                  (auth_setup.stdout | from_json).server.token] | join('/') }}
+          register: auth_pac_config
+
+        - name: Request through default PAC proxy # noqa: args[module]
+          sustainablelobster.legacy_windows.win_uri:
+            url: http://legacy-windows-owned.invalid/default-pac
+            proxy_use_default_credential: true
+            url_timeout: 10
+          register: auth_pac
+
+        - name: Read actual active default proxy values # noqa: args[module]
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - "{{ ansible_python_interpreter }}"
+              - "-"
+              - "{{ auth_proxy_workspace.path }}"
+              - observe
+            stdin: "{{ http_default_proxy_program }}"
+          register: auth_proxy_observed
+          changed_when: false
+          no_log: true
+
+        - name: Observe authenticated identities # noqa: args[module]
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - "{{ ansible_python_interpreter }}"
+              - "-"
+              - "{{ auth_workspace.path }}"
+              - observe
+            stdin: "{{ get_url_program }}"
+          register: auth_observed
+          changed_when: false
+          no_log: true
+
+        - name: Require public results and independently authenticated
+            identities
+          ansible.builtin.assert:
+            that:
+              - auth_explicit.status_code == 200 and not auth_explicit.changed
+              - auth_default.status_code == 200 and not auth_default.changed
+              - auth_loopback_explicit.status_code == 200
+              - auth_loopback_wrong is failed
+              - auth_loopback_wrong.status_code in [none, 401]
+              - not auth_loopback_wrong.changed
+              - "'deliberately-wrong' not in auth_loopback_wrong.msg"
+              - auth_loopback_forced_wrong is failed
+              - auth_loopback_forced_wrong.status_code in [none, 401]
+              - not auth_loopback_forced_wrong.changed
+              - >-
+                'deliberately-wrong' not in auth_loopback_forced_wrong.msg
+              - auth_wrong is failed and auth_wrong.status_code in [none, 401]
+              - not auth_wrong.changed
+              - "'deliberately-wrong' not in auth_wrong.msg"
+              - auth_download.status_code == 200 and auth_download.changed
+              - auth_repeat.status_code == 200 and not auth_repeat.changed
+              - auth_package.status_code == 200 and auth_package.changed
+              - auth_proxy_default.status_code == 200
+              - auth_proxy_explicit.status_code == 200
+              - auth_default_proxy_config.changed and auth_pac_config.changed
+              - auth_default_proxy.status_code == 200
+              - auth_pac.status_code == 200
+              - >-
+                (auth_observed.stdout | from_json).requests |
+                selectattr('path', 'equalto', '/no-origin-credentials') |
+                map(attribute='headers') |
+                selectattr('Authorization', 'defined') | list == []
+              - >-
+                (auth_observed.stdout | from_json).requests |
+                selectattr('path', 'search', '/proxy-wrong$') |
+                map(attribute='identity') | unique | list == [none]
+              - >-
+                (auth_observed.stdout | from_json).requests |
+                selectattr('path', 'equalto', '/loopback-wrong') |
+                map(attribute='identity') | unique | list == [none]
+              - >-
+                (auth_observed.stdout | from_json).requests |
+                selectattr('path', 'equalto', '/loopback-forced-wrong') |
+                map(attribute='identity') | unique | list == [none]
+              - >-
+                (auth_observed.stdout | from_json).requests |
+                selectattr('path', 'search', '/origin-with-proxy$') |
+                map(attribute='headers') |
+                selectattr('Authorization', 'defined') | list == []
+              - >-
+                (auth_observed.stdout | from_json).requests |
+                selectattr('path', 'equalto', '/origin-with-proxy') | list == []
+              - >-
+                (auth_observed.stdout | from_json).requests |
+                selectattr('status', 'equalto', 200) |
+                rejectattr('path', 'search', '^/pac/') |
+                map(attribute='identity') | unique | list ==
+                [(auth_runtime.stdout | from_json).identity]
+              - >-
+                (auth_observed.stdout | from_json).requests |
+                selectattr('path', 'equalto', '/wrong') |
+                map(attribute='identity') | unique | list == [none]
+      always:
+        - name: Retain history after module failure # noqa: args[module]
+          when: auth_setup.rc | default(1) == 0
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - "{{ ansible_python_interpreter }}"
+              - "-"
+              - "{{ auth_workspace.path }}"
+              - observe
+            stdin: "{{ get_url_program }}"
+          register: auth_recovery_observed
+          changed_when: false
+          no_log: true
+          failed_when: false
+
+        - name: Preserve private authentication evidence
+          ansible.builtin.copy:
+            content: >-
+              {{ {'runtime': auth_runtime, 'network': auth_network,
+                  'setup': auth_setup | default(none),
+                  'anonymous': auth_anonymous | default(none),
+                  'no_origin': auth_no_origin | default(none),
+                  'explicit': auth_explicit | default(none),
+                  'default': auth_default | default(none),
+                  'loopback_explicit': auth_loopback_explicit | default(none),
+                  'loopback_wrong': auth_loopback_wrong | default(none),
+                  'wrong': auth_wrong | default(none),
+                  'loopback_forced_wrong':
+                    auth_loopback_forced_wrong | default(none),
+                  'download': auth_download | default(none),
+                  'repeat': auth_repeat | default(none),
+                  'package': auth_package | default(none),
+                  'proxy_default': auth_proxy_default | default(none),
+                  'upstream_proxy': auth_upstream_proxy | default(none),
+                  'upstream_origin': auth_upstream_origin | default(none),
+                  'proxy_explicit': auth_proxy_explicit | default(none),
+                  'proxy_origin': auth_proxy_origin | default(none),
+                  'proxy_wrong': auth_proxy_wrong | default(none),
+                  'proxy_loopback': auth_proxy_loopback | default(none),
+                  'proxy_dns_origin': auth_proxy_dns_origin | default(none),
+                  'proxy_setup': auth_proxy_setup | default(none),
+                  'default_proxy': auth_default_proxy | default(none),
+                  'pac': auth_pac | default(none),
+                  'proxy_observed': auth_proxy_observed | default(none),
+                  'observed': auth_observed |
+                    default(auth_recovery_observed | default(none))} |
+                  to_nice_json }}
+            dest: "{{ auth_controller.path }}/capture.json"
+            mode: "0600"
+          delegate_to: localhost
+          vars: *local
+          changed_when: false
+          no_log: true
+
+        - name: Restore and verify original proxy values # noqa: args[module]
+          when: auth_proxy_workspace.path is defined
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - "{{ ansible_python_interpreter }}"
+              - "-"
+              - "{{ auth_proxy_workspace.path }}"
+              - cleanup
+            stdin: "{{ http_default_proxy_program }}"
+          register: auth_proxy_restored
+          changed_when: false
+          no_log: true
+          failed_when: false
+
+        - name: Restore outputs and stop listener # noqa: args[module]
+          when: auth_workspace.path is defined
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - "{{ ansible_python_interpreter }}"
+              - "-"
+              - "{{ auth_workspace.path }}"
+              - cleanup
+            stdin: "{{ get_url_program }}"
+          register: auth_restored
+          changed_when: false
+          no_log: true
+          failed_when: false
+
+        - name: Validate owned listener inputs # noqa: args[module]
+          when: auth_restored.rc | default(1) == 0
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - "{{ ansible_python_interpreter }}"
+              - "-"
+              - "{{ auth_workspace.path }}"
+              - finalize
+            stdin: "{{ get_url_program }}"
+          changed_when: false
+
+        - name: Remove only the verified owned workspace # noqa: args[module]
+          when: auth_restored.rc | default(1) == 0
+          sustainablelobster.legacy_windows.win_file:
+            path: "{{ auth_workspace.path }}"
+            state: absent
+
+        - name: Remove verified proxy recovery journal # noqa: args[module]
+          when: auth_proxy_restored.rc | default(1) == 0
+          sustainablelobster.legacy_windows.win_file:
+            path: "{{ auth_proxy_workspace.path }}"
+            state: absent
+
+        - name: Independently require original staging and absent workspace
+          ansible.builtin.raw: >-
+            cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+            "import glob,json,os,sys,tempfile;
+            assert not any(os.path.exists(path) for path in sys.argv[1:]);
+            print(json.dumps(sorted(path for prefix in
+            ('ansible-tmp-','legacy-windows-package-url-') for path in
+            glob.glob(os.path.join(tempfile.gettempdir(),prefix+'*')))))"
+            "{{ auth_workspace.path | default('') }}"
+            "{{ auth_proxy_workspace.path | default('') }}""
+          register: auth_staging_after
+          changed_when: false
+
+        - name: Retain independent recovery proof
+          ansible.builtin.copy:
+            content: >-
+              {{ lookup('ansible.builtin.file',
+                  auth_controller.path + '/capture.json') | from_json |
+                  combine({'listener_recovery': auth_restored,
+                    'proxy_recovery': auth_proxy_restored,
+                    'staging_after': auth_staging_after,
+                    'workspace_absent': auth_staging_after.rc == 0}) |
+                  to_nice_json }}
+            dest: "{{ auth_controller.path }}/capture.json"
+            mode: "0600"
+          delegate_to: localhost
+          vars: *local
+          changed_when: false
+          no_log: true
+
+        - name: Require independent listener and staging recovery
+          ansible.builtin.assert:
+            that:
+              - (auth_runtime.stdout | from_json).staging ==
+                auth_staging_after.stdout | from_json
+              - (auth_restored.stdout | from_json).server_stopped
+              - >-
+                auth_proxy_workspace.path is not defined or
+                (auth_proxy_restored.stdout | from_json).restored

@@ -1,0 +1,133 @@
+---
+- name: Prepare the bounded malformed-line scenario
+  sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+    argv:
+      - '{{ ansible_python_interpreter }}'
+      - '-'
+      - '{{ hosts_workspace.path }}'
+      - '{{ hosts_case.fixture_operation }}'
+    stdin: '{{ hosts_fixture }}'
+  register: hosts_case_preparation
+  changed_when: true
+  check_mode: false
+  when: hosts_case.fixture_operation is defined
+
+- name: Retain the prepared bytes for exact non-writing assertions
+  ansible.builtin.set_fact:
+    hosts_previous_bytes: >-
+      {{ (hosts_case_preparation.stdout | from_json).bytes }}
+  when: hosts_case.fixture_operation is defined
+
+- name: '{{ hosts_case.name }}'
+  block:
+    - name: Apply or predict the requested hosts change
+      sustainablelobster.legacy_windows.win_hosts:  # noqa: args[module]
+        state: '{{ hosts_case.parameters.state | default(omit) }}'
+        canonical_name: >-
+          {{ hosts_case.parameters.canonical_name | default(omit) }}
+        ip_address: '{{ hosts_case.parameters.ip_address | default(omit) }}'
+        aliases: '{{ hosts_case.parameters.aliases | default(omit) }}'
+        action: '{{ hosts_case.parameters.action | default(omit) }}'
+      register: hosts_case_result
+      check_mode: '{{ hosts_case.check | default(false) }}'
+      diff: true
+  rescue:
+    - name: Require the declared failure and retain its complete result
+      ansible.builtin.assert:
+        that:
+          - hosts_case.error is defined
+          - hosts_case_result is failed
+          - hosts_case_result.msg == hosts_case.error
+          - not hosts_case_result.changed
+
+- name: Read the exact hosts bytes independently
+  sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+    argv:
+      - '{{ ansible_python_interpreter }}'
+      - '-'
+      - '{{ hosts_workspace.path }}'
+      - observe
+    stdin: '{{ hosts_fixture }}'
+  register: hosts_case_observation
+  changed_when: false
+  check_mode: false
+
+- name: Verify public results and exact non-writing behavior
+  vars:
+    observation: '{{ hosts_case_observation.stdout | from_json }}'
+    before: >-
+      {{ (hosts_previous_bytes | b64decode).splitlines() |
+         join('%c' | format(10)) ~ ('%c' | format(10)) }}
+    after: >-
+      {{ (observation.bytes | b64decode).splitlines() |
+         join('%c' | format(10)) ~ ('%c' | format(10)) }}
+  ansible.builtin.assert:
+    that:
+      - hosts_case_result.changed == hosts_case.changed
+      - (hosts_case.error is defined) == (hosts_case_result is failed)
+      - hosts_case_result.warnings | default([]) == []
+      - hosts_case.error is defined or hosts_case_result.msg is not defined
+      - hosts_case.error is not defined or hosts_case_result.diff is not defined
+      - hosts_case.error is defined or hosts_case_result.diff.before == before
+      - >-
+        hosts_case.error is defined or hosts_case.check | default(false) or
+        hosts_case.unwritten_diff | default(false) or
+        hosts_case_result.diff.after == after
+      - >-
+        not (hosts_case.check | default(false)) or
+        observation.bytes == hosts_previous_bytes
+      - hosts_case.changed or observation.bytes == hosts_previous_bytes
+      - >-
+        not (hosts_case.unwritten_diff | default(false)) or
+        (not hosts_case_result.changed and
+         hosts_case_result.diff.after != hosts_case_result.diff.before)
+      - >-
+        hosts_case.error is defined or
+        not (hosts_case.check | default(false)) or
+        (hosts_case_result.diff.after != hosts_case_result.diff.before) ==
+        hosts_case.changed
+      - not (hosts_case.empty | default(false)) or observation.entries == []
+      - "'# legacy-windows hosts fixture' in (observation.bytes | b64decode)"
+      - "'  # untouched comment' in (observation.bytes | b64decode)"
+      - >-
+        'unrecognized-fixture-line' in
+        (observation.bytes | b64decode)
+      - >-
+        '# last comment without terminator' in
+        (observation.bytes | b64decode)
+
+- name: Require the expected mappings and alias order
+  ansible.builtin.assert:
+    that:
+      - item in (hosts_case_observation.stdout | from_json).entries
+  loop: '{{ hosts_case.present | default([]) }}'
+
+- name: Require removed canonical names to be absent
+  ansible.builtin.assert:
+    that:
+      - >-
+        (hosts_case_observation.stdout | from_json).entries |
+        selectattr('canonical_name', 'equalto', item) | list == []
+  loop: '{{ hosts_case.absent | default([]) }}'
+
+- name: Preserve the specified comments and whitespace
+  ansible.builtin.assert:
+    that:
+      - item in ((hosts_case_observation.stdout | from_json).bytes | b64decode)
+  loop: '{{ hosts_case.text | default([]) }}'
+
+- name: Verify the reported diff for a deliberately unwritten change
+  ansible.builtin.assert:
+    that:
+      - item not in hosts_case_result.diff.after
+  loop: '{{ hosts_case.diff_absent_text | default([]) }}'
+
+- name: Retain the complete public result and unmodified byte capture
+  vars:
+    record:
+      case: '{{ hosts_case.name }}'
+      result: '{{ hosts_case_result }}'
+      bytes: '{{ (hosts_case_observation.stdout | from_json).bytes }}'
+  ansible.builtin.set_fact:
+    hosts_previous_bytes: '{{ record.bytes }}'
+    hosts_results: '{{ hosts_results | default([]) + [record] }}'

@@ -1,0 +1,163 @@
+---
+- name: Verify native access rules in isolated security fixtures
+  hosts: legacy_windows
+  gather_facts: false
+  vars_files:
+    - vars/acl.yml
+    - vars/acl_inheritance_fixture.yml
+    - vars/acl_link_fixture.yml
+    - vars/acl_certificate_fixture.yml
+  tasks:
+    - name: Require Python 3.4.4 and record existing task directories
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import glob, json, os, sys, tempfile;
+        assert sys.version_info[:3] == (3, 4, 4);
+        print(json.dumps(sorted(glob.glob(os.path.join(tempfile.gettempdir(),
+        'ansible-tmp-*')))))""
+      register: task_directories_before
+      changed_when: false
+
+    - name: Exercise access rules on owned objects
+      block:
+        - name: Allocate an isolated workspace
+          sustainablelobster.legacy_windows.win_tempfile:  # noqa: args[module]
+            state: directory
+            prefix: legacy-windows-acl-
+          register: acl_workspace
+          check_mode: false
+
+        - name: Create controlled file and registry permission fixtures
+          sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - '-'
+              - '{{ acl_workspace.path }}'
+              - setup
+              - '{{ item }}'
+            stdin: '{{ acl_inheritance_fixture }}'
+          loop: [filesystem, registry]
+          register: acl_setup
+          changed_when: true
+          check_mode: false
+
+        - name: Retain independent fixture paths and initial observations
+          ansible.builtin.set_fact:
+            acl_fixtures:
+              filesystem: '{{ acl_setup.results[0].stdout | from_json }}'
+              registry: '{{ acl_setup.results[1].stdout | from_json }}'
+
+        - name: Exercise directories files and registry keys
+          ansible.builtin.include_tasks: tasks/win_acl_target.yml
+          loop: '{{ acl_targets }}'
+          loop_control:
+            loop_var: acl_target
+
+        - name: Exercise junction and target permissions separately
+          ansible.builtin.include_tasks: tasks/win_acl_links.yml
+
+        - name: Exercise certificate private-key permissions
+          ansible.builtin.include_tasks: tasks/win_acl_certificates.yml
+
+        - name: Exercise failure and recovery
+          block:
+            - name: Reject a missing target before resolving the user
+              sustainablelobster.legacy_windows.win_acl:  # noqa: args[module]
+                path: '{{ acl_workspace.path }}\missing'
+                user: legacy-acl-unknown-user
+                rights: Write
+                type: allow
+              register: acl_missing
+
+            - name: Reject unexpected success
+              ansible.builtin.fail:
+                msg: A missing access rule target unexpectedly succeeded
+          rescue:
+            - name: Require the actionable missing-path failure
+              ansible.builtin.assert:
+                that:
+                  - acl_missing is failed
+                  - not acl_missing.changed
+                  - >-
+                    acl_missing.msg == acl_workspace.path +
+                    '\missing file or directory does not exist on the host'
+
+        - name: Verify recovery after a failed request
+          sustainablelobster.legacy_windows.win_acl:  # noqa: args[module]
+            path: '{{ acl_fixtures.filesystem.paths.file }}'
+            user: '{{ acl_guest_sid }}'
+            rights: Write
+            type: allow
+            state: absent
+          register: acl_recovery
+
+        - name: Require an unchanged recovery result
+          ansible.builtin.assert:
+            that:
+              - not acl_recovery.changed
+              - acl_recovery.warnings | default([]) == []
+      always:
+        - name: Clean up fixtures before removing the workspace
+          when: acl_workspace.path is defined
+          block:
+            - name: Remove owned certificate fixtures  # noqa: args[module]
+              # Preserve recovery data if any fixture cleanup fails.
+              sustainablelobster.legacy_windows.win_command:
+                argv:
+                  - '{{ ansible_python_interpreter }}'
+                  - '-'
+                  - '{{ acl_workspace.path }}'
+                  - cleanup
+                stdin: '{{ acl_certificate_fixture }}'
+              changed_when: true
+              check_mode: false
+
+            - name: Remove owned link fixtures  # noqa: args[module]
+              sustainablelobster.legacy_windows.win_command:
+                argv:
+                  - '{{ ansible_python_interpreter }}'
+                  - '-'
+                  - '{{ acl_workspace.path }}'
+                  - cleanup
+                stdin: '{{ acl_link_fixture }}'
+              changed_when: true
+              check_mode: false
+
+            - name: Clean up owned security fixtures  # noqa: args[module]
+              sustainablelobster.legacy_windows.win_command:
+                argv:
+                  - '{{ ansible_python_interpreter }}'
+                  - '-'
+                  - '{{ acl_workspace.path }}'
+                  - cleanup
+                  - '{{ item }}'
+                stdin: '{{ acl_inheritance_fixture }}'
+              loop: [registry, filesystem]
+              changed_when: true
+              check_mode: false
+
+            - name: Remove only the workspace allocated by this test
+              sustainablelobster.legacy_windows.win_file:  # noqa: args[module]
+                path: '{{ acl_workspace.path }}'
+                state: absent
+              check_mode: false
+
+        - name: Verify workspace removal and record task directories
+          ansible.builtin.raw: >-
+            cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+            "import glob, json, os, sys, tempfile;
+            assert not os.path.exists(sys.argv[1]);
+            print(json.dumps(sorted(glob.glob(os.path.join(tempfile.gettempdir(),
+            'ansible-tmp-*')))))" "{{ acl_workspace.path }}""
+          when: acl_workspace.path is defined
+          register: task_directories_after
+          changed_when: false
+          check_mode: false
+
+        - name: Require staging cleanup after successful and failed requests
+          ansible.builtin.assert:
+            that:
+              - >-
+                (task_directories_before.stdout | from_json) ==
+                (task_directories_after.stdout | from_json)
+          when: acl_workspace.path is defined

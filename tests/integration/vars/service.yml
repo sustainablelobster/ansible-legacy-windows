@@ -1,0 +1,455 @@
+---
+# SPDX-License-Identifier: GPL-3.0-or-later
+service_cases:
+  - name: Missing service information does not create anything
+    params: {name: '{{ service_names.primary }}'}
+    changed: false
+    exists: false
+  - name: Predict creation without an SCM entry
+    params:
+      name: '{{ service_names.companion }}'
+      path: '{{ service_commands.companion }}'
+      start_mode: manual
+    check: true
+    changed: true
+    exists: true
+  - name: Create the companion dispatcher stopped
+    params:
+      name: '{{ service_names.companion }}'
+      path: '{{ service_commands.companion }}'
+      start_mode: manual
+    changed: true
+    exists: true
+    role: companion
+    registry: {Start: 3, Type: 16, ObjectName: LocalSystem}
+    native_state: 1
+  - name: Companion creation is idempotent
+    params:
+      name: '{{ service_names.companion }}'
+      path: '{{ service_commands.companion }}'
+      start_mode: manual
+    changed: false
+    exists: true
+    role: companion
+  - name: Create primary with one real service dependency
+    params:
+      name: '{{ service_names.primary }}'
+      path: '{{ service_commands.primary }}'
+      display_name: '{{ service_names.primary }} display'
+      description: Initial owned description
+      start_mode: manual
+      dependencies: ['{{ service_names.companion }}']
+    changed: true
+    exists: true
+    registry:
+      Start: 3
+      Description: Initial owned description
+      DependOnService: ['{{ service_names.companion }}']
+    native_state: 1
+  - name: Resolve the exact display label without wildcard interpretation
+    params: {name: '{{ service_names.primary }} display'}
+    changed: false
+    exists: true
+  - name: Predict start without launching either dispatcher
+    params: {name: '{{ service_names.primary }}', state: started}
+    check: true
+    changed: true
+    exists: true
+    native_state: 1
+  - name: Start primary and its companion dependency
+    params: {name: '{{ service_names.primary }}', state: started}
+    changed: true
+    exists: true
+    native_state: 4
+    companion_state: 4
+  - name: Starting the running dispatcher is idempotent
+    params: {name: '{{ service_names.primary }}', state: started}
+    changed: false
+    exists: true
+    native_state: 4
+  - name: Pause the real dispatcher
+    params: {name: '{{ service_names.primary }}', state: paused}
+    changed: true
+    exists: true
+    native_state: 7
+  - name: Pausing is idempotent
+    params: {name: '{{ service_names.primary }}', state: paused}
+    changed: false
+    exists: true
+    native_state: 7
+  - name: Started resumes rather than launches a second process
+    params: {name: '{{ service_names.primary }}', state: started}
+    changed: true
+    exists: true
+    native_state: 4
+  - name: Restart always performs a real lifecycle transition
+    params: {name: '{{ service_names.primary }}', state: restarted}
+    changed: true
+    exists: true
+    native_state: 4
+  - name: Stop refuses an active dependent without force
+    params: {name: '{{ service_names.companion }}', state: stopped}
+    changed: false
+    failed: true
+    exists: null
+    public_absent: [exists, diff]
+    message: It can only be stopped if the Force flag is set.
+    role: companion
+    native_state: 4
+  - name: Force stops both owned dependent services
+    params:
+      name: '{{ service_names.companion }}'
+      state: stopped
+      force_dependent_services: true
+    changed: true
+    exists: true
+    role: companion
+    native_state: 1
+    primary_state: 1
+  - name: Stopped is idempotent
+    params: {name: '{{ service_names.primary }}', state: stopped}
+    changed: false
+    exists: true
+    native_state: 1
+  - name: A stopped service cannot accept pause even in check mode
+    params: {name: '{{ service_names.primary }}', state: paused}
+    check: true
+    changed: false
+    failed: true
+    exists: false
+    message: The service does not support pausing
+    native_state: 1
+  - name: Predict ordered modern configuration without writes
+    modern_only: true
+    params: &modern_configuration
+      name: '{{ service_names.primary }}'
+      description: Revised owned description
+      error_control: ignore
+      failure_actions: [{type: restart, delay_ms: 500}, {type: none}]
+      failure_actions_on_non_crash_failure: true
+      failure_command: owned-unused-command
+      failure_reboot_msg: owned-unused-message
+      failure_reset_period_sec: 4294967295
+      load_order_group: ''
+      pre_shutdown_timeout_ms: 12000
+      required_privileges: [SeChangeNotifyPrivilege]
+      sid_info: unrestricted
+      start_mode: delayed
+    check: true
+    changed: true
+    exists: true
+  - name: Write native recovery and modern configuration
+    modern_only: true
+    params: *modern_configuration
+    changed: true
+    exists: true
+    registry:
+      Description: Revised owned description
+      ErrorControl: 0
+      Start: 2
+      DelayedAutostart: 1
+      FailureActionsOnNonCrashFailures: 1
+      PreshutdownTimeout: 12000
+      RequiredPrivileges: [SeChangeNotifyPrivilege]
+      ServiceSidType: 1
+  - name: Configuration is idempotent
+    modern_only: true
+    params: *modern_configuration
+    changed: false
+    exists: true
+  - name: Bind mixed nested keys and fractional canonical values after aliases
+    modern_only: true
+    params:
+      name: '{{ service_names.primary }}'
+      pre_shutdown_timeout_ms: 1
+      pre_shutdown_timeout: 2.5
+      failure_reset_period_sec: 1
+      failure_reset_period: 1.5
+      failure_actions: [{Type: RESTART, Delay_ms: 3.5}]
+    changed: true
+    exists: true
+    registry: {PreshutdownTimeout: 2}
+    public_after:
+      pre_shutdown_timeout_ms: 2
+      failure_reset_period_sec: 2
+      failure_actions: [{type: RESTART, delay_ms: 4}]
+  - name: Nested delay alias overwrites canonical while remaining in the diff
+    modern_only: true
+    params:
+      name: '{{ service_names.primary }}'
+      failure_actions: [{type: RESTART, delay_ms: 1, delay: 9}]
+    changed: true
+    exists: true
+    public_after:
+      failure_actions: [{type: RESTART, delay_ms: 9, delay: 9}]
+  - name: Caller spelling and retained aliases preserve action idempotence
+    modern_only: true
+    params:
+      name: '{{ service_names.primary }}'
+      failure_actions: [{Type: RESTART, delay: 9}]
+    changed: false
+    exists: true
+    public_after:
+      failure_actions: [{type: RESTART, delay_ms: 9, delay: 9}]
+  - name: Mixed-case delay alias retains the canonical default
+    modern_only: true
+    params:
+      name: '{{ service_names.primary }}'
+      failure_actions: [{type: restart, Delay: 9}]
+    changed: true
+    exists: true
+    public_after:
+      failure_actions: [{type: restart, delay: 9, delay_ms: 0}]
+  - name: Mixed-case delay alias preserves the supplied canonical value
+    modern_only: true
+    params:
+      name: '{{ service_names.primary }}'
+      failure_actions: [{type: restart, delay_ms: 1, Delay: 9}]
+    changed: true
+    exists: true
+    public_after:
+      failure_actions: [{type: restart, delay_ms: 1, delay: 9}]
+  - name: Alias expansion rejects a mixed-case canonical collision
+    modern_only: true
+    params:
+      name: '{{ service_names.primary }}'
+      failure_actions: [{type: restart, Delay_ms: 1, delay: 9}]
+    changed: false
+    failed: true
+    exists: null
+    public_absent: [exists, diff, invocation]
+    public:
+      msg: >-
+        Unhandled exception while executing module: Exception calling "Create"
+        with "2" argument(s): "An item with the same key has already been
+        added."
+  - name: Input rejects a mixed-case alias collision before binding
+    modern_only: true
+    params:
+      name: '{{ service_names.primary }}'
+      failure_actions: [{type: restart, delay: 9, Delay: 11}]
+    changed: false
+    failed: true
+    exists: null
+    public_absent: [exists, diff, invocation]
+    public:
+      msg: >-
+        failure during exec_wrapper: Cannot convert the JSON string because a
+        dictionary that was converted from the string contains the duplicated
+        keys 'delay' and 'Delay'.
+  - name: Input rejects a mixed-case canonical collision before binding
+    modern_only: true
+    params:
+      name: '{{ service_names.primary }}'
+      failure_actions: [{type: restart, delay_ms: 1, Delay_ms: 2}]
+    changed: false
+    failed: true
+    exists: null
+    public_absent: [exists, diff, invocation]
+    public:
+      msg: >-
+        failure during exec_wrapper: Cannot convert the JSON string because a
+        dictionary that was converted from the string contains the duplicated
+        keys 'delay_ms' and 'Delay_ms'.
+  - name: Restore modern configuration before the later failure boundary
+    modern_only: true
+    params: *modern_configuration
+    changed: true
+    exists: true
+    registry: {PreshutdownTimeout: 12000}
+  - name: Reset-period-only access failure retains an earlier description write
+    modern_only: true
+    params:
+      name: '{{ service_names.primary }}'
+      description: Partial write retained before access denial
+      failure_reset_period_sec: 20
+    changed: false
+    failed: true
+    exists: null
+    public_absent: [exists, diff]
+    partial_write: true
+    message: >-
+      Failed to change service config (Access is denied,
+      Win32ErrorCode 5 - 0x00000005)
+    registry: {Description: Partial write retained before access denial}
+    native_state: 1
+  - name: Recover the description after the partial access failure
+    modern_only: true
+    params: *modern_configuration
+    changed: true
+    exists: true
+    registry: {Description: Revised owned description}
+  - name: Configure reboot recovery without starting the stopped service
+    modern_only: true
+    params:
+      name: '{{ service_names.primary }}'
+      failure_actions: [{type: reboot, delay_ms: 4294967295}]
+    changed: true
+    exists: true
+    native_state: 1
+  - name: Clear actions and required privileges without triggering recovery
+    modern_only: true
+    params:
+      name: '{{ service_names.primary }}'
+      failure_actions: []
+      required_privileges: []
+      start_mode: manual
+    changed: true
+    exists: true
+    registry: {Start: 3}
+    registry_absent: [RequiredPrivileges]
+  - name: Unknown privilege request succeeds without a stored registry value
+    modern_only: true
+    params:
+      name: '{{ service_names.primary }}'
+      description: Partial write retained
+      required_privileges: [DefinitelyNotAWindowsPrivilege]
+    changed: true
+    exists: true
+    registry:
+      Description: Partial write retained
+    registry_absent: [RequiredPrivileges]
+  - name: Restore the description after the accepted unknown privilege request
+    modern_only: true
+    params:
+      name: '{{ service_names.primary }}'
+      description: Recovered owned description
+      required_privileges: []
+    changed: true
+    exists: true
+    registry: {Description: Recovered owned description}
+    registry_absent: [RequiredPrivileges]
+  - name: Invalid interactive account fails after account configuration
+    params:
+      name: '{{ service_names.primary }}'
+      username: 'NT AUTHORITY\LocalService'
+      desktop_interact: true
+    changed: true
+    failed: true
+    exists: false
+    message: Can only set 'desktop_interact' to true
+    registry: {ObjectName: 'NT AUTHORITY\LOCAL SERVICE'}
+  - name: Restore SYSTEM account explicitly
+    params: {name: '{{ service_names.primary }}', username: LocalSystem}
+    changed: true
+    exists: true
+    registry: {ObjectName: LocalSystem}
+  - name: Predict deletion while preserving the service
+    params: {name: '{{ service_names.primary }}', state: absent}
+    check: true
+    changed: true
+    exists: false
+  - name: Delete the stopped primary
+    params: {name: '{{ service_names.primary }}', state: absent}
+    changed: true
+    exists: false
+    absent: true
+  - name: Deletion is idempotent
+    params: {name: '{{ service_names.primary }}', state: absent}
+    changed: false
+    exists: false
+    absent: true
+
+# These cases exercise the deliberate pre-Vista basic-startup boundary, not
+# an emulation of delayed startup or other unavailable modern setters.
+service_legacy_cases:
+  - name: Legacy automatic startup is a real basic configuration write
+    params: {name: '{{ service_names.companion }}', start_mode: auto}
+    changed: true
+    exists: true
+    role: companion
+    registry: {Start: 2}
+    registry_absent: [DelayedAutostart]
+    public: {start_mode: auto}
+  - name: Legacy automatic startup is readable and idempotent
+    params: {name: '{{ service_names.companion }}', start_mode: auto}
+    changed: false
+    exists: true
+    public: {start_mode: auto}
+  - name: Predict disabled startup without writing the basic mode
+    params: {name: '{{ service_names.companion }}', start_mode: disabled}
+    check: true
+    changed: true
+    exists: true
+    role: companion
+    registry: {Start: 2}
+    public: {start_mode: disabled}
+  - name: Write legacy disabled startup
+    params: {name: '{{ service_names.companion }}', start_mode: disabled}
+    changed: true
+    exists: true
+    role: companion
+    registry: {Start: 4}
+    public: {start_mode: disabled}
+  - name: Legacy disabled startup is idempotent
+    params: {name: '{{ service_names.companion }}', start_mode: disabled}
+    changed: false
+    exists: true
+    public: {start_mode: disabled}
+  - name: Restore legacy manual startup
+    params: {name: '{{ service_names.companion }}', start_mode: manual}
+    changed: true
+    exists: true
+    role: companion
+    registry: {Start: 3}
+    public: {start_mode: manual}
+  - name: Reject delayed startup before an earlier requested description write
+    params:
+      name: '{{ service_names.companion }}'
+      description: Must not be written
+      start_mode: delayed
+    changed: false
+    failed: true
+    exists: false
+    message: >-
+      start_mode=delayed is not supported before Windows Vista / Server 2008.
+  - name: Check mode also rejects unavailable delayed startup
+    params: {name: '{{ service_names.companion }}', start_mode: delayed}
+    check: true
+    changed: false
+    failed: true
+    exists: false
+    message: >-
+      start_mode=delayed is not supported before Windows Vista / Server 2008.
+  - name: Reject delayed startup before creating a missing service
+    params:
+      name: '{{ service_names.primary }}'
+      path: '{{ service_commands.primary }}'
+      start_mode: delayed
+    changed: false
+    failed: true
+    exists: false
+    absent: true
+    message: >-
+      start_mode=delayed is not supported before Windows Vista / Server 2008.
+  - name: Missing-service check mode rejects delayed startup without creation
+    params:
+      name: '{{ service_names.primary }}'
+      path: '{{ service_commands.primary }}'
+      start_mode: delayed
+    check: true
+    changed: false
+    failed: true
+    exists: false
+    absent: true
+    message: >-
+      start_mode=delayed is not supported before Windows Vista / Server 2008.
+  - name: Unsupported requested privileges still fail after an earlier write
+    params:
+      name: '{{ service_names.companion }}'
+      description: Legacy partial write retained
+      required_privileges: [SeChangeNotifyPrivilege]
+    changed: true
+    failed: true
+    exists: false
+    message: '[WinError 124]'
+    role: companion
+    registry: {Description: Legacy partial write retained}
+  - name: Recover the supported legacy description without modern setters
+    params:
+      name: '{{ service_names.companion }}'
+      description: Legacy recovered description
+    changed: true
+    exists: true
+    role: companion
+    registry: {Description: Legacy recovered description}

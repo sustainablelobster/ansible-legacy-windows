@@ -1,0 +1,173 @@
+---
+- name: Initialize one optional-feature case record
+  ansible.builtin.set_fact:
+    optional_feature_before: {}
+    optional_feature_after: {}
+    optional_feature_result:
+    optional_feature_validated: false
+
+- name: Observe capture and validate one public optional-feature request
+  vars:
+    optional_feature_scope: >-
+      {{ 'catalogue' if optional_feature_case.changed and not
+      (optional_feature_case.check | default(false)) else 'selected' }}
+    optional_feature_pending: >-
+      {{ optional_feature_results + [optional_feature_case_record] }}
+    optional_feature_case_record:
+      name: '{{ optional_feature_case.name }}'
+      params: '{{ optional_feature_case.params }}'
+      check: '{{ optional_feature_case.check | default(false) }}'
+      validated: '{{ optional_feature_validated }}'
+      observation_scope: '{{ optional_feature_scope }}'
+      result: '{{ optional_feature_result }}'
+      before: >-
+        {{ (optional_feature_before.stdout | from_json)
+        if optional_feature_before.rc | default(1) == 0 else none }}
+      after: >-
+        {{ (optional_feature_after.stdout | from_json)
+        if optional_feature_after.rc | default(1) == 0 else none }}
+      before_command: '{{ optional_feature_before }}'
+      after_command: '{{ optional_feature_after }}'
+  block:
+    - name: Independently observe the declared feature scope before the request
+      sustainablelobster.legacy_windows.win_command: # noqa: args[module]
+        argv:
+          - '{{ ansible_python_interpreter }}'
+          - '-'
+          - '{{ optional_feature_workspace.path }}'
+          - observe
+          - '{{ optional_feature_scope }}'
+          - '{{ optional_feature_case.params.name | default(none) | to_json }}'
+        stdin: '{{ optional_feature_program }}'
+      register: optional_feature_before
+      changed_when: false
+      check_mode: false
+
+    - name: Save the catalogue boundary before asserting or servicing
+      ansible.builtin.copy:
+        content: >-
+          {{ optional_feature_capture |
+          combine({'results': optional_feature_pending}) | to_nice_json }}
+        dest: '{{ optional_feature_capture_file.path }}'
+        mode: '0600'
+      delegate_to: localhost
+      vars: &local
+        ansible_connection: local
+        ansible_shell_type: sh
+        ansible_python_interpreter: '{{ ansible_playbook_python }}'
+      changed_when: false
+      when: optional_feature_scope == 'catalogue'
+
+    - name: Require the preceding read-only batch to preserve the full catalogue
+      ansible.builtin.assert:
+        that:
+          - optional_feature_before.stdout | from_json ==
+            optional_feature_anchor
+      when: optional_feature_scope == 'catalogue'
+
+    - name: Capture the public success or failure
+      block:
+        - name: Run the public optional-feature case # noqa: args[module]
+          sustainablelobster.legacy_windows.win_optional_feature: >-
+            {{ optional_feature_case.params }}
+          register: optional_feature_result
+          check_mode: '{{ optional_feature_case.check | default(false) }}'
+      rescue:
+        - name: Retain failure until independent observation completes
+          ansible.builtin.assert:
+            that: [optional_feature_result is failed]
+
+    - name: Independently observe the declared feature scope after the request
+      sustainablelobster.legacy_windows.win_command: # noqa: args[module]
+        argv:
+          - '{{ ansible_python_interpreter }}'
+          - '-'
+          - '{{ optional_feature_workspace.path }}'
+          - observe
+          - '{{ optional_feature_scope }}'
+          - '{{ optional_feature_case.params.name | default(none) | to_json }}'
+        stdin: '{{ optional_feature_program }}'
+      register: optional_feature_after
+      changed_when: false
+      check_mode: false
+
+    - name: Save all raw public fields and observations before assertions
+      ansible.builtin.copy:
+        content: >-
+          {{ optional_feature_capture |
+          combine({'results': optional_feature_pending}) | to_nice_json }}
+        dest: '{{ optional_feature_capture_file.path }}'
+        mode: '0600'
+      delegate_to: localhost
+      vars: *local
+      changed_when: false
+
+    - name: Verify change failure and no-servicing behavior
+      vars:
+        before: '{{ optional_feature_before.stdout | from_json }}'
+        after: '{{ optional_feature_after.stdout | from_json }}'
+      ansible.builtin.assert:
+        that:
+          - optional_feature_result.changed == optional_feature_case.changed
+          - (optional_feature_result is failed) ==
+            (optional_feature_case.failed | default(false))
+          - optional_feature_case.message | default('') in
+            optional_feature_result.msg | default('')
+          - >-
+            (optional_feature_case.changed and not
+            (optional_feature_case.check | default(false))) or before == after
+          - >-
+            not (optional_feature_case.validated_arguments | default(true))
+            or optional_feature_result.reboot_required |
+            default(none) == (optional_feature_case.reboot | default(false))
+          - before.pending == after.pending
+          - before.services == after.services
+          - before.native_extra == after.native_extra
+
+    - name: Verify each requested actual feature state
+      vars:
+        after: '{{ optional_feature_after.stdout | from_json }}'
+      ansible.builtin.assert:
+        that:
+          - after.features[item.key] == item.value
+      loop: '{{ optional_feature_case.expected | default({}) | dict2items }}'
+
+    - name: Require unchanged unrelated feature states
+      vars:
+        before: >-
+          {{ (optional_feature_before.stdout | from_json).features |
+          default({}, true) }}
+        after: >-
+          {{ (optional_feature_after.stdout | from_json).features |
+          default({}, true) }}
+        expected: '{{ optional_feature_case.expected | default({}) }}'
+      ansible.builtin.assert:
+        that:
+          - >-
+            before | dict2items | rejectattr('key', 'in', expected) |
+            items2dict == after | dict2items |
+            rejectattr('key', 'in', expected) | items2dict
+
+    - name: Record successful case validation
+      ansible.builtin.set_fact:
+        optional_feature_validated: true
+
+    - name: Retain the complete catalogue after an actual servicing request
+      ansible.builtin.set_fact:
+        optional_feature_anchor: >-
+          {{ optional_feature_after.stdout | from_json }}
+      when: optional_feature_scope == 'catalogue'
+  always:
+    - name: Retain this case after success or failure
+      ansible.builtin.set_fact:
+        optional_feature_results: >-
+          {{ optional_feature_results + [optional_feature_case_record] }}
+
+    - name: Save complete private optional-feature evidence
+      ansible.builtin.copy:
+        content: '{{ optional_feature_capture | to_nice_json }}'
+        dest: '{{ optional_feature_capture_file.path }}'
+        mode: '0600'
+      delegate_to: localhost
+      vars: *local
+      changed_when: false

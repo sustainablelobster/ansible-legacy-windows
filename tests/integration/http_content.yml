@@ -1,0 +1,122 @@
+---
+- name: Select native JSON content and positive-timeout workflows
+  hosts: legacy_windows
+  gather_facts: false
+  tags: [json_content]
+  tasks:
+    - name: Bind useful content cases without a source-order oracle
+      ansible.builtin.set_fact:
+        uri_compare: false
+        uri_cases:
+          - name: Case-distinct JSON keys
+            params:
+              body: {Name: upper, name: lower}
+          - name: Unicode and markup JSON values
+            params:
+              body: {unicode: '中😀', markup: "<>&'"}
+          - name: Nested JSON objects and arrays
+            params:
+              body:
+                outer: {Name: 1, name: 2}
+                items: [{first: false, second: null}, [3, 2, 1], literal]
+          - name: Top-level JSON array
+            params:
+              body: [{key: true}, null, false, 7, '中😀']
+          - name: Exact raw body representation
+            params:
+              body: '{"Name":1, "name":2}'
+
+    - name: Bind HTTP POST options using the fixture's eventual endpoint
+      ansible.builtin.set_fact:
+        uri_cases: >-
+          {{ uri_cases | map('combine', {'params': {
+             'method': 'POST', 'return_content': true, 'use_proxy': false,
+             'url_timeout': 10, 'url': 'http://127.0.0.1:52771/echo'}},
+             recursive=true) | list }}
+
+- name: Exercise native URI content with the maintained owned fixture
+  ansible.builtin.import_playbook: win_uri.yml
+  tags: [json_content]
+
+- name: Verify content preservation rather than object enumeration order
+  hosts: legacy_windows
+  gather_facts: false
+  tags: [json_content]
+  tasks:
+    - name: Require structured bodies to round trip with every value intact
+      when: item.params.body is not string
+      ansible.builtin.assert:
+        that:
+          - item.native.status_code == 200
+          - not item.native.changed
+          - >-
+            item.native.json.body_base64 | b64decode | from_json ==
+            item.params.body
+      loop: '{{ uri_results }}'
+      loop_control:
+        label: '{{ item.name }}'
+
+    - name: Require raw body bytes to retain the explicit representation
+      when: item.params.body is string
+      ansible.builtin.assert:
+        that:
+          - item.native.json.body_base64 | b64decode == item.params.body
+      loop: '{{ uri_results }}'
+      loop_control:
+        label: '{{ item.name }}'
+
+- name: Select only supported native HTTP timeout validation
+  hosts: legacy_windows
+  gather_facts: false
+  tags: [http_timeout]
+  tasks:
+    - name: Bind native-only cases above imported fixture defaults
+      ansible.builtin.set_fact:
+        http_zero_mode: native
+        http_zero_cases:
+          - {name: URI rejects HTTP zero, module: uri, path: /payload.bin}
+          - name: URI rejects HTTPS zero
+            module: uri
+            path: /payload.bin
+            params: {url: 'https://127.0.0.1:1/payload.bin'}
+          - name: Get URL rejects HTTP zero
+            module: get_url
+            path: /payload.bin
+          - name: Get URL rejects HTTPS zero
+            module: get_url
+            path: /payload.bin
+            params: {url: 'https://127.0.0.1:1/payload.bin'}
+          - name: Package preview rejects HTTP zero
+            module: package
+            path: /payload.bin
+            check: true
+          - name: Package preview rejects HTTPS zero
+            module: package
+            path: /payload.bin
+            check: true
+            params: {path: 'https://127.0.0.1:1/payload.bin'}
+
+- name: Exercise native HTTP timeout validation with owned request observations
+  ansible.builtin.import_playbook: http_zero_timeout.yml
+  tags: [http_timeout]
+
+- name: Require actionable timeout failures without requests or file effects
+  hosts: legacy_windows
+  gather_facts: false
+  tags: [http_timeout]
+  tasks:
+    - name: Verify each module rejects zero before sending a request
+      vars:
+        before: '{{ item.before.stdout | from_json }}'
+        after: '{{ item.after.stdout | from_json }}'
+      ansible.builtin.assert:
+        that:
+          - item.result.failed
+          - not item.result.changed
+          - "'positive url_timeout' in item.result.msg"
+          - after.requests == []
+          - after.source == before.source and after.sentinel == before.sentinel
+          - after.output == before.output
+      loop: '{{ http_zero_results }}'
+      loop_control:
+        label: '{{ item.name }}'

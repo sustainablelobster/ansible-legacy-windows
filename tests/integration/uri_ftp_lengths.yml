@@ -1,0 +1,28 @@
+---
+# SPDX-License-Identifier: GPL-3.0-or-later
+- name: Bind four length-bearing transfers before the maintained FTP lifecycle
+  hosts: legacy_windows
+  gather_facts: false
+  vars_files:
+    - vars/uri_ftp_lengths.yml
+  tasks:
+    - name: Bind only the new named inputs without guest I/O
+      tags: [uri_ftp_length_selection]
+      ansible.builtin.set_fact:
+        uri_ftp_cases: '{{ uri_ftp_length_cases }}'
+        uri_ftp_capture_verifier: verify_uri_ftp_lengths.py
+        get_url_ftp_include_lengths: true
+
+    - name: Require the exact four length inputs before allocation
+      tags: [uri_ftp_length_selection]
+      ansible.builtin.assert:
+        that:
+          - >-
+            uri_ftp_cases | map(attribute='name') | list ==
+            ['length_150_unread', 'length_150_consumed',
+             'length_125_unread', 'length_125_consumed']
+          - uri_ftp_capture_verifier == 'verify_uri_ftp_lengths.py'
+          - get_url_ftp_include_lengths | bool
+
+- name: Compare preliminary length using unchanged FTP ownership and recovery
+  ansible.builtin.import_playbook: uri_ftp.yml

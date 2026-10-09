@@ -1,0 +1,150 @@
+---
+- name: Verify native audit rules and journaled SACL recovery
+  hosts: legacy_windows
+  gather_facts: false
+  vars_files:
+    - vars/audit_rule.yml
+    - vars/audit_rule_fixture.yml
+  vars:
+    audit_rule_capture:
+      results: '{{ audit_rule_results }}'
+      workspace: '{{ audit_rule_workspace.path | default(none) }}'
+      setup: '{{ audit_rule_setup | default({}) }}'
+      cleanup: '{{ audit_rule_cleanup | default({}) }}'
+      staging_before: '{{ audit_rule_staging_before.stdout | default("") }}'
+      staging_after: '{{ audit_rule_staging_after.stdout | default("") }}'
+  tasks:
+    - name: Allocate a unique private evidence file
+      ansible.builtin.tempfile:
+        state: file
+        prefix: audit-rule-{{ inventory_hostname }}-
+        suffix: .json
+        path: '{{ playbook_dir }}/../../tmp'
+      register: audit_rule_capture_file
+      delegate_to: localhost
+      vars: &audit_rule_local
+        ansible_connection: local
+        ansible_shell_type: sh
+        ansible_python_interpreter: '{{ ansible_playbook_python }}'
+      changed_when: false
+      check_mode: false
+
+    - name: Report the private evidence location
+      ansible.builtin.debug:
+        msg: 'Audit Rule evidence: {{ audit_rule_capture_file.path }}'
+
+    - name: Initialize retained results
+      ansible.builtin.set_fact:
+        audit_rule_results: []
+
+    - name: Require Python 3.4.4 and record original staging directories
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import glob, json, os, sys, tempfile;
+        assert sys.version_info[:3] == (3, 4, 4);
+        print(json.dumps(sorted(glob.glob(os.path.join(tempfile.gettempdir(),
+        'ansible-tmp-*')))))""
+      register: audit_rule_staging_before
+      changed_when: false
+
+    - name: Exercise only uniquely owned filesystem and registry resources
+      block:
+        - name: Allocate the owned recovery workspace
+          sustainablelobster.legacy_windows.win_tempfile:  # noqa: args[module]
+            state: directory
+            prefix: legacy-windows-audit-rule-
+          register: audit_rule_workspace
+          check_mode: false
+
+        - name: Journal original absence before creating owned resources
+          sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - '-'
+              - '{{ audit_rule_workspace.path }}'
+              - setup
+            stdin: '{{ audit_rule_fixture }}'
+          register: audit_rule_setup
+          check_mode: false
+          no_log: true
+
+        - name: Retain literal paths and complete initial security state
+          ansible.builtin.set_fact:
+            audit_rule_paths: >-
+              {{ (audit_rule_setup.stdout | from_json).paths }}
+            audit_rule_baseline: >-
+              {{ (audit_rule_setup.stdout | from_json).baseline }}
+          no_log: true
+
+        - name: Require isolated fixtures without inherited audit rules
+          ansible.builtin.assert:
+            that: item.value.aces == []
+          loop: '{{ audit_rule_baseline | dict2items }}'
+          no_log: true
+
+        - name: Exercise public audit-rule lifecycle and failures
+          ansible.builtin.include_tasks: tasks/win_audit_rule_case.yml
+          loop: '{{ audit_rule_cases + audit_rule_range_cases }}'
+          loop_control:
+            loop_var: audit_rule_case
+            label: '{{ audit_rule_case.name }}'
+      always:
+        - name: Recover only journaled resources and preserve evidence
+          block:
+            - name: Remove journaled audit resources # noqa: args[module]
+              sustainablelobster.legacy_windows.win_command:
+                argv:
+                  - '{{ ansible_python_interpreter }}'
+                  - '-'
+                  - '{{ audit_rule_workspace.path }}'
+                  - cleanup
+                stdin: '{{ audit_rule_fixture }}'
+              when: audit_rule_workspace.path is defined
+              register: audit_rule_cleanup
+              check_mode: false
+              no_log: true
+
+            - name: Require verified resource and journal absence
+              ansible.builtin.assert:
+                that:
+                  - (audit_rule_cleanup.stdout | from_json).restored
+                  - (audit_rule_cleanup.stdout | from_json).journal_absent
+              when: audit_rule_workspace.path is defined
+              no_log: true
+
+            - name: Remove the verified empty workspace
+              sustainablelobster.legacy_windows.win_file:  # noqa: args[module]
+                path: '{{ audit_rule_workspace.path }}'
+                state: absent
+              when: audit_rule_workspace.path is defined
+              check_mode: false
+
+            - name: Independently verify workspace and task staging cleanup
+              ansible.builtin.raw: >-
+                cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+                "import glob, json, os, sys, tempfile;
+                assert not os.path.exists(sys.argv[1]);
+                print(json.dumps(sorted(glob.glob(os.path.join(
+                tempfile.gettempdir(), 'ansible-tmp-*')))))"
+                "{{ audit_rule_workspace.path }}""
+              when: audit_rule_workspace.path is defined
+              register: audit_rule_staging_after
+              changed_when: false
+              check_mode: false
+
+            - name: Require exact task staging equality
+              ansible.builtin.assert:
+                that: >-
+                  (audit_rule_staging_before.stdout | from_json)
+                  == (audit_rule_staging_after.stdout | from_json)
+              when: audit_rule_workspace.path is defined
+          always:
+            - name: Preserve complete private evidence after cleanup
+              ansible.builtin.copy:
+                content: '{{ audit_rule_capture | to_nice_json }}'
+                dest: '{{ audit_rule_capture_file.path }}'
+                mode: '0600'
+              delegate_to: localhost
+              vars: *audit_rule_local
+              changed_when: false
+              no_log: true

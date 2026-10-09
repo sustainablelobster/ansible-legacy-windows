@@ -1,0 +1,470 @@
+---
+# SPDX-License-Identifier: GPL-3.0-or-later
+- name: Verify native condition waits on Windows Python 3.4.4
+  hosts: legacy_windows
+  gather_facts: false
+  vars_files:
+    - vars/wait_for.yml
+  vars:
+    workspace_path: '{{ workspace.stdout | from_json }}'
+    ports: '{{ fixture.stdout | from_json }}'
+    text_path: '{{ workspace_path }}\Café 雪 [owned].txt'
+    success_cases:
+      - id: file_present
+        path: '{{ text_path }}'
+        state: present
+      - id: file_case_insensitive
+        path: '{{ text_path | upper }}'
+        state: StArTeD
+      - id: directory_present
+        path: '{{ workspace_path }}'
+      - id: missing_absent
+        path: '{{ workspace_path }}\missing.txt'
+        state: absent
+      - id: regex_case_insensitive
+        path: '{{ text_path }}'
+        regex: ready
+      - id: search_regex_alias
+        path: '{{ text_path }}'
+        search_regex: ready
+      - id: regex_primary_precedence
+        path: '{{ text_path }}'
+        regex: ready
+        search_regex: never
+        regexp: never
+      - id: regex_absent
+        path: '{{ text_path }}'
+        regex: not_present
+        state: absent
+      - id: regex_not_multiline_by_default
+        path: '{{ text_path }}'
+        regex: '^READY\r?$'
+        state: absent
+      - id: regex_explicit_multiline
+        path: '{{ text_path }}'
+        regex: '(?m)^READY\r?$'
+      - id: missing_file_skips_regex_compilation
+        path: '{{ workspace_path }}\missing.txt'
+        regex: '['
+        state: absent
+      - id: port_started
+        port: '{{ ports.quiet }}'
+      - id: port_present
+        port: '{{ ports.quiet }}'
+        state: present
+      - id: port_stopped
+        port: '{{ ports.closed }}'
+        state: stopped
+      - id: port_absent
+        port: '{{ ports.closed }}'
+        state: absent
+      - id: port_without_connections_drained
+        port: '{{ ports.closed }}'
+        state: drained
+      - id: drained_ignores_address
+        port: '{{ ports.held }}'
+        exclude_hosts: ['127.0.0.1']
+        state: drained
+      - id: drained_ignores_hostname
+        host: '0.0.0.0'
+        port: '{{ ports.held }}'
+        exclude_hosts: [localhost]
+        state: drained
+    failure_cases:
+      - id: path_and_port
+        path: '{{ text_path }}'
+        port: '{{ ports.quiet }}'
+        message: port and path parameter can not both be passed to win_wait_for
+      - id: excluded_host_without_drain
+        exclude_hosts: ['127.0.0.1']
+        message: exclude_hosts should only be with state=drained
+      - id: file_stopped
+        path: '{{ text_path }}'
+        state: stopped
+        message: >-
+          state=stopped should only be used for checking a port in the
+          win_wait_for module
+      - id: port_regex
+        port: '{{ ports.quiet }}'
+        regex: ready
+        message: >-
+          regex should by used when checking a string in a file in the
+          win_wait_for module
+      - id: file_present_timeout
+        path: '{{ workspace_path }}\missing.txt'
+        message: >-
+          timeout while waiting for file {{ workspace_path }}\missing.txt
+          to be present
+        attempts: true
+      - id: file_absent_timeout
+        path: '{{ text_path }}'
+        state: absent
+        message: 'timeout while waiting for file {{ text_path }} to be absent'
+        attempts: true
+      - id: regex_present_timeout
+        path: '{{ text_path }}'
+        regex: never
+        message: >-
+          timeout while waiting for string regex never in file {{ text_path }}
+          to match
+        attempts: true
+      - id: regex_absent_timeout
+        path: '{{ text_path }}'
+        regex: ready
+        state: absent
+        message: >-
+          timeout while waiting for string regex ready in file {{ text_path }}
+          to not match
+        attempts: true
+      - id: empty_file_regex_present_timeout
+        path: '{{ workspace_path }}\empty.txt'
+        regex: ''
+        message: >-
+          timeout while waiting for string regex  in file
+          {{ workspace_path }}\empty.txt to match
+        attempts: true
+      - id: empty_file_regex_absent_timeout
+        path: '{{ workspace_path }}\empty.txt'
+        regex: ''
+        state: absent
+        message: >-
+          timeout while waiting for string regex  in file
+          {{ workspace_path }}\empty.txt to not match
+        attempts: true
+      - id: open_port_stop_timeout
+        port: '{{ ports.quiet }}'
+        state: stopped
+        message: >-
+          timeout while waiting for 127.0.0.1:{{ ports.quiet }}
+          to stop listening
+        attempts: true
+      - id: closed_port_start_timeout
+        port: '{{ ports.closed }}'
+        message: >-
+          timeout while waiting for 127.0.0.1:{{ ports.closed }}
+          to start listening
+        attempts: true
+      - id: held_connection_drain_timeout
+        port: '{{ ports.held }}'
+        state: drained
+        message: >-
+          timeout while waiting for 127.0.0.1:{{ ports.held }} to drain
+        attempts: true
+      - id: zero_timeout_does_not_poll_existing_file
+        path: '{{ text_path }}'
+        timeout: 0
+        message: >-
+          timeout while waiting for file {{ text_path }} to be present
+        attempts: false
+  tasks:
+    - name: Require Python 3.4.4 and record task directories
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import glob, json, os, sys, tempfile;
+        assert sys.version_info[:3] == (3, 4, 4);
+        print(json.dumps(sorted(glob.glob(os.path.join(tempfile.gettempdir(),
+        'ansible-tmp-*')))))""
+      register: task_directories_before
+      changed_when: false
+      check_mode: false
+
+    - name: Allocate an unpredictable owned workspace
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import ctypes, json, tempfile;
+        kernel = ctypes.WinDLL('kernel32', use_last_error=True);
+        kernel.GetLongPathNameW.argtypes =
+        [ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_ulong];
+        kernel.GetLongPathNameW.restype = ctypes.c_ulong;
+        root = tempfile.mkdtemp(prefix='legacy-windows-wait-');
+        expanded = ctypes.create_unicode_buffer(32768);
+        length = kernel.GetLongPathNameW(root, expanded, len(expanded));
+        assert length in range(1, len(expanded));
+        print(json.dumps(expanded.value))""
+      register: workspace
+      changed_when: true
+      check_mode: false
+
+    - name: Exercise waits inside the owned workspace
+      block:
+        - name: Start a bounded detached localhost fixture
+          # Breakaway and closed inherited handles isolate the fixture from
+          # the launching SSH task. Cleanup waits for its recorded process.
+          sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - |
+                import json, os, subprocess, sys, time
+                root = sys.argv[2]
+                process = subprocess.Popen(
+                    [sys.executable, '-c'] + sys.argv[1:],
+                    close_fds=True, creationflags=0x01000008, cwd=root)
+                with open(os.path.join(root, 'fixture-pid'), 'w') as stream:
+                    stream.write(str(process.pid))
+                ready = os.path.join(root, 'ready.json')
+                deadline = time.monotonic() + 5
+                while not os.path.isfile(ready) and time.monotonic() < deadline:
+                    assert process.poll() is None, 'Owned fixture exited'
+                    time.sleep(0.05)
+                assert os.path.isfile(ready), 'Owned fixture did not start'
+                with open(ready) as stream:
+                    print(json.dumps(json.load(stream)))
+              - '{{ wait_fixture_code }}'
+              - '{{ workspace_path }}'
+          register: fixture
+
+        - name: Verify three distinct ephemeral localhost endpoints
+          ansible.builtin.assert:
+            that:
+              - ports.held > 0
+              - ports.quiet > 0
+              - ports.closed > 0
+              - '[ports.held, ports.quiet, ports.closed] | unique | length == 3'
+
+        - name: Wait without a condition in normal and check mode
+          # Check mode performs the actual delay and wait, as upstream does.
+          sustainablelobster.legacy_windows.win_wait_for:  # noqa: args[module]
+            delay: 1
+            timeout: 1
+          check_mode: '{{ item }}'
+          loop: [false, true]
+          register: pure_delays
+
+        - name: Verify delays never claim a change or polling attempt
+          ansible.builtin.assert:
+            that:
+              - item is not changed
+              - item.elapsed >= 2
+              - item.wait_attempts == 0
+          loop: '{{ pure_delays.results }}'
+
+        - name: Check established conditions normally and in check mode
+          # Runtime assertions validate these WANT_JSON arguments and results.
+          sustainablelobster.legacy_windows.win_wait_for:  # noqa: args[module]
+            path: '{{ item.0.path | default(omit) }}'
+            port: '{{ item.0.port | default(omit) }}'
+            host: '{{ item.0.host | default(omit) }}'
+            regex: '{{ item.0.regex | default(omit) }}'
+            search_regex: '{{ item.0.search_regex | default(omit) }}'
+            regexp: '{{ item.0.regexp | default(omit) }}'
+            exclude_hosts: '{{ item.0.exclude_hosts | default(omit) }}'
+            state: '{{ item.0.state | default(omit) }}'
+            connect_timeout: 1
+            timeout: 3
+          check_mode: '{{ item.1 }}'
+          loop: '{{ success_cases | product([false, true]) | list }}'
+          loop_control:
+            label: '{{ item.0.id }} check={{ item.1 }}'
+          register: successful_waits
+
+        - name: Verify each successful wait polls once without changing state
+          ansible.builtin.assert:
+            that:
+              - item is not changed
+              - item.elapsed >= 0
+              - item.wait_attempts == 1
+          loop: '{{ successful_waits.results }}'
+          loop_control:
+            label: '{{ item.item.0.id }} check={{ item.item.1 }}'
+
+        - name: Exercise expected validation and timeout failures
+          block:
+            - name: Reject invalid waits  # noqa: args[module]
+              # These intentionally failing requests must reach the payload.
+              sustainablelobster.legacy_windows.win_wait_for:
+                path: '{{ item.0.path | default(omit) }}'
+                port: '{{ item.0.port | default(omit) }}'
+                regex: '{{ item.0.regex | default(omit) }}'
+                exclude_hosts: '{{ item.0.exclude_hosts | default(omit) }}'
+                state: '{{ item.0.state | default(omit) }}'
+                timeout: '{{ item.0.timeout | default(1) }}'
+                connect_timeout: 1
+              check_mode: '{{ item.1 }}'
+              loop: '{{ failure_cases | product([false, true]) | list }}'
+              loop_control:
+                label: '{{ item.0.id }} check={{ item.1 }}'
+              register: failed_waits
+
+            - name: Reject unexpected success from the failure corpus
+              ansible.builtin.fail:
+                msg: Expected condition waits did not fail
+          rescue:
+            - name: Verify every expected failure and timeout result
+              ansible.builtin.assert:
+                that:
+                  - failed_waits.results | length == failure_cases | length * 2
+                  - item is failed
+                  - item is not changed
+                  - item.msg == item.item.0.message
+                  - item.elapsed >= 0
+                  - >-
+                    (item.wait_attempts | default(none)) == none
+                    if item.item.0.attempts is not defined else
+                    (item.wait_attempts > 0 if item.item.0.attempts else
+                     item.wait_attempts == 0)
+              loop: '{{ failed_waits.results }}'
+              loop_control:
+                label: '{{ item.item.0.id }} check={{ item.item.1 }}'
+
+        - name: Exercise malformed regular expressions against existing text
+          block:
+            - name: Reject malformed regex  # noqa: args[module]
+              # Compilation is reached only when the owned file exists.
+              sustainablelobster.legacy_windows.win_wait_for:
+                path: '{{ text_path }}'
+                regex: '['
+                timeout: 1
+              check_mode: '{{ item }}'
+              loop: [false, true]
+              register: malformed_regex
+
+            - name: Reject unexpected success from malformed expressions
+              ansible.builtin.fail:
+                msg: Malformed regular expressions unexpectedly succeeded
+          rescue:
+            - name: Verify malformed expressions fail without changes
+              ansible.builtin.assert:
+                that:
+                  - malformed_regex.results | length == 2
+                  - item is failed
+                  - item is not changed
+                  - item.msg | length > 0
+              loop: '{{ malformed_regex.results }}'
+
+        - name: Schedule delayed creation of an owned file
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}', -c,
+                   '{{ wait_trigger_code }}', '{{ workspace_path }}', create]
+
+        - name: Wait for the delayed file in check mode
+          sustainablelobster.legacy_windows.win_wait_for:
+            path: '{{ workspace_path }}\created.txt'
+            timeout: 10
+          check_mode: true
+          register: created_wait
+
+        - name: Schedule a delayed owned text replacement
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}', -c,
+                   '{{ wait_trigger_code }}', '{{ workspace_path }}', rewrite]
+
+        - name: Wait for the replacement to remove the old regex match
+          sustainablelobster.legacy_windows.win_wait_for:
+            path: '{{ workspace_path }}\rewrite.txt'
+            regex: waiting
+            state: absent
+            timeout: 10
+          register: rewritten_wait
+
+        - name: Schedule delayed removal of an owned file
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}', -c,
+                   '{{ wait_trigger_code }}', '{{ workspace_path }}', delete]
+
+        - name: Wait for delayed file removal
+          sustainablelobster.legacy_windows.win_wait_for:
+            path: '{{ workspace_path }}\delete.txt'
+            state: absent
+            timeout: 10
+          register: deleted_wait
+
+        - name: Schedule closure of the held localhost connection
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}', -c,
+                   '{{ wait_trigger_code }}', '{{ workspace_path }}', drain]
+
+        - name: Wait for the held port to drain in check mode
+          sustainablelobster.legacy_windows.win_wait_for:
+            port: '{{ ports.held }}'
+            state: drained
+            timeout: 10
+          check_mode: true
+          register: drained_wait
+
+        - name: Schedule closure of the owned listener
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}', -c,
+                   '{{ wait_trigger_code }}', '{{ workspace_path }}', close]
+
+        - name: Wait for the listener to stop
+          sustainablelobster.legacy_windows.win_wait_for:
+            port: '{{ ports.quiet }}'
+            state: stopped
+            connect_timeout: 1
+            timeout: 10
+          register: stopped_wait
+
+        - name: Verify successful dynamic waits remain read-only
+          ansible.builtin.assert:
+            that:
+              - item is not changed
+              - item.elapsed >= 0
+              - item.wait_attempts >= 1
+          loop:
+            - '{{ created_wait }}'
+            - '{{ rewritten_wait }}'
+            - '{{ deleted_wait }}'
+            - '{{ drained_wait }}'
+            - '{{ stopped_wait }}'
+
+        - name: Repeat a successful file query after all expected failures
+          sustainablelobster.legacy_windows.win_wait_for:
+            path: '{{ text_path }}'
+            regex: ready
+            timeout: 3
+          register: recovered_wait
+
+        - name: Inspect final fixture contents independently
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - |
+                import os, sys
+                root = sys.argv[1]
+                for name, expected in (
+                        ('Caf\u00e9 \u96ea [owned].txt',
+                         b'first\r\nREADY\r\nlast'),
+                        ('created.txt', b'created'), ('rewrite.txt', b'READY')):
+                    with open(os.path.join(root, name), 'rb') as stream:
+                        assert stream.read() == expected
+                for name in ('delete.txt', 'missing.txt', 'fixture-error.txt',
+                             'exited.json'):
+                    assert not os.path.exists(os.path.join(root, name))
+                print('owned file transitions completed without wait writes')
+              - '{{ workspace_path }}'
+          changed_when: false
+
+        - name: Verify repeated recovery remains unchanged
+          ansible.builtin.assert:
+            that:
+              - recovered_wait is not changed
+              - recovered_wait.wait_attempts == 1
+              - recovered_wait.elapsed >= 0
+      always:
+        - name: Release the owned process and remove its guarded workspace
+          ansible.builtin.raw: >-
+            cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+            "import base64;
+            exec(base64.b64decode('{{ wait_cleanup_code | b64encode }}'))"
+            "{{ workspace_path }}""
+          changed_when: true
+          check_mode: false
+
+    - name: Record remaining task directories
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import glob, json, os, tempfile;
+        print(json.dumps(sorted(glob.glob(os.path.join(tempfile.gettempdir(),
+        'ansible-tmp-*')))))""
+      register: task_directories_after
+      changed_when: false
+      check_mode: false
+
+    - name: Verify successful and failed waits removed all staged files
+      ansible.builtin.assert:
+        that:
+          - >-
+            (task_directories_before.stdout | from_json) ==
+            (task_directories_after.stdout | from_json)

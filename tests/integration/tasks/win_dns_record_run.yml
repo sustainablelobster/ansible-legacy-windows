@@ -1,0 +1,128 @@
+---
+- name: Recreate only the journal-owned primary prerequisite zone
+  sustainablelobster.legacy_windows.win_command:
+    argv:
+      - '{{ ansible_python_interpreter }}'
+      - '-'
+      - '{{ dns_zone_workspace.path }}'
+      - seed_zone
+      - primary
+    stdin: '{{ dns_zone_fixture_program }}'
+  changed_when: false
+  no_log: true
+
+- name: Seed only selected owned records where the request needs existing state
+  sustainablelobster.legacy_windows.win_command:
+    argv:
+      - '{{ ansible_python_interpreter }}'
+      - '-'
+      - '{{ dns_zone_workspace.path }}'
+      - seed
+      - '{{ dns_zone_case.seed | to_json }}'
+    stdin: '{{ dns_record_fixture_program }}'
+  when: dns_zone_case.seed is defined
+  register: dns_record_seed
+  changed_when: false
+  no_log: true
+
+- name: Observe complete selected native rows before the public operation
+  sustainablelobster.legacy_windows.win_command:
+    argv:
+      - '{{ ansible_python_interpreter }}'
+      - '-'
+      - '{{ dns_zone_workspace.path }}'
+      - observe
+      - '{{ {"type": dns_zone_case.args.type} | to_json }}'
+    stdin: '{{ dns_record_fixture_program }}'
+  register: dns_record_before
+  changed_when: false
+  no_log: true
+
+- name: Exercise the public native record module
+  sustainablelobster.legacy_windows.win_dns_record:
+    name: record
+    zone: '{{ dns_zone_owned_name }}'
+    type: '{{ dns_zone_case.args.type }}'
+    state: '{{ dns_zone_case.args.state | default(omit) }}'
+    value: '{{ dns_zone_case.args.value | default(omit) }}'
+    values: "{{ dns_zone_case.args.get('values', omit) }}"
+    ttl: '{{ dns_zone_case.args.ttl | default(omit) }}'
+    aging: '{{ dns_zone_case.args.aging | default(omit) }}'
+    allow_update_any: >-
+      {{ dns_zone_case.args.allow_update_any | default(omit) }}
+    port: '{{ dns_zone_case.args.port | default(omit) }}'
+    priority: '{{ dns_zone_case.args.priority | default(omit) }}'
+    weight: '{{ dns_zone_case.args.weight | default(omit) }}'
+    computer_name: '{{ dns_zone_case.args.computer_name | default(omit) }}'
+    zone_scope: '{{ dns_zone_case.args.zone_scope | default(omit) }}'
+  when: dns_zone_implementation == 'native'
+  check_mode: '{{ dns_zone_case.check | default(false) }}'
+  diff: true
+  register: dns_record_native_result
+  ignore_errors: true
+  no_log: true
+
+- name: Exercise the untouched released record module
+  ansible.windows.win_dns_record:
+    name: record
+    zone: '{{ dns_zone_owned_name }}'
+    type: '{{ dns_zone_case.args.type }}'
+    state: '{{ dns_zone_case.args.state | default(omit) }}'
+    value: '{{ dns_zone_case.args.value | default(omit) }}'
+    values: "{{ dns_zone_case.args.get('values', omit) }}"
+    ttl: '{{ dns_zone_case.args.ttl | default(omit) }}'
+    aging: '{{ dns_zone_case.args.aging | default(omit) }}'
+    allow_update_any: >-
+      {{ dns_zone_case.args.allow_update_any | default(omit) }}
+    port: '{{ dns_zone_case.args.port | default(omit) }}'
+    priority: '{{ dns_zone_case.args.priority | default(omit) }}'
+    weight: '{{ dns_zone_case.args.weight | default(omit) }}'
+    computer_name: '{{ dns_zone_case.args.computer_name | default(omit) }}'
+    zone_scope: '{{ dns_zone_case.args.zone_scope | default(omit) }}'
+  when: dns_zone_implementation == 'released'
+  check_mode: '{{ dns_zone_case.check | default(false) }}'
+  diff: true
+  register: dns_record_released_result
+  ignore_errors: true
+  no_log: true
+
+- name: Observe complete selected native rows after the public operation
+  sustainablelobster.legacy_windows.win_command:
+    argv:
+      - '{{ ansible_python_interpreter }}'
+      - '-'
+      - '{{ dns_zone_workspace.path }}'
+      - observe
+      - '{{ {"type": dns_zone_case.args.type} | to_json }}'
+    stdin: '{{ dns_record_fixture_program }}'
+  register: dns_record_after
+  changed_when: false
+  no_log: true
+
+- name: Preserve raw responses and observations before any assertion
+  ansible.builtin.set_fact:
+    dns_record_case_results: >-
+      {{ dns_record_case_results | default({}) |
+      combine({dns_zone_implementation:
+      {'result': ((dns_record_native_result if
+      dns_zone_implementation == 'native'
+      else dns_record_released_result) | dict2items |
+      rejectattr('key', 'in', ['invocation', 'exception']) | items2dict),
+      'before': dns_record_before.stdout | from_json,
+      'after': dns_record_after.stdout | from_json}}) }}
+    dns_zone_raw_results: >-
+      {{ dns_zone_raw_results + [{'case': dns_zone_case,
+      'implementation': dns_zone_implementation,
+      'result': dns_record_native_result if dns_zone_implementation == 'native'
+      else dns_record_released_result,
+      'seed': dns_record_seed,
+      'before': dns_record_before, 'after': dns_record_after}] }}
+  no_log: true
+
+- name: Require preview and validation nonmutation before another owned case
+  ansible.builtin.assert:
+    that:
+      - not (dns_zone_case.check | default(false) | bool or
+        dns_zone_case.failed | default(false) | bool) or
+        dns_record_before.stdout == dns_record_after.stdout
+  no_log: true

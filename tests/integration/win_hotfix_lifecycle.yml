@@ -1,0 +1,203 @@
+---
+- name: Verify a snapshot-protected real hotfix servicing phase
+  hosts: legacy_windows
+  gather_facts: false
+  vars_files:
+    - vars/hotfix_lifecycle_fixture.yml
+    - vars/hotfix_lifecycle.yml
+  tasks:
+    - name: Require explicitly selected package and evidence locations
+      ansible.builtin.assert:
+        that:
+          - >-
+            hotfix_lifecycle_engine in
+            ['native', 'original', 'observe', 'prepare', 'prepare-installed']
+          - hotfix_lifecycle_identifier | length > 0
+          - hotfix_lifecycle_kb is match('^KB[0-9]+$')
+          - hotfix_lifecycle_capture | length > 0
+          - >-
+            hotfix_lifecycle_engine == 'observe' or
+            hotfix_lifecycle_snapshot_protected | default(false) | bool
+    - name: Record original global staging without creating a module workspace
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import glob,json,os,sys,tempfile;assert sys.version_info[:3]==(3,4,4);
+        print(json.dumps(sorted(glob.glob(os.path.join(tempfile.gettempdir(),'ansible-tmp-*')))))""
+      register: hotfix_lifecycle_staging_before
+      changed_when: false
+    - name: Execute one prepared phase and retain raw evidence even on failure
+      block:
+        - name: Observe the complete original or restored baseline
+          when: hotfix_lifecycle_engine == 'observe'
+          sustainablelobster.legacy_windows.win_command:
+            argv: >-
+              {{ [ansible_python_interpreter, '-',
+                   'restored' if hotfix_lifecycle_absence_check is defined
+                   else 'observe',
+                   hotfix_lifecycle_identifier] +
+                 ([hotfix_lifecycle_absence_check]
+                  if hotfix_lifecycle_absence_check is defined else []) }}
+            stdin: '{{ hotfix_lifecycle_program }}'
+          register: hotfix_lifecycle_observation
+          changed_when: false
+          no_log: true
+        - name: Establish only the approved package's absent baseline
+          when: hotfix_lifecycle_engine == 'prepare'
+          block:
+            - name: Remove only the exact identified preparatory component
+              sustainablelobster.legacy_windows.win_hotfix:
+                hotfix_identifier: '{{ hotfix_lifecycle_identifier }}'
+                state: absent
+              register: hotfix_lifecycle_preparation
+            - name: Restart only when real preparation requires it
+              when: hotfix_lifecycle_preparation.reboot_required
+              sustainablelobster.legacy_windows.win_reboot:
+                reboot_timeout: 600
+              register: hotfix_lifecycle_preparation_restart
+        - name: Allocate the shared owned source location in the absent snapshot
+          when: hotfix_lifecycle_engine in ['prepare', 'prepare-installed']
+          sustainablelobster.legacy_windows.win_tempfile:
+            state: directory
+            prefix: legacy-windows-hotfix-lifecycle-
+          register: hotfix_lifecycle_allocated
+        - name: Transfer the identified official package after preparation
+          when: hotfix_lifecycle_engine in ['prepare', 'prepare-installed']
+          sustainablelobster.legacy_windows.win_copy:
+            src: '{{ hotfix_lifecycle_controller_source }}'
+            dest: '{{ hotfix_lifecycle_allocated.path }}\package.msu'
+        - name: Match the retained source phase's owned input timestamp
+          when: >-
+            hotfix_lifecycle_engine in ['prepare', 'prepare-installed'] and
+            hotfix_lifecycle_source_mtime is defined
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}', '-', match-source-time,
+                   '{{ hotfix_lifecycle_identifier }}',
+                   '{{ hotfix_lifecycle_allocated.path }}\package.msu',
+                   '{{ hotfix_lifecycle_source_sha256 }}',
+                   '{{ hotfix_lifecycle_source_mtime }}']
+            stdin: '{{ hotfix_lifecycle_program }}'
+          register: hotfix_lifecycle_source_time
+          changed_when: true
+          no_log: true
+        - name: Retain complete absent provider state and source protection
+          when: hotfix_lifecycle_engine in ['prepare', 'prepare-installed']
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}', '-', observe,
+                   '{{ hotfix_lifecycle_identifier }}',
+                   '{{ hotfix_lifecycle_allocated.path }}\package.msu']
+            stdin: '{{ hotfix_lifecycle_program }}'
+          register: hotfix_lifecycle_absent
+          changed_when: false
+          no_log: true
+        - name: Require genuine absent preparation without pending restart
+          when: hotfix_lifecycle_engine == 'prepare'
+          vars:
+            absent_state: '{{ hotfix_lifecycle_absent.stdout | from_json }}'
+          ansible.builtin.assert:
+            that:
+              - >-
+                absent_state.selected.state in
+                ['NotPresent', 'Removed', 'Staged']
+              - >-
+                absent_state.pending.values() | select('ne', none) |
+                list | length == 0
+        - name: Require a genuinely installed matched removal baseline
+          when: hotfix_lifecycle_engine == 'prepare-installed'
+          vars:
+            installed_state: '{{ hotfix_lifecycle_absent.stdout | from_json }}'
+          ansible.builtin.assert:
+            that:
+              - installed_state.selected.state == 'Installed'
+              - >-
+                installed_state.pending.values() | select('ne', none) |
+                list | length == 0
+        - name: Hold the explicitly matched reference host's CLR file use
+          when: >-
+            hotfix_lifecycle_engine == 'native' and
+            hotfix_lifecycle_hold_reference_host | default(false)
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}', '-', holder-start,
+                   '{{ hotfix_lifecycle_identifier }}',
+                   '{{ hotfix_lifecycle_workspace }}']
+            stdin: '{{ hotfix_lifecycle_program }}'
+          register: hotfix_lifecycle_holder
+          changed_when: true
+          no_log: true
+        - name: Initialize this independently reset public servicing phase
+          when: hotfix_lifecycle_engine in ['native', 'original']
+          ansible.builtin.set_fact:
+            hotfix_lifecycle_results: []
+            hotfix_lifecycle_restart_required: false
+        - name: Exercise the actual public lifecycle
+          when: hotfix_lifecycle_engine in ['native', 'original']
+          ansible.builtin.include_tasks: tasks/win_hotfix_lifecycle_case.yml
+          loop: '{{ hotfix_lifecycle_cases }}'
+          loop_control:
+            loop_var: hotfix_lifecycle_case
+            label: '{{ hotfix_lifecycle_case.name }}'
+      always:
+        - name: Close the owned reference host after affected requests
+          when: hotfix_lifecycle_holder is defined and
+                not (hotfix_lifecycle_holder.skipped | default(false))
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}', '-', holder-stop,
+                   '{{ hotfix_lifecycle_identifier }}',
+                   '{{ hotfix_lifecycle_workspace }}']
+            stdin: '{{ hotfix_lifecycle_program }}'
+          register: hotfix_lifecycle_holder_closed
+          changed_when: true
+          failed_when: false
+          no_log: true
+        - name: Record final global staging without concealing leaked workspaces
+          ansible.builtin.raw: >-
+            cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+            "import glob,json,os,tempfile;
+            print(json.dumps(sorted(glob.glob(os.path.join(
+            tempfile.gettempdir(),'ansible-tmp-*')))))""
+          register: hotfix_lifecycle_staging_final
+          changed_when: false
+        - name: Persist raw phase evidence before controller recovery
+          ansible.builtin.copy:
+            content: >-
+              {{ {'engine': hotfix_lifecycle_engine,
+                  'results': hotfix_lifecycle_results | default(none),
+                  'observation': hotfix_lifecycle_observation | default(none),
+                  'preparation': hotfix_lifecycle_preparation | default(none),
+                  'preparation_restart':
+                    hotfix_lifecycle_preparation_restart | default(none),
+                  'workspace': hotfix_lifecycle_allocated.path | default(none),
+                  'absent': hotfix_lifecycle_absent | default(none),
+                  'staging_before': hotfix_lifecycle_staging_before,
+                  'staging_final': hotfix_lifecycle_staging_final,
+                  'latest_result': hotfix_lifecycle_result | default(none)}
+                  | combine({'reference_host':
+                               hotfix_lifecycle_holder | default(none),
+                             'reference_host_closed':
+                               hotfix_lifecycle_holder_closed | default(none)})
+                  | to_nice_json }}
+            dest: '{{ hotfix_lifecycle_capture }}'
+            mode: '0600'
+          delegate_to: localhost
+          vars:
+            ansible_connection: local
+            ansible_shell_type: sh
+            ansible_python_interpreter: '{{ ansible_playbook_python }}'
+          changed_when: false
+          no_log: true
+        - name: Require actual closure of the journaled reference host
+          when: hotfix_lifecycle_holder_closed is defined and
+                not (hotfix_lifecycle_holder_closed.skipped | default(false))
+          ansible.builtin.assert:
+            that:
+              - hotfix_lifecycle_holder_closed.rc == 0
+              - >-
+                (hotfix_lifecycle_holder_closed.stdout | from_json).
+                owned_reference_host_closed
+        - name: Require literal global staging recovery
+          ansible.builtin.assert:
+            that:
+              - >-
+                (hotfix_lifecycle_staging_before.stdout | from_json) ==
+                (hotfix_lifecycle_staging_final.stdout | from_json)
+        - name: Close only this owner's normal SSH control session
+          ansible.builtin.meta: reset_connection

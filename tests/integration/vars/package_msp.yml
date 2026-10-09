@@ -1,0 +1,98 @@
+---
+package_compare: false
+package_msp_controller_source: '{{ playbook_dir }}/../../tmp'
+package_msp_patch_filename: patch.msp
+package_msp_patch_path: >-
+  {{ package_msp_workspace.path }}\{{
+  package_msp_patch_filename }}
+package_msp_product: '{48C49ACE-90CF-4161-9C6E-9162115A54DD}'
+package_msp_patch: '{224C316C-5894-4771-BABF-21A3AC1F75FF}'
+package_msp_selected_cases: >-
+  {{ package_msp_case_indices |
+  default(range(package_msp_cases | length) | list) |
+  map('extract', package_msp_cases) | list }}
+package_msp_cases:
+  - name: Patch without an installed target product
+    params:
+      path: '{{ package_msp_patch_path }}'
+    initial: absent
+    failed: true
+    expected: absent
+  - name: Patch preview without an installed target product
+    params:
+      path: '{{ package_msp_patch_path }}'
+      provider: msp
+    initial: absent
+    check: true
+    failed: true
+    expected: absent
+  - name: Absent patch removal by explicit identity
+    params:
+      product_id: '{{ package_msp_patch }}'
+      provider: msp
+      state: absent
+    initial: base
+    expected: base
+  - name: Patch installation preview
+    params:
+      path: '{{ package_msp_patch_path }}'
+    initial: base
+    check: true
+    changed: true
+    expected: base
+  - name: Patch installation
+    params:
+      path: '{{ package_msp_patch_path }}'
+    initial: base
+    changed: true
+    expected: patched
+  - name: Installed patch idempotence
+    params:
+      path: '{{ package_msp_patch_path }}'
+      provider: MSP
+    initial: patched
+    expected: patched
+  - name: Installed patch idempotence preview
+    params:
+      path: '{{ package_msp_patch_path }}'
+    initial: patched
+    check: true
+    expected: patched
+  - name: Patch removal preview by identity
+    params:
+      product_id: '{{ package_msp_patch }}'
+      provider: msp
+      state: absent
+    initial: patched
+    check: true
+    changed: true
+    expected: patched
+  - name: Patch removal by automatic identity selection
+    params: {product_id: '{{ package_msp_patch }}', state: absent}
+    initial: patched
+    changed: true
+    expected: base
+  - name: Patch removal by file identity ignores public product_id
+    params:
+      path: '{{ package_msp_patch_path }}'
+      product_id: ignored
+      state: absent
+      provider: msp
+    initial: patched
+    changed: true
+    expected: base
+  - name: Patch checksum failure before installation
+    params:
+      path: '{{ package_msp_patch_path }}'
+      checksum: invalid
+    initial: base
+    failed: true
+    expected: base
+  - name: Patch installation with pinned SHA256
+    params:
+      path: '{{ package_msp_patch_path }}'
+      checksum_algorithm: SHA256
+      checksum: ba8e417e9ea62dea1e2c056e2d7296fe1eaca7665846f869e16139037745d617
+    initial: base
+    changed: true
+    expected: patched

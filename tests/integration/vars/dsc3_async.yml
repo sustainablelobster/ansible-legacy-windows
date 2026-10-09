@@ -1,0 +1,46 @@
+---
+dsc3_archive: >-
+  {{ playbook_dir + '/../../tmp/codex/artifacts/' +
+     'DSC-3.1.2-x86_64-pc-windows-msvc.zip' }}
+dsc3_async_program: |
+  WMI_SOURCE = {{ lookup('ansible.builtin.file',
+    playbook_dir + '/../../plugins/module_utils/legacy_windows_wmi.py')
+    | to_json }}
+  ASYNC_SOURCE = {{ lookup('ansible.builtin.file',
+    playbook_dir + '/fixtures/native_async.py') | to_json }}
+  {{ lookup('ansible.builtin.file', playbook_dir + '/fixtures/dsc3_async.py') }}
+dsc3_async_echo:
+  resources:
+    - name: nested async echo
+      type: Microsoft.DSC.Debug/Echo
+      properties:
+        output:
+          string: "quotes \" backslash \\ λ < > & %PATH% !text!"
+          array: [null, true, false, 3, 2.5, "text"]
+          dictionary: {empty: {}, items: []}
+dsc3_async_cases:
+  - name: inline nested echo async
+    params: {config: '{{ dsc3_async_echo }}'}
+    changed: false
+  - name: healthy remote file async
+    params:
+      config_file: '{{ dsc3_workspace.path }}\echo.dsc.json'
+      remote_config_file: true
+    changed: false
+  - name: actual missing resource engine failure async
+    params:
+      config:
+        resources:
+          - name: unknown
+            type: LegacyWindows.Missing/Unknown
+            properties: {}
+    changed: false
+    error: Resource error (ExitCode=2)
+    rc: 2
+  - name: local file async rejected before transfer
+    params:
+      config_file: '{{ playbook_dir }}/files/dsc3_echo.dsc.json'
+      remote_config_file: false
+    local_rejection: true
+    changed: false
+    error: async operations are not supported with local config_file

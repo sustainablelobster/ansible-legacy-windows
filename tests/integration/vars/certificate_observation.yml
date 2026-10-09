@@ -1,0 +1,94 @@
+---
+# SPDX-License-Identifier: GPL-3.0-or-later
+certificate_observation_code: |
+  import base64
+  import ctypes
+  import hashlib
+  import json
+  import sys
+  import winreg
+
+  assert sys.version_info[:3] == (3, 4, 4)
+
+  class Context(ctypes.Structure):
+      _fields_ = [('encoding', ctypes.c_uint32),
+                  ('encoded', ctypes.c_void_p),
+                  ('size', ctypes.c_uint32),
+                  ('info', ctypes.c_void_p),
+                  ('store', ctypes.c_void_p)]
+
+  crypto = ctypes.WinDLL('crypt32', use_last_error=True)
+  crypto.CertOpenStore.argtypes = [ctypes.c_void_p, ctypes.c_uint32,
+                                  ctypes.c_void_p, ctypes.c_uint32,
+                                  ctypes.c_wchar_p]
+  crypto.CertOpenStore.restype = ctypes.c_void_p
+  crypto.CertEnumCertificatesInStore.argtypes = [ctypes.c_void_p,
+                                                ctypes.c_void_p]
+  crypto.CertEnumCertificatesInStore.restype = ctypes.c_void_p
+  crypto.CertFreeCertificateContext.argtypes = [ctypes.c_void_p]
+  crypto.CertFreeCertificateContext.restype = ctypes.c_int
+  crypto.CertCloseStore.argtypes = [ctypes.c_void_p, ctypes.c_uint32]
+  crypto.CertCloseStore.restype = ctypes.c_int
+
+  def certificates(location, name):
+      handle = crypto.CertOpenStore(10, 0x10001, None,
+                                    location | 0x8000, name)
+      if not handle:
+          raise ctypes.WinError(ctypes.get_last_error())
+      context = None
+      result = []
+      try:
+          while True:
+              context = crypto.CertEnumCertificatesInStore(handle, context)
+              if not context:
+                  error = ctypes.get_last_error() & 0xffffffff
+                  if error != 0x80092004:
+                      raise ctypes.WinError(error)
+                  break
+              data = ctypes.cast(context, ctypes.POINTER(Context)).contents
+              raw = ctypes.string_at(data.encoded, data.size)
+              result.append({
+                  'thumbprint': hashlib.sha1(raw).hexdigest().upper(),
+                  'raw': base64.b64encode(raw).decode('ascii'),
+              })
+      finally:
+          if context:
+              assert crypto.CertFreeCertificateContext(context)
+          assert crypto.CertCloseStore(handle, 2)
+      return sorted(result, key=lambda item: item['thumbprint'])
+
+  def registry_state(hive, path):
+      try:
+          key = winreg.OpenKey(hive, path, 0, winreg.KEY_READ)
+      except OSError as error:
+          if error.winerror == 2:
+              return None
+          raise
+      with key:
+          subkeys, values, modified = winreg.QueryInfoKey(key)
+          content = []
+          for index in range(values):
+              name, value, kind = winreg.EnumValue(key, index)
+              digest = hashlib.sha256(repr(value).encode('utf-8')).hexdigest()
+              content.append([name, kind, digest])
+          children = []
+          for index in range(subkeys):
+              name = winreg.EnumKey(key, index)
+              children.append([name, registry_state(hive, path + '\\' + name)])
+      return [modified, sorted(content), sorted(children)]
+
+  def store_digest():
+      path = r'SOFTWARE\Microsoft\SystemCertificates'
+      state = [registry_state(hive, path) for hive in
+               [winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER]]
+      return hashlib.sha256(json.dumps(state).encode('utf-8')).hexdigest()
+
+  before = store_digest()
+  stores = {}
+  for location, flag in [('LocalMachine', 0x20000), ('CurrentUser', 0x10000)]:
+      for name in ['Root', 'My']:
+          stores[location + '/' + name] = certificates(flag, name)
+  after = store_digest()
+  assert before == after, 'Native observation changed store registry state'
+  print(json.dumps({'python': list(sys.version_info[:3]),
+                    'stores': stores, 'registry_sha256': after}))

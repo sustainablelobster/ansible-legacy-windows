@@ -1,0 +1,37 @@
+---
+# SPDX-License-Identifier: GPL-3.0-or-later
+- name: Bind only GetURL failures affected by FTP response preservation
+  hosts: legacy_windows
+  gather_facts: false
+  tasks:
+    - name: Select exactly the three affected requests without guest I/O
+      tags: [uri_ftp_rejection_selection]
+      ansible.builtin.set_fact:
+        get_url_ftp_mode: paired
+        get_url_ftp_cases:
+          - name: Missing FTP resource preserves existing content
+            contents: old content
+            failed: true
+            params: {url: 'ftp://127.0.0.1:2121/missing.bin'}
+          - name: Incorrect FTP password preserves destination
+            contents: old content
+            failed: true
+            params: {url_username: fixture, url_password: incorrect}
+          - name: FTP SIZE rejection preserves destination
+            contents: old content
+            failed: true
+            params: {url_method: SIZE}
+
+    - name: Require the exact affected GetURL selection before binding ports
+      tags: [uri_ftp_rejection_selection]
+      ansible.builtin.assert:
+        that:
+          - get_url_ftp_mode == 'paired'
+          - >-
+            get_url_ftp_cases | map(attribute='name') | list ==
+            ['Missing FTP resource preserves existing content',
+             'Incorrect FTP password preserves destination',
+             'FTP SIZE rejection preserves destination']
+
+- name: Compare the affected GetURL failures using its maintained lifecycle
+  ansible.builtin.import_playbook: win_get_url_ftp.yml

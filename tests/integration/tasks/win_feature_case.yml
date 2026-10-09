@@ -1,0 +1,201 @@
+---
+- name: Read independent complete state before the request
+  sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+    argv:
+      - '{{ ansible_python_interpreter }}'
+      - '-'
+      - '{{ feature_workspace.path }}'
+      - >-
+        {{ 'observe_mutation' if (feature_case.mutation | default(false))
+           else 'observe' }}
+    stdin: '{{ feature_program }}'
+  register: feature_before
+  changed_when: false
+  no_log: true
+
+- name: Retain complete native or original public result
+  block:
+    - name: Execute native public feature request  # noqa: args[module]
+      when: not (feature_use_upstream | default(false) | bool)
+      sustainablelobster.legacy_windows.win_feature: '{{ feature_case.params }}'
+      check_mode: '{{ feature_case.check | default(false) }}'
+      diff: true
+      register: feature_native_result
+      no_log: true
+
+    - name: Execute untouched released original feature request
+      when: feature_use_upstream | default(false) | bool
+      ansible.windows.win_feature: '{{ feature_case.params }}'
+      check_mode: '{{ feature_case.check | default(false) }}'
+      diff: true
+      register: feature_upstream_result
+      no_log: true
+      vars:
+        ansible_shell_type: cmd
+        ansible_remote_tmp: '{{ feature_workspace.path }}'
+  rescue:
+    - name: Preserve the failed backend before validating the rescue
+      ansible.builtin.set_fact:
+        feature_result: >-
+          {{ feature_upstream_result
+             if (feature_use_upstream | default(false) | bool)
+             else feature_native_result }}
+      no_log: true
+
+    - name: Keep a real provider or argument-binding failure
+      ansible.builtin.assert:
+        that: feature_result is failed
+      no_log: true
+
+- name: Retain the requested backend without skipped-task metadata
+  ansible.builtin.set_fact:
+    feature_result: >-
+      {{ feature_upstream_result
+         if (feature_use_upstream | default(false) | bool)
+         else feature_native_result }}
+  no_log: true
+
+- name: Journal an actual reported servicing restart
+  when:
+    - not (feature_case.check | default(false))
+    - feature_result.reboot_required | default(false)
+  sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+    argv: ['{{ ansible_python_interpreter }}', '-',
+           '{{ feature_workspace.path }}', note_reboot]
+    stdin: '{{ feature_program }}'
+  changed_when: false
+  no_log: true
+
+- name: Read independent complete state after the request
+  sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+    argv:
+      - '{{ ansible_python_interpreter }}'
+      - '-'
+      - '{{ feature_workspace.path }}'
+      - >-
+        {{ 'observe_mutation' if (feature_case.mutation | default(false))
+           else 'observe' }}
+    stdin: '{{ feature_program }}'
+  register: feature_after
+  changed_when: false
+  no_log: true
+
+- name: Retain all raw values before validation
+  ansible.builtin.set_fact:
+    feature_results: >-
+      {{ feature_results + [{
+         'name': feature_case.name, 'params': feature_case.params,
+         'check': feature_case.check | default(false), 'result': feature_result,
+         'before': feature_before.stdout | from_json,
+         'after': feature_after.stdout | from_json,
+         'observation_timing': {
+           'before_start': feature_before.start,
+           'before_end': feature_before.end,
+           'after_start': feature_after.start,
+           'after_end': feature_after.end}, 'validated': false}] }}
+  no_log: true
+
+- name: Save partial evidence before assertions
+  ansible.builtin.copy:
+    content: '{{ feature_results | to_nice_json }}'
+    dest: '{{ feature_capture.path }}'
+    mode: '0600'
+  delegate_to: localhost
+  changed_when: false
+  no_log: true
+  vars:
+    ansible_connection: local
+    ansible_shell_type: sh
+    ansible_python_interpreter: '{{ ansible_playbook_python }}'
+
+- name: Require complete declared flags and protected identity
+  vars:
+    initial: '{{ feature_before.stdout | from_json }}'
+    final: '{{ feature_after.stdout | from_json }}'
+  ansible.builtin.assert:
+    that:
+      - feature_result.changed == feature_case.changed
+      - (feature_result is failed) == (feature_case.failed | default(false))
+      - feature_result.diff is not defined
+      - initial.identity == final.identity
+  no_log: true
+
+- name: Require full nonmutation for check failures and idempotence
+  when: not (feature_case.mutation | default(false))
+  vars:
+    initial: '{{ feature_before.stdout | from_json }}'
+    final: '{{ feature_after.stdout | from_json }}'
+  ansible.builtin.assert:
+    that:
+      - initial.components == final.components
+      - initial.pending == final.pending
+      - initial.features == final.features
+      - initial.identity == final.identity
+      - >-
+        initial.services | dict2items |
+        rejectattr('key','equalto','TrustedInstaller') | list ==
+        final.services | dict2items |
+        rejectattr('key','equalto','TrustedInstaller') | list
+      # Windows can auto-stop its idle servicing worker during a read-only row.
+      # Retain its full raw State, gate all configuration, and restore the exact
+      # original full public service interface before journal finalization.
+      - >-
+        initial.services.TrustedInstaller | default({}) | dict2items |
+        rejectattr('key','equalto','State') | list ==
+        final.services.TrustedInstaller | default({}) | dict2items |
+        rejectattr('key','equalto','State') | list
+  no_log: true
+
+- name: Require all returned identities and successful feature flags
+  when: not (feature_case.failed | default(false))
+  ansible.builtin.assert:
+    that:
+      - >-
+        feature_result.feature_result | map(attribute='id') | list ==
+        feature_case.ids
+      - feature_result.success
+      - feature_result.reboot_required is boolean
+      - >-
+        feature_result.exitcode ==
+        ('Success' if feature_case.changed else 'NoChangeNeeded')
+      - >-
+        not (feature_case.check | default(false)) or
+        not feature_result.reboot_required
+  no_log: true
+
+- name: Require mutation limited to the journal-owned feature
+  when: feature_case.mutation | default(false)
+  vars:
+    initial: '{{ feature_before.stdout | from_json }}'
+    final: '{{ feature_after.stdout | from_json }}'
+  ansible.builtin.assert:
+    that:
+      - final.features.TelnetClient == feature_case.target_state
+      - >-
+        initial.features | dict2items |
+        rejectattr('key','equalto','TelnetClient') | list ==
+        final.features | dict2items |
+        rejectattr('key','equalto','TelnetClient') | list
+      - >-
+        initial.comparison_components | dict2items |
+        rejectattr('key','equalto','Telnet-Client') | list ==
+        final.comparison_components | dict2items |
+        rejectattr('key','equalto','Telnet-Client') | list
+      - >-
+        initial.services | dict2items |
+        rejectattr('key','equalto','TrustedInstaller') | list ==
+        final.services | dict2items |
+        rejectattr('key','equalto','TrustedInstaller') | list
+      - >-
+        initial.services.TrustedInstaller | dict2items |
+        rejectattr('key','in',['State','StartMode']) | list ==
+        final.services.TrustedInstaller | dict2items |
+        rejectattr('key','in',['State','StartMode']) | list
+  no_log: true
+
+- name: Mark a row validated only after all complete assertions
+  ansible.builtin.set_fact:
+    feature_results: >-
+      {{ feature_results[:-1] +
+         [feature_results[-1] | combine({'validated': true})] }}
+  no_log: true

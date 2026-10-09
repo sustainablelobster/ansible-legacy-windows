@@ -1,0 +1,99 @@
+---
+- name: '{{ mapped_drive_case.name }}'
+  block:
+    - name: Apply or predict the requested mapped drive  # noqa: args[module]
+      sustainablelobster.legacy_windows.win_mapped_drive:
+        letter: '{{ mapped_drive_case.params.letter | default(omit) }}'
+        path: '{{ mapped_drive_case.params.path | default(omit) }}'
+        state: '{{ mapped_drive_case.params.state | default(omit) }}'
+        username: '{{ mapped_drive_case.params.username | default(omit) }}'
+        password: '{{ mapped_drive_case.params.password | default(omit) }}'
+      register: mapped_drive_result
+      check_mode: '{{ mapped_drive_case.check | default(false) }}'
+      diff: true
+      no_log: '{{ mapped_drive_case.params.password is defined }}'
+  rescue:
+    - name: Continue to observe and retain the failed request
+      ansible.builtin.assert:
+        that:
+          - mapped_drive_result is failed
+
+- name: Observe native mappings and saved registry data independently
+  sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+    argv:
+      - '{{ ansible_python_interpreter }}'
+      - '-'
+      - '{{ mapped_drive_workspace.path }}'
+      - observe
+    stdin: '{{ mapped_drive_fixture }}'
+  register: mapped_drive_observation
+  changed_when: false
+  check_mode: false
+
+- name: Retain entire public results and independent mapping observations
+  vars:
+    record:
+      case: '{{ mapped_drive_case.name }}'
+      result: '{{ mapped_drive_result }}'
+      before: '{{ mapped_drive_previous }}'
+      snapshot: '{{ mapped_drive_observation.stdout | from_json }}'
+  ansible.builtin.set_fact:
+    mapped_drive_results: >-
+      {{ (mapped_drive_results | default([])) + [record] }}
+
+- name: Verify public fields and predicted or actual mapping state
+  vars:
+    observation: '{{ mapped_drive_observation.stdout | from_json }}'
+    drive: '{{ mapped_drive_initial.letter }}:'
+    previous: >-
+      {{ mapped_drive_previous.remembered |
+         selectattr('drive', 'equalto', drive) | list }}
+    current: >-
+      {{ observation.remembered |
+         selectattr('drive', 'equalto', drive) | list }}
+    writes: >-
+      {{ mapped_drive_case.changed and not
+         (mapped_drive_case.check | default(false)) }}
+    expected_before: >-
+      {{ {'letter': mapped_drive_case.params.letter,
+          'path': previous[0].path} if previous else '' }}
+    expected_after: >-
+      {{ {'letter': mapped_drive_case.params.letter,
+          'path': mapped_drive_case.params.path} if
+         mapped_drive_case.params.state | default('present') != 'absent'
+         else '' }}
+  ansible.builtin.assert:
+    that:
+      - mapped_drive_result.changed == mapped_drive_case.changed
+      - (mapped_drive_case.error is defined) == (mapped_drive_result is failed)
+      - >-
+        mapped_drive_case.error is not defined or
+        mapped_drive_result.msg == mapped_drive_case.error
+      - mapped_drive_result.warnings | default([]) == []
+      - mapped_drive_result.rc is not defined
+      - mapped_drive_result.stdout is not defined
+      - mapped_drive_result.stderr is not defined
+      - >-
+        mapped_drive_case.error is defined or
+        mapped_drive_result.msg is not defined
+      - writes or observation == mapped_drive_previous
+      - >-
+        not writes or (mapped_drive_case.expected is none and current == []) or
+        (current | length == 1 and
+         current[0].path | lower == mapped_drive_case.expected | lower)
+      - >-
+        mapped_drive_case.error is not defined or
+        mapped_drive_case.initialized | default(false) or
+        mapped_drive_result.diff is not defined
+      - >-
+        mapped_drive_case.error is defined or
+        mapped_drive_result.diff ==
+        {'before': expected_before, 'after': expected_after}
+      - >-
+        not (mapped_drive_case.initialized | default(false)) or
+        mapped_drive_result.diff == {'before': expected_before, 'after': ''}
+
+- name: Advance the previous state only after successful validation
+  ansible.builtin.set_fact:
+    mapped_drive_previous: >-
+      {{ mapped_drive_observation.stdout | from_json }}

@@ -1,0 +1,45 @@
+---
+# SPDX-License-Identifier: GPL-3.0-or-later
+- name: Record an independent target clock bound before both waits
+  sustainablelobster.legacy_windows.win_command:
+    argv:
+      - "{{ ansible_python_interpreter }}"
+      - "-c"
+      - "import time; print(time.monotonic())"
+  register: regex_wait_before
+  changed_when: false
+- name: Capture the native complete public category Wait dictionary
+  sustainablelobster.legacy_windows.win_wait_for:
+    path: "{{ regex_workspace.path }}\\{{ regex_wait_case.file }}"
+    regex: "{{ regex_wait_case.pattern }}"
+    state: "{{ regex_wait_case.state }}"
+    timeout: 3
+  register: regex_native_wait
+  ignore_errors: true
+  no_log: true
+- name: Capture the untouched released complete public category Wait dictionary
+  ansible.windows.win_wait_for:
+    path: "{{ regex_workspace.path }}\\{{ regex_wait_case.file }}"
+    regex: "{{ regex_wait_case.pattern }}"
+    state: "{{ regex_wait_case.state }}"
+    timeout: 3
+  register: regex_source_wait
+  ignore_errors: true
+  no_log: true
+- name: Record the independent target clock bound after both waits
+  sustainablelobster.legacy_windows.win_command:
+    argv:
+      - "{{ ansible_python_interpreter }}"
+      - "-c"
+      - "import time; print(time.monotonic())"
+  register: regex_wait_after
+  changed_when: false
+- name: Retain whole Wait results and their independently observed duration
+    bound
+  ansible.builtin.set_fact:
+    regex_wait_pairs: >-
+      {{ regex_wait_pairs + [{'case': regex_wait_case,
+      'native': regex_native_wait, 'source': regex_source_wait,
+      'before': regex_wait_before, 'after': regex_wait_after}]
+      }}
+  no_log: true

@@ -1,0 +1,283 @@
+---
+uri_cases:
+  - name: HTTP response properties without content
+  - name: HTTP content uses UTF8 replacement decoding
+    params:
+      return_content: true
+  - name: HEAD returns response properties and empty content
+    params:
+      method: HEAD
+      return_content: true
+  - name: Unaccepted status retains full response and content
+    params:
+      url: '{{ get_url_setup_data.http }}/status/404'
+      return_content: true
+    failed: true
+    elapsed: 0
+  - name: Explicit accepted status returns successfully
+    params:
+      url: '{{ get_url_setup_data.http }}/status/404'
+      return_content: true
+      status_code:
+        - 404
+  - name: Unaccepted status writes destination before failure
+    params:
+      url: '{{ get_url_setup_data.http }}/status/404'
+      return_content: true
+      dest: '{{ get_url_workspace.path }}\output\result.bin'
+    failed: true
+    changed: true
+    elapsed: 0
+  - name: Destination check mode predicts without writing
+    params:
+      dest: '{{ get_url_workspace.path }}\output\result.bin'
+    check: true
+    changed: true
+  - name: Existing identical destination is unchanged
+    params:
+      dest: '{{ get_url_workspace.path }}\output\result.bin'
+    fixture_payload: true
+  - name: Destination creation writes exact bytes
+    params:
+      dest: '{{ get_url_workspace.path }}\output\result.bin'
+    changed: true
+  - name: Destination replacement writes exact bytes
+    params:
+      dest: '{{ get_url_workspace.path }}\output\result.bin'
+    contents: old content
+    changed: true
+  - name: Creates skip happens before URL validation
+    params:
+      url: invalid-uri
+      creates: '{{ get_url_workspace.path }}\preserved.bin'
+    skipped: true
+    elapsed: 0
+    no_requests: true
+  - name: Removes skip happens before URL validation
+    params:
+      url: invalid-uri
+      removes: '{{ get_url_workspace.path }}\missing-file'
+    skipped: true
+    elapsed: 0
+    no_requests: true
+  - name: Method validation happens before creates skip
+    params:
+      url: invalid-uri
+      method: GET SPACE
+      creates: '{{ get_url_workspace.path }}\preserved.bin'
+    failed: true
+    elapsed: 0
+    no_requests: true
+  - name: Lowercase method is uppercased
+    params:
+      method: get
+  - name: File response properties and content
+    params:
+      url: '{{ get_url_setup_data.file }}'
+      return_content: true
+    failed: true
+    elapsed: 0
+    no_requests: true
+  - name: File missing status cannot be accepted as zero
+    params:
+      url: '{{ get_url_setup_data.file }}'
+      return_content: true
+      status_code:
+        - 0
+    failed: true
+    elapsed: 0
+    no_requests: true
+  - name: JSON object is returned
+    params:
+      url: '{{ get_url_setup_data.http }}/json/object'
+      return_content: true
+  - name: JSON null is omitted
+    params:
+      url: '{{ get_url_setup_data.http }}/json/null'
+      return_content: true
+  - name: JSON false is omitted
+    params:
+      url: '{{ get_url_setup_data.http }}/json/false'
+      return_content: true
+  - name: JSON zero is omitted
+    params:
+      url: '{{ get_url_setup_data.http }}/json/zero'
+      return_content: true
+  - name: JSON empty list is omitted
+    params:
+      url: '{{ get_url_setup_data.http }}/json/empty-list'
+      return_content: true
+  - name: JSON empty object truthiness
+    params:
+      url: '{{ get_url_setup_data.http }}/json/empty-object'
+      return_content: true
+  - name: JSON empty string is omitted
+    params:
+      url: '{{ get_url_setup_data.http }}/json/empty-string'
+      return_content: true
+  - name: JSON one false truthiness
+    params:
+      url: '{{ get_url_setup_data.http }}/json/one-false'
+      return_content: true
+  - name: JSON one number truthiness
+    params:
+      url: '{{ get_url_setup_data.http }}/json/one-number'
+      return_content: true
+  - name: Invalid JSON content is retained without json
+    params:
+      url: '{{ get_url_setup_data.http }}/json/invalid'
+      return_content: true
+  - name: Custom duplicate headers and cookie properties
+    params:
+      url: '{{ get_url_setup_data.http }}/custom'
+      return_content: true
+  - name: POST raw text body
+    params:
+      url: '{{ get_url_setup_data.http }}/echo'
+      method: POST
+      body: text <>& fixture
+      return_content: true
+  - name: POST single-key dictionary JSON body
+    params:
+      url: '{{ get_url_setup_data.http }}/echo'
+      method: POST
+      body:
+        first: text <>&
+      return_content: true
+  - name: POST list JSON body
+    params:
+      url: '{{ get_url_setup_data.http }}/echo'
+      method: POST
+      body:
+        - 7
+        - false
+        - null
+        - <>&
+      return_content: true
+  - name: POST scalar boolean body
+    params:
+      url: '{{ get_url_setup_data.http }}/echo'
+      method: POST
+      body: false
+      return_content: true
+  - name: POST empty string body
+    params:
+      url: '{{ get_url_setup_data.http }}/echo'
+      method: POST
+      body: ''
+      return_content: true
+  - name: GET upload body fails before sending
+    params:
+      url: '{{ get_url_setup_data.http }}/echo'
+      body: fixture
+      return_content: true
+    failed: true
+    elapsed: 0
+    no_requests: true
+  - name: Explicit content type overrides header
+    params:
+      url: '{{ get_url_setup_data.http }}/echo'
+      method: POST
+      body: fixture
+      return_content: true
+      content_type: application/custom
+      headers:
+        Content-Type: application/ignored
+  - name: PUT sends the request body
+    params:
+      url: '{{ get_url_setup_data.http }}/echo'
+      method: PUT
+      body: fixture
+      return_content: true
+  - name: PATCH sends the request body
+    params:
+      url: '{{ get_url_setup_data.http }}/echo'
+      method: PATCH
+      body: fixture
+      return_content: true
+  - name: OPTIONS exposes complete response properties
+    params:
+      method: OPTIONS
+  - name: Safe GET follows redirects and exposes final URL
+    params:
+      url: '{{ get_url_setup_data.http }}/redirect/302'
+      return_content: true
+  - name: Safe HEAD follows redirects and exposes final URL
+    params:
+      url: '{{ get_url_setup_data.http }}/redirect/302'
+      method: HEAD
+      return_content: true
+  - name: Safe POST retains redirect response and body
+    params:
+      url: '{{ get_url_setup_data.http }}/redirect/302'
+      method: POST
+      body: fixture
+      return_content: true
+      status_code:
+        - 302
+  - name: All POST 302 redirects discard body and select GET
+    params:
+      url: '{{ get_url_setup_data.http }}/redirect/302'
+      method: POST
+      body: fixture
+      return_content: true
+      follow_redirects: all
+  - name: All PUT 302 redirects retain body and method
+    params:
+      url: '{{ get_url_setup_data.http }}/redirect/302'
+      method: PUT
+      body: fixture
+      return_content: true
+      follow_redirects: all
+  - name: All POST 307 redirects retain body and method
+    params:
+      url: '{{ get_url_setup_data.http }}/redirect/307'
+      method: POST
+      body: fixture
+      return_content: true
+      follow_redirects: all
+  - name: All POST 303 redirects discard body and select GET
+    params:
+      url: '{{ get_url_setup_data.http }}/redirect/303'
+      method: POST
+      body: fixture
+      return_content: true
+      follow_redirects: all
+  - name: None GET retains redirect response
+    params:
+      url: '{{ get_url_setup_data.http }}/redirect/302'
+      return_content: true
+      follow_redirects: none
+      status_code:
+        - 302
+  - name: URI connection refusal retains full failure
+    params:
+      url: http://127.0.0.1:9/payload.bin
+      url_timeout: 3
+    failed: true
+  - name: URI unresolved name retains full failure
+    params:
+      url: http://legacy-windows-uri-test.invalid/payload.bin
+      url_timeout: 3
+    failed: true
+  - name: Native WinHTTP POST uploads literal text bytes
+    params:
+      url: '{{ get_url_setup_data.http }}/echo'
+      use_proxy: true
+      method: POST
+      body: fixture <>&
+      return_content: true
+  - name: Native WinHTTP POST uploads an explicit empty body
+    params:
+      url: '{{ get_url_setup_data.http }}/echo'
+      use_proxy: true
+      method: POST
+      body: ''
+      return_content: true
+  - name: Native WinHTTP PUT uploads a single-key JSON dictionary
+    params:
+      url: '{{ get_url_setup_data.http }}/echo'
+      use_proxy: true
+      method: PUT
+      body: {key: 'fixture <>&'}
+      return_content: true

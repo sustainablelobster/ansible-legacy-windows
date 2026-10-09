@@ -1,0 +1,102 @@
+---
+- name: '{{ auto_logon_case.name }}'
+  block:
+    - name: Apply or predict automatic logon configuration  # noqa: args[module]
+      sustainablelobster.legacy_windows.win_auto_logon:
+        username: '{{ auto_logon_case.params.username | default(omit) }}'
+        password: '{{ auto_logon_case.params.password | default(omit) }}'
+        logon_count: '{{ auto_logon_case.params.logon_count | default(omit) }}'
+        state: '{{ auto_logon_case.params.state | default(omit) }}'
+      check_mode: '{{ auto_logon_case.check | default(false) }}'
+      diff: true
+      register: auto_logon_result
+      no_log: true
+  rescue:
+    - name: Require the declared automatic logon failure
+      ansible.builtin.assert:
+        that:
+          - auto_logon_case.error is defined
+          - auto_logon_result is failed
+          - auto_logon_result.msg == auto_logon_case.error
+          - not auto_logon_result.changed
+
+- name: Read independent native values and non-reversible secret proofs
+  sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+    argv:
+      - '{{ ansible_python_interpreter }}'
+      - '-'
+      - '{{ auto_logon_workspace.path }}'
+      - observe
+    stdin: '{{ auto_logon_fixture }}'
+  register: auto_logon_observation
+  changed_when: false
+  check_mode: false
+
+- name: Verify public fields check mode and independently observed configuration
+  vars:
+    observation: '{{ auto_logon_observation.stdout | from_json }}'
+    previous_values: '{{ auto_logon_previous.registry }}'
+    before: >-
+      {{ {'state': ('present' if
+         previous_values.AutoAdminLogon | default(0) | string == '1'
+         else 'absent')} |
+      combine({'username': previous_values.DefaultUserName}
+              if 'DefaultUserName' in previous_values else {}) |
+      combine({'domain': previous_values.DefaultDomainName}
+              if 'DefaultDomainName' in previous_values else {}) |
+      combine({'logon_count': previous_values.AutoLogonCount}
+              if 'AutoLogonCount' in previous_values else {}) }}
+    after: >-
+      {{ {'state': auto_logon_case.state | default('present')} |
+      combine({'username': auto_logon_account[1],
+               'domain': auto_logon_account[0]}
+              if auto_logon_case.state | default('present') == 'present'
+              else {}) |
+      combine({'logon_count': auto_logon_case.params.logon_count}
+              if auto_logon_case.params.logon_count is defined
+              else {}) }}
+    writes: >-
+      {{ auto_logon_case.changed and not
+         (auto_logon_case.check | default(false)) }}
+  ansible.builtin.assert:
+    that:
+      - auto_logon_result.changed == auto_logon_case.changed
+      - (auto_logon_case.error is defined) == (auto_logon_result is failed)
+      - auto_logon_password not in (auto_logon_result | to_json)
+      - auto_logon_password_two not in (auto_logon_result | to_json)
+      - auto_logon_result.password is not defined
+      - auto_logon_result.warnings | default([]) == []
+      - >-
+        writes or observation == auto_logon_previous
+      - >-
+        not writes or not observation.plaintext_present
+      - >-
+        not writes or observation.registry.AutoAdminLogon ==
+        (1 if auto_logon_case.state == 'present' else 0)
+      - >-
+        not writes or auto_logon_case.state != 'present' or
+        observation.registry.DefaultUserName == auto_logon_account[1]
+      - >-
+        not writes or auto_logon_case.state != 'present' or
+        observation.registry.DefaultDomainName == auto_logon_account[0]
+      - >-
+        not writes or auto_logon_case.state != 'present' or
+        observation.secret_matches == [auto_logon_case.password_kind]
+      - >-
+        not writes or auto_logon_case.state != 'present' or
+        observation.registry.AutoLogonCount | default(none) ==
+        auto_logon_case.params.logon_count | default(none)
+      - >-
+        not writes or auto_logon_case.state != 'absent' or
+        (observation.registry == {'AutoAdminLogon': 0} and
+         not observation.secret_present)
+      - >-
+        auto_logon_case.error is defined or
+        auto_logon_result.diff.before == before
+      - >-
+        auto_logon_case.error is defined or
+        auto_logon_result.diff.after == after
+
+- name: Retain the nonsecret observation for the next case
+  ansible.builtin.set_fact:
+    auto_logon_previous: '{{ auto_logon_observation.stdout | from_json }}'

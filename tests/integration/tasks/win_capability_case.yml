@@ -1,0 +1,137 @@
+---
+- name: Read independent complete capability and protected state before request
+  sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+    argv: ['{{ ansible_python_interpreter }}', '-',
+           '{{ capability_workspace.path }}', observe]
+    stdin: '{{ capability_program }}'
+  register: capability_before
+  changed_when: false
+  no_log: true
+
+- name: Retain complete public success or failure
+  block:
+    - name: Execute capability management request  # noqa: args[module]
+      sustainablelobster.legacy_windows.win_capability: >-
+        {{ capability_case.params }}
+      check_mode: '{{ capability_case.check | default(false) }}'
+      diff: true
+      register: capability_result
+      no_log: true
+  rescue:
+    - name: Retain actual failure for independent observation
+      ansible.builtin.assert:
+        that: capability_result is failed
+      no_log: true
+
+- name: Read independent complete capability and protected state after request
+  sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+    argv: ['{{ ansible_python_interpreter }}', '-',
+           '{{ capability_workspace.path }}', observe]
+    stdin: '{{ capability_program }}'
+  register: capability_after
+  changed_when: false
+  no_log: true
+
+- name: Capture full public and native observations before assertions
+  ansible.builtin.set_fact:
+    capability_results: >-
+      {{ capability_results + [{
+         'name': capability_case.name, 'params': capability_case.params,
+         'check': capability_case.check | default(false),
+         'result': capability_result,
+         'before': capability_before.stdout | from_json,
+         'after': capability_after.stdout | from_json,
+         'validated': false}] }}
+  no_log: true
+
+- name: Save partial evidence before assertions
+  ansible.builtin.copy:
+    content: '{{ capability_results | to_nice_json }}'
+    dest: '{{ capability_capture.path }}'
+    mode: '0600'
+  delegate_to: localhost
+  changed_when: false
+  no_log: true
+  vars:
+    ansible_connection: local
+    ansible_shell_type: sh
+    ansible_python_interpreter: '{{ ansible_playbook_python }}'
+
+- name: Journal a reported servicing reboot before final recovery
+  when:
+    - not (capability_case.check | default(false))
+    - capability_result.reboot_required | default(false)
+  sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+    argv: ['{{ ansible_python_interpreter }}', '-',
+           '{{ capability_workspace.path }}', note_reboot]
+    stdin: '{{ capability_program }}'
+  changed_when: false
+  no_log: true
+
+- name: Require exact declared public flags and protected state
+  vars:
+    capability_initial: '{{ capability_before.stdout | from_json }}'
+    capability_final: '{{ capability_after.stdout | from_json }}'
+  ansible.builtin.assert:
+    that:
+      - capability_result.changed == capability_case.changed
+      - (capability_result is failed) ==
+        (capability_case.failed | default(false))
+      - capability_initial.files == capability_final.files
+      - capability_initial.task_resources == capability_final.task_resources
+      - capability_result.diff is not defined
+  no_log: true
+
+- name: Require exact nonmutation for read-only check failure and no-op cases
+  when: not (capability_case.mutation | default(false))
+  ansible.builtin.assert:
+    that:
+      - capability_before.stdout | from_json ==
+        capability_after.stdout | from_json
+  no_log: true
+
+- name: Require ordered public identities and no check-mode reboot
+  when: not (capability_case.failed | default(false))
+  ansible.builtin.assert:
+    that:
+      - capability_result.capabilities == capability_case.names
+      - capability_result.reboot_required is boolean
+      - not (capability_case.check | default(false)) or
+        not capability_result.reboot_required
+  no_log: true
+
+- name: Require only the journal-owned capability changed to the declared state
+  when: capability_case.mutation | default(false)
+  vars:
+    capability_initial: '{{ capability_before.stdout | from_json }}'
+    capability_final: '{{ capability_after.stdout | from_json }}'
+  ansible.builtin.assert:
+    that:
+      - >-
+        capability_final.capabilities['XPS.Viewer~~~~0.0.1.0'] ==
+        capability_case.target_state
+      - >-
+        capability_initial.capabilities | dict2items |
+        rejectattr('key', 'equalto', 'XPS.Viewer~~~~0.0.1.0') | list ==
+        capability_final.capabilities | dict2items |
+        rejectattr('key', 'equalto', 'XPS.Viewer~~~~0.0.1.0') | list
+      - >-
+        capability_initial.services | dict2items |
+        rejectattr('key', 'equalto', 'TrustedInstaller') | list ==
+        capability_final.services | dict2items |
+        rejectattr('key', 'equalto', 'TrustedInstaller') | list
+      - >-
+        capability_initial.services.TrustedInstaller | dict2items |
+        rejectattr('key', 'in', ['State', 'StartMode']) | list ==
+        capability_final.services.TrustedInstaller | dict2items |
+        rejectattr('key', 'in', ['State', 'StartMode']) | list
+      # CBS may temporarily change its service mode and pending reboot keys.
+      # Both complete snapshots remain captured; recovery must restore them.
+  no_log: true
+
+- name: Mark validated only after complete public and native assertions
+  ansible.builtin.set_fact:
+    capability_results: >-
+      {{ capability_results[:-1] +
+         [capability_results[-1] | combine({'validated': true})] }}
+  no_log: true

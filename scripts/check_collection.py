@@ -1,5 +1,6 @@
 """Build and install the collection in a disposable local directory."""
 
+import argparse
 import json
 import os
 import subprocess
@@ -10,22 +11,37 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 IDENTITY = ("sustainablelobster", "legacy_windows")
+LICENSE_AND_NOTICE_FILES = (
+    "LICENSE",
+    "NOTICE",
+    "LICENSES/ansible-windows-GPL-3.0-or-later.txt",
+    "LICENSES/convertdate-MIT.txt",
+    "LICENSES/microsoft-referencesource-MIT.txt",
+    "LICENSES/coreclr-MIT.txt",
+    "LICENSES/Unicode-3.0.txt",
+)
 REQUIRED_FILES = {
     "MANIFEST.json",
     "FILES.json",
-    "LICENSE",
+    *LICENSE_AND_NOTICE_FILES,
     "CHANGELOG.md",
     "README.md",
     "meta/runtime.yml",
-    "docs/compatibility.md",
     "docs/development.md",
-    "docs/status.md",
+    "docs/usage.md",
     "plugins/modules/README.md",
     "plugins/module_utils/README.md",
     "plugins/action/README.md",
+    "plugins/plugin_utils/_updates_hresult.py",
+    "plugins/module_utils/legacy_windows_regex_categories.py",
+}
+FORBIDDEN_FILES = {
+    "plugins/plugin_utils/_updates_hresult_data.py",
 }
 EXCLUDED_ROOTS = {
     ".git",
+    ".github",
+    ".gitattributes",
     ".gitignore",
     ".venv",
     ".cache",
@@ -38,6 +54,7 @@ EXCLUDED_ROOTS = {
     ".ansible-lint.yml",
     ".yamllint.yml",
     "dist",
+    "tmp",
     "inventory",
     "inventories",
     "tests",
@@ -60,9 +77,36 @@ def _read_member(archive: tarfile.TarFile, name: str) -> bytes:
         return member.read()
 
 
-def _inspect_archive(artifact: Path) -> bytes:
+def _plugin_files(root: Path) -> dict[str, bytes]:
+    return {
+        path.relative_to(root).as_posix(): path.read_bytes()
+        for path in sorted((root / "plugins").rglob("*"))
+        if path.is_file() and "__pycache__" not in path.parts and path.suffix != ".pyc"
+    }
+
+
+def _validate_manifest(manifest: bytes) -> None:
+    info = json.loads(manifest)["collection_info"]
+    if (info["namespace"], info["name"]) != IDENTITY:
+        raise SystemExit("Artifact has the wrong collection identity")
+    for license_name in ("GPL-3.0-or-later", "MIT", "Unicode-3.0"):
+        if license_name not in info["license"]:
+            raise SystemExit(
+                "Artifact does not declare its " + license_name + " material"
+            )
+
+
+def _inspect_archive(artifact: Path, plugins: dict[str, bytes] | None = None) -> bytes:
+    if plugins is None:
+        plugins = _plugin_files(ROOT)
     with tarfile.open(artifact) as archive:
         names = set(archive.getnames())
+        forbidden = FORBIDDEN_FILES & names
+        if forbidden:
+            raise SystemExit(
+                "Artifact includes removed implementation: "
+                + ", ".join(sorted(forbidden))
+            )
         missing = REQUIRED_FILES - names
         if missing:
             raise SystemExit("Artifact is missing: " + ", ".join(sorted(missing)))
@@ -77,12 +121,30 @@ def _inspect_archive(artifact: Path) -> bytes:
                 or name.endswith((".pyc", ".tar.gz"))
             ):
                 raise SystemExit("Artifact includes excluded path: " + name)
+        archived_plugins = {
+            member.name
+            for member in archive.getmembers()
+            if member.isfile() and Path(member.name).parts[0] == "plugins"
+        }
+        if archived_plugins != set(plugins):
+            missing_plugins = sorted(set(plugins) - archived_plugins)
+            extra_plugins = sorted(archived_plugins - set(plugins))
+            raise SystemExit(
+                "Artifact plugin inventory differs from source; missing: "
+                + ", ".join(missing_plugins)
+                + "; extra: "
+                + ", ".join(extra_plugins)
+            )
+        for name, contents in plugins.items():
+            if _read_member(archive, name) != contents:
+                raise SystemExit("Artifact plugin differs from source: " + name)
         manifest = _read_member(archive, "MANIFEST.json")
-        info = json.loads(manifest)["collection_info"]
-        if (info["namespace"], info["name"]) != IDENTITY:
-            raise SystemExit("Artifact has the wrong collection identity")
-        if _read_member(archive, "LICENSE") != (ROOT / "LICENSE").read_bytes():
-            raise SystemExit("Artifact license differs from the source license")
+        _validate_manifest(manifest)
+        for notice in LICENSE_AND_NOTICE_FILES:
+            if _read_member(archive, notice) != (ROOT / notice).read_bytes():
+                raise SystemExit(
+                    "Artifact license or notice differs from source: " + notice
+                )
     return manifest
 
 
@@ -91,6 +153,14 @@ def main() -> None:
 
     :raises SystemExit: If the collection artifact or installation is invalid.
     """
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--artifact",
+        type=Path,
+        help="Check and offline-install an existing archive instead of building one.",
+    )
+    arguments = parser.parse_args()
+    plugins = _plugin_files(ROOT)
     with tempfile.TemporaryDirectory(prefix="legacy-windows-check-") as directory:
         temporary = Path(directory)
         collections = temporary / "collections"
@@ -100,14 +170,17 @@ def main() -> None:
             "ANSIBLE_LOCAL_TEMP": str(temporary / "ansible-tmp"),
         }
         galaxy = [sys.executable, "-m", "ansible.cli.galaxy", "collection"]
-        subprocess.run(
-            [*galaxy, "build", "--output-path", str(temporary)],
-            cwd=ROOT,
-            env=environment,
-            check=True,
-        )
-        (artifact,) = temporary.glob("*.tar.gz")
-        manifest = _inspect_archive(artifact)
+        if arguments.artifact is None:
+            subprocess.run(
+                [*galaxy, "build", "--output-path", str(temporary)],
+                cwd=ROOT,
+                env=environment,
+                check=True,
+            )
+            (artifact,) = temporary.glob("*.tar.gz")
+        else:
+            artifact = arguments.artifact.resolve()
+        manifest = _inspect_archive(artifact, plugins)
 
         subprocess.run(
             [
@@ -127,13 +200,19 @@ def main() -> None:
         installed_manifest = (installed / "MANIFEST.json").read_bytes()
         if installed_manifest != manifest:
             raise SystemExit("Installed manifest differs from the built artifact")
+        if _plugin_files(installed) != plugins:
+            raise SystemExit("Installed plugin paths or bytes differ from source")
         for name in REQUIRED_FILES:
             if not (installed / name).is_file():
                 raise SystemExit("Installed collection is missing: " + name)
-        if (installed / "LICENSE").read_bytes() != (ROOT / "LICENSE").read_bytes():
-            raise SystemExit("Installed license differs from the source license")
+        for notice in LICENSE_AND_NOTICE_FILES:
+            if (installed / notice).read_bytes() != (ROOT / notice).read_bytes():
+                raise SystemExit(
+                    "Installed license or notice differs from source: " + notice
+                )
         print(
-            "PASS: collection metadata, contents, exclusions, and offline installation"
+            "PASS: collection metadata, all plugin bytes, exclusions, "
+            "and offline installation"
         )
         print("This checks packaging only; it does not execute Windows payloads.")
 

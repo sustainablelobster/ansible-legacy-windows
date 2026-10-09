@@ -9,7 +9,13 @@ setup:
 
 # Run the same Nix-provided tools used by commit hooks.
 lint:
-    pre-commit run --all-files
+    git ls-files -z --cached --others --exclude-standard | xargs -0 -r pre-commit run --files
+
+# Refresh the current collection before offline module resolution.
+[positional-arguments]
+_ansible-lint *args:
+    ANSIBLE_COLLECTIONS_PATH="$PWD/.ansible/collections" ansible-galaxy collection install . --offline --no-deps --force --collections-path .ansible/collections
+    ANSIBLE_COLLECTIONS_PATH="$PWD/.ansible/collections" ansible-lint "$@"
 
 _lint-justfile:
     just --unstable --check --fmt

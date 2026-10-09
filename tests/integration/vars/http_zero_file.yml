@@ -1,0 +1,12 @@
+---
+http_zero_cases:
+  - name: URI file zero readiness
+    module: uri
+    file: true
+  - name: GetURL file zero readiness
+    module: get_url
+    file: true
+  - name: GetURL file positive retention
+    module: get_url
+    file: true
+    params: {url_timeout: 2}

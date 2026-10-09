@@ -1,0 +1,152 @@
+---
+- name: Record native policy before the declared public request
+  sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+    argv:
+      - '{{ ansible_python_interpreter }}'
+      - '-'
+      - '{{ audit_policy_workspace.path }}'
+      - observe
+    stdin: '{{ audit_policy_fixture }}'
+  register: audit_policy_before
+  changed_when: false
+  check_mode: false
+  no_log: true
+
+- name: Keep the complete successful or failed public result
+  block:
+    - name: Execute the audit policy request  # noqa: args[module]
+      sustainablelobster.legacy_windows.win_audit_policy_system: >-
+        {{ audit_policy_case.params }}
+      check_mode: '{{ audit_policy_case.check | default(false) }}'
+      diff: true
+      register: audit_policy_result
+      no_log: true
+  rescue:
+    - name: Retain failure for native observation and validation
+      ansible.builtin.assert:
+        that: audit_policy_result is failed
+      no_log: true
+
+- name: Independently read every native policy after the request
+  sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+    argv:
+      - '{{ ansible_python_interpreter }}'
+      - '-'
+      - '{{ audit_policy_workspace.path }}'
+      - observe
+    stdin: '{{ audit_policy_fixture }}'
+  register: audit_policy_after
+  changed_when: false
+  check_mode: false
+  no_log: true
+
+- name: Retain public and native evidence before asserting behavior
+  ansible.builtin.set_fact:
+    audit_policy_results: >-
+      {{ audit_policy_results + [{
+         'name': audit_policy_case.name, 'params': audit_policy_case.params,
+         'check': audit_policy_case.check | default(false),
+         'result': audit_policy_result,
+         'before': audit_policy_before.stdout | from_json,
+         'after': audit_policy_after.stdout | from_json,
+         'validated': false}] }}
+  no_log: true
+
+- name: Save the complete capture before any behavior assertion
+  ansible.builtin.copy:
+    content: >-
+      {{ {'results': audit_policy_results,
+          'restoration': audit_policy_restoration | default(none)}
+         | to_nice_json }}
+    dest: '{{ audit_policy_capture.path }}'
+    mode: '0600'
+  delegate_to: localhost
+  changed_when: false
+  no_log: true
+  vars: &audit_policy_local
+    ansible_connection: local
+    ansible_shell_type: sh
+    ansible_python_interpreter: '{{ ansible_playbook_python }}'
+
+- name: Verify public change failure and check-mode nonmutation
+  ansible.builtin.assert:
+    that:
+      - audit_policy_result.changed == audit_policy_case.changed
+      - >-
+        (audit_policy_result is failed)
+        == (audit_policy_case.failed | default(false))
+      - >-
+        audit_policy_case.message | default('') in
+        audit_policy_result.msg | default('')
+      - >-
+        (audit_policy_case.changed
+        and not (audit_policy_case.check | default(false)))
+        or (audit_policy_before.stdout | from_json)
+        == (audit_policy_after.stdout | from_json)
+      - >-
+        (audit_policy_before.stdout | from_json).policies
+        | map(attribute='subcategory') | list
+        == (audit_policy_after.stdout | from_json).policies
+        | map(attribute='subcategory') | list
+  no_log: true
+
+- name: Verify native state and full returned policy values
+  when: audit_policy_case.flags is defined
+  vars:
+    audit_policy_selected: >-
+      {{ ((audit_policy_after.stdout | from_json).policies |
+          selectattr('category', 'equalto',
+                     '69979848-797a-11d9-bed3-505054503030') | list)
+         if (audit_policy_case.category | default(false)) else
+         ((audit_policy_after.stdout | from_json).policies |
+          selectattr('subcategory', 'equalto',
+                     '0cce921d-69ae-11d9-bed3-505054503030') | list) }}
+  ansible.builtin.assert:
+    that:
+      - audit_policy_selected | length > 0
+      - >-
+        audit_policy_selected | map(attribute='flags') | unique | list
+        == [audit_policy_case.flags]
+      - audit_policy_result.current_audit_policy is mapping
+      - >-
+        audit_policy_result.current_audit_policy | length
+        == audit_policy_selected | length
+      - >-
+        audit_policy_result.current_audit_policy.values() | unique | list
+        == [audit_policy_case.setting]
+  no_log: true
+
+- name: Require exact nonselected native policies after every case
+  vars:
+    audit_policy_nonselected: >-
+      {{ '69979848-797a-11d9-bed3-505054503030'
+         if (audit_policy_case.category | default(false)) else
+         '0cce921d-69ae-11d9-bed3-505054503030' }}
+    audit_policy_identity: >-
+      {{ 'category' if (audit_policy_case.category | default(false))
+         else 'subcategory' }}
+  ansible.builtin.assert:
+    that:
+      - >-
+        (audit_policy_before.stdout | from_json).policies |
+        rejectattr(audit_policy_identity, 'equalto', audit_policy_nonselected)
+        | list
+        == (audit_policy_after.stdout | from_json).policies |
+        rejectattr(audit_policy_identity, 'equalto', audit_policy_nonselected)
+        | list
+  no_log: true
+
+- name: Preserve native selector errors as text without writes
+  when: audit_policy_case.error_text | default(false)
+  ansible.builtin.assert:
+    that:
+      - audit_policy_result.current_audit_policy is string
+      - "'0x00000057' in audit_policy_result.current_audit_policy"
+  no_log: true
+
+- name: Mark the captured request validated only after all assertions
+  ansible.builtin.set_fact:
+    audit_policy_results: >-
+      {{ audit_policy_results[:-1] +
+         [audit_policy_results[-1] | combine({'validated': true})] }}
+  no_log: true

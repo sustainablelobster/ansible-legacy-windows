@@ -1,0 +1,179 @@
+---
+- name: Measure Updates caller-loss cancellation and exact native worker closure
+  hosts: legacy_windows
+  gather_facts: false
+  vars:
+    updates_lifecycle_capture_path: >-
+      {{ playbook_dir + '/../../tmp/codex/evidence/' +
+         'win-updates-async-lifecycle-v1.json' }}
+    updates_lifecycle_sources_path: >-
+      {{ playbook_dir + '/../../tmp/codex/evidence/' +
+         'win-updates-async-lifecycle-sources-v1.json' }}
+    updates_lifecycle_program: |
+      HELPER_SOURCES = (
+          {{ lookup('ansible.builtin.file', updates_lifecycle_sources_path,
+                    rstrip=false) }}
+      )
+      ASYNC_FIXTURE_SOURCE = (
+          {{ lookup('ansible.builtin.file',
+                    playbook_dir + '/fixtures/native_async.py',
+                    rstrip=false) | to_json }}
+      )
+      {{ lookup('ansible.builtin.file',
+                playbook_dir + '/fixtures/win_updates_async.py',
+                rstrip=false) }}
+    updates_lifecycle_global_program: >-
+      import glob,json,os,sys,tempfile;
+      assert sys.version_info[:3]==(3,4,4);
+      print(json.dumps({name:sorted(glob.glob(os.path.join(
+      tempfile.gettempdir(),pattern))) for name,pattern in
+      [('staging','ansible-tmp-*'),('workers','legacy-windows-updates-*')]}))
+  tasks:
+    - name: Establish private controller evidence directory before guest writes
+      ansible.builtin.file:
+        path: '{{ updates_lifecycle_capture_path | dirname }}'
+        state: directory
+        mode: '0700'
+      delegate_to: localhost
+      changed_when: false
+    - name: Observe exact original global staging and workers
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "{{ updates_lifecycle_global_program }}""
+      register: updates_lifecycle_global_before
+      changed_when: false
+    - name: Allocate uniquely journaled native worker lifecycle workspace
+      sustainablelobster.legacy_windows.win_tempfile:
+        prefix: legacy-windows-native-async-updates-
+        state: directory
+      register: updates_lifecycle_workspace
+    - name: Exercise actual caller-loss without any Windows Update servicing
+      block:
+        - name: Journal protected bytes registry network services and sentinel
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - '-'
+              - '{{ updates_lifecycle_workspace.path }}'
+              - setup
+            stdin: '{{ updates_lifecycle_program }}'
+          register: updates_lifecycle_setup
+          changed_when: false
+          no_log: true
+        - name: Persist the original protected journal before starting processes
+          ansible.builtin.copy:
+            dest: '{{ updates_lifecycle_capture_path }}'
+            mode: '0600'
+            content: >-
+              {{ {'workspace':updates_lifecycle_workspace,
+                  'setup':updates_lifecycle_setup,
+                  'global_before':updates_lifecycle_global_before} |
+                  to_nice_json }}
+          delegate_to: localhost
+          no_log: true
+        - name: Observe callback cancellation and pinned native worker death
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - '-'
+              - '{{ updates_lifecycle_workspace.path }}'
+              - run
+            stdin: '{{ updates_lifecycle_program }}'
+          register: updates_lifecycle_result
+          changed_when: false
+          no_log: true
+        - name: Require cancellation completion and owned workspace absence
+          ansible.builtin.assert:
+            that:
+              - >-
+                (updates_lifecycle_result.stdout | from_json).python ==
+                [3, 4, 4]
+              - >-
+                (updates_lifecycle_result.stdout |
+                from_json).callback_before.cancelled == false
+              - >-
+                (updates_lifecycle_result.stdout |
+                from_json).callback_after.cancelled == true
+              - >-
+                (updates_lifecycle_result.stdout |
+                from_json).callback_after.resource_closed
+              - (updates_lifecycle_result.stdout | from_json).owned_root_absent
+              - >-
+                (updates_lifecycle_result.stdout |
+                from_json).startup_boundaries | length == 2
+              - >-
+                (updates_lifecycle_result.stdout |
+                from_json).startup_boundaries[0].root_before_frontend_death ==
+                false
+              - >-
+                (updates_lifecycle_result.stdout |
+                from_json).startup_boundaries[1].root_before_frontend_death ==
+                true
+              - >-
+                (updates_lifecycle_result.stdout |
+                from_json).startup_boundaries |
+                map(attribute='owned_root_absent') |
+                list == [true, true]
+          no_log: true
+      always:
+        - name: Recover only proven-dead owned processes and protected state
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - '-'
+              - '{{ updates_lifecycle_workspace.path }}'
+              - recover
+            stdin: '{{ updates_lifecycle_program }}'
+          register: updates_lifecycle_recovery
+          changed_when: false
+          failed_when: false
+          no_log: true
+        - name: Preserve complete identities callbacks and original protection
+          ansible.builtin.copy:
+            dest: '{{ updates_lifecycle_capture_path }}'
+            mode: '0600'
+            content: >-
+              {{ {'workspace':updates_lifecycle_workspace,
+                  'setup':updates_lifecycle_setup | default(none),
+                  'result':updates_lifecycle_result | default(none),
+                  'recovery':updates_lifecycle_recovery,
+                  'global_before':updates_lifecycle_global_before} |
+                  to_nice_json }}
+          delegate_to: localhost
+          no_log: true
+        - name: Require complete native process and protected-state recovery
+          ansible.builtin.assert:
+            that:
+              - updates_lifecycle_recovery.rc == 0
+              - (updates_lifecycle_recovery.stdout | from_json).restored
+          no_log: true
+        - name: Remove only the completely recovered owned workspace
+          sustainablelobster.legacy_windows.win_file:
+            path: '{{ updates_lifecycle_workspace.path }}'
+            state: absent
+        - name: Verify literal global staging and exact workspace absence
+          ansible.builtin.raw: >-
+            cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+            "{{ updates_lifecycle_global_program }};
+            assert not os.path.exists(
+            r'{{ updates_lifecycle_workspace.path }}')""
+          register: updates_lifecycle_global_after
+          changed_when: false
+          failed_when: >-
+            updates_lifecycle_global_after.rc != 0 or
+            (updates_lifecycle_global_after.stdout | from_json) !=
+            (updates_lifecycle_global_before.stdout | from_json)
+        - name: Retain final closure separately from the process assertions
+          ansible.builtin.copy:
+            dest: '{{ updates_lifecycle_capture_path }}'
+            mode: '0600'
+            content: >-
+              {{ (lookup('ansible.builtin.file',
+                         updates_lifecycle_capture_path) |
+                  from_json) |
+                  combine({'global_after': updates_lifecycle_global_after}) |
+                  to_nice_json }}
+          delegate_to: localhost
+          no_log: true
+        - name: Reset this established connection after exact owned cleanup
+          ansible.builtin.meta: reset_connection

@@ -1,0 +1,17 @@
+---
+# SPDX-License-Identifier: GPL-3.0-or-later
+uri_status_cases:
+  - name: Status default200 full response retention
+    params:
+      return_content: true
+  - name: Status accepted206 full response retention
+    params:
+      url: http://127.0.0.1:52771/status/206
+      return_content: true
+      status_code: [206]
+  - name: Status invalid206 enum name
+    params:
+      url: http://127.0.0.1:52771/status/206
+      return_content: true
+    failed: true
+    elapsed: 0

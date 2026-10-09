@@ -1,0 +1,136 @@
+---
+- name: Verify classic DSC through Python and its explicit installed engine
+  hosts: legacy_windows
+  gather_facts: false
+  vars_files:
+    - vars/win_dsc.yml
+  tasks:
+    - name: Require actual Python and record original global staging
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import glob,json,os,sys,tempfile;
+        assert sys.version_info[:3] == (3,4,4);
+        print(json.dumps(sorted(glob.glob(os.path.join(
+        tempfile.gettempdir(),'ansible-tmp-*')))))""
+      register: win_dsc_staging_before
+      changed_when: false
+
+    - name: Allocate private local evidence
+      ansible.builtin.tempfile:
+        path: '{{ playbook_dir }}/../../tmp'
+        state: file
+        prefix: 'win-dsc-{{ inventory_hostname }}-'
+        suffix: .json
+      register: win_dsc_capture
+      delegate_to: localhost
+      vars: &local
+        ansible_connection: local
+        ansible_shell_type: sh
+        ansible_python_interpreter: '{{ ansible_playbook_python }}'
+
+    - name: Allocate the uniquely owned resource workspace
+      sustainablelobster.legacy_windows.win_tempfile:
+        prefix: legacy-windows-win-dsc-
+        state: directory
+      register: win_dsc_workspace
+
+    - name: Initialize literal request records
+      ansible.builtin.set_fact:
+        win_dsc_records: []
+
+    - name: Exercise only the journal-owned resource paths
+      block:
+        - name: Journal output ownership and protected bytes
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}', '-',
+                   '{{ win_dsc_workspace.path }}', setup]
+            stdin: '{{ win_dsc_program }}'
+          register: win_dsc_setup
+          changed_when: false
+          no_log: true
+
+        - name: Exercise complete public requests and source comparisons
+          ansible.builtin.include_tasks: tasks/win_dsc_case.yml
+          loop: '{{ win_dsc_cases }}'
+          loop_control:
+            loop_var: win_dsc_case
+            label: '{{ win_dsc_case.name }}'
+      always:
+        - name: Recover only owned outputs and verify protected state
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}', '-',
+                   '{{ win_dsc_workspace.path }}', cleanup]
+            stdin: '{{ win_dsc_program }}'
+          register: win_dsc_recovery
+          failed_when: false
+          changed_when: false
+          no_log: true
+
+        - name: Persist all raw outcomes before recovery validation
+          ansible.builtin.copy:
+            content: >-
+              {{ {'results': win_dsc_records, 'workspace': win_dsc_workspace,
+                  'setup': win_dsc_setup | default(none),
+                  'recovery': win_dsc_recovery,
+                  'staging_before': win_dsc_staging_before} | to_nice_json }}
+            dest: '{{ win_dsc_capture.path }}'
+            mode: '0600'
+          delegate_to: localhost
+          vars: *local
+          changed_when: false
+          no_log: true
+
+        - name: Require exact protected resource recovery
+          ansible.builtin.assert:
+            that:
+              - win_dsc_recovery.rc == 0
+              - (win_dsc_recovery.stdout | from_json).restored
+
+        - name: Recheck protection before removing the owned journal
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}', '-',
+                   '{{ win_dsc_workspace.path }}', finalize]
+            stdin: '{{ win_dsc_program }}'
+          changed_when: false
+          no_log: true
+
+        - name: Remove only the verified empty workspace
+          sustainablelobster.legacy_windows.win_file:
+            path: '{{ win_dsc_workspace.path }}'
+            state: absent
+
+        - name: Observe workspace absence and final global staging
+          ansible.builtin.raw: >-
+            cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+            "import glob,json,os,tempfile;
+            assert not os.path.exists(r'{{ win_dsc_workspace.path }}');
+            print(json.dumps(sorted(glob.glob(os.path.join(
+            tempfile.gettempdir(),'ansible-tmp-*')))))""
+          register: win_dsc_staging_after
+          changed_when: false
+
+        - name: Retain literal final recovery and staging
+          ansible.builtin.copy:
+            content: >-
+              {{ {'results': win_dsc_records, 'workspace': win_dsc_workspace,
+                  'setup': win_dsc_setup | default(none),
+                  'recovery': win_dsc_recovery, 'workspace_absent': true,
+                  'staging_before': win_dsc_staging_before,
+                  'staging_after': win_dsc_staging_after} | to_nice_json }}
+            dest: '{{ win_dsc_capture.path }}'
+            mode: '0600'
+          delegate_to: localhost
+          vars: *local
+          changed_when: false
+          no_log: true
+
+        - name: Require exact original global staging
+          ansible.builtin.assert:
+            that:
+              - win_dsc_staging_before.stdout == win_dsc_staging_after.stdout
+
+    - name: Require every declared public case to be fully verified
+      ansible.builtin.assert:
+        that:
+          - win_dsc_records | length == win_dsc_cases | length
+          - win_dsc_records | rejectattr('validated') | list | length == 0

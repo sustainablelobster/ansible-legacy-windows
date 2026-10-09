@@ -1,0 +1,166 @@
+---
+# SPDX-License-Identifier: GPL-3.0-or-later
+- name: Compare structured PowerShell async launch status and owned closure
+  hosts: legacy_windows
+  gather_facts: false
+  vars_files:
+    - vars/win_powershell_async.yml
+  tasks:
+    - name: Require actual Python and original engine scratch and global staging
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import glob,json,os,sys,tempfile;assert sys.version_info[:3]==(3,4,4);
+        assert not glob.glob(os.path.join(tempfile.gettempdir(),
+        'legacy-windows-powershell-*'));
+        print(json.dumps(sorted(glob.glob(os.path.join(
+        tempfile.gettempdir(),'ansible-tmp-*')))))""
+      register: powershell_async_staging_before
+      changed_when: false
+
+    - name: Allocate a private controller capture
+      ansible.builtin.tempfile:
+        path: '{{ playbook_dir }}/../../tmp'
+        prefix: 'win-powershell-async-{{ inventory_hostname }}-'
+        suffix: .json
+      delegate_to: localhost
+      vars: &local
+        ansible_connection: local
+        ansible_shell_type: sh
+        ansible_python_interpreter: '{{ ansible_playbook_python }}'
+      register: powershell_async_capture
+      changed_when: false
+
+    - name: Allocate the exclusively owned async resource workspace
+      sustainablelobster.legacy_windows.win_tempfile:
+        prefix: legacy-windows-win-powershell-async-
+        state: directory
+      register: powershell_async_workspace
+
+    - name: Initialize literal complete and partial result records
+      ansible.builtin.set_fact:
+        powershell_async_records: []
+        powershell_async_comparisons: []
+        powershell_async_pair: {}
+
+    - name: Exercise all owned scripts with mandatory protected recovery
+      block:
+        - name: Journal owned resources jobs and protected persistent state
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}', '-',
+                   '{{ powershell_async_workspace.path }}', setup]
+            stdin: '{{ powershell_async_program }}'
+          register: powershell_async_setup
+          changed_when: false
+          no_log: true
+
+        - name: Exercise complete inline file and failure async public pairs
+          ansible.builtin.include_tasks: tasks/win_powershell_async_case.yml
+          loop: '{{ powershell_async_cases }}'
+          loop_control:
+            loop_var: powershell_async_case
+            index_var: powershell_async_index
+            label: '{{ powershell_async_case.name }}'
+      always:
+        - name: Await owned engine worker exit and validate protected recovery
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}', '-',
+                   '{{ powershell_async_workspace.path }}', cleanup]
+            stdin: '{{ powershell_async_program }}'
+          register: powershell_async_recovery
+          failed_when: false
+          changed_when: false
+          no_log: true
+
+        - name: Preserve failed partial and complete results before assertions
+          ansible.builtin.copy:
+            content: >-
+              {{ {'results': powershell_async_records,
+                  'comparisons': powershell_async_comparisons,
+                  'partial': powershell_async_pair,
+                  'current': {'params': powershell_async_params | default(none),
+                    'launch_native': powershell_async_native_launch |
+                      default(none),
+                    'launch_original': powershell_async_source_launch |
+                      default(none),
+                    'native': powershell_async_native_status | default(none),
+                    'original': powershell_async_source_status | default(none),
+                    'pin': powershell_async_pin | default(none),
+                    'before': powershell_async_before | default(none),
+                    'after': powershell_async_after | default(none)},
+                  'workspace': powershell_async_workspace,
+                  'setup': powershell_async_setup | default(none),
+                  'recovery': powershell_async_recovery,
+                  'staging_before': powershell_async_staging_before} |
+                  to_nice_json }}
+            dest: '{{ powershell_async_capture.path }}'
+            mode: '0600'
+          delegate_to: localhost
+          vars: *local
+          changed_when: false
+          no_log: true
+
+        - name: Require protected resources and owned processes closed
+          ansible.builtin.assert:
+            that:
+              - powershell_async_recovery.rc == 0
+              - (powershell_async_recovery.stdout | from_json).restored
+
+        - name: Reobserve protection before removing owned journal artifacts
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}', '-',
+                   '{{ powershell_async_workspace.path }}', finalize]
+            stdin: '{{ powershell_async_program }}'
+          register: powershell_async_finalized
+          changed_when: false
+          no_log: true
+
+        - name: Remove only the verified empty owned workspace
+          sustainablelobster.legacy_windows.win_file:
+            path: '{{ powershell_async_workspace.path }}'
+            state: absent
+
+        - name: Observe workspace scratch absence and original staging
+          ansible.builtin.raw: >-
+            cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+            "import glob,json,os,sys,tempfile;
+            assert not os.path.exists(sys.argv[1]);
+            assert not glob.glob(os.path.join(tempfile.gettempdir(),
+            'legacy-windows-powershell-*'));
+            print(json.dumps(sorted(glob.glob(os.path.join(
+            tempfile.gettempdir(),'ansible-tmp-*')))))"
+            "{{ powershell_async_workspace.path }}""
+          register: powershell_async_staging_after
+          changed_when: false
+
+        - name: Retain final closure without replacing earlier raw fields
+          ansible.builtin.copy:
+            content: >-
+              {{ (lookup('ansible.builtin.file',
+                  powershell_async_capture.path) |
+                  from_json) | combine({'staging_after':
+                  powershell_async_staging_after, 'workspace_absent': true,
+                  'finalized': powershell_async_finalized}) | to_nice_json }}
+            dest: '{{ powershell_async_capture.path }}'
+            mode: '0600'
+          delegate_to: localhost
+          vars: *local
+          changed_when: false
+          no_log: true
+
+        - name: Require literal original global staging
+          ansible.builtin.assert:
+            that:
+              - >-
+                (powershell_async_staging_before.stdout | from_json) ==
+                (powershell_async_staging_after.stdout | from_json)
+
+        - name: Close the exclusively owned persistent SSH connection
+          ansible.builtin.meta: reset_connection
+
+    - name: Require all four complete public pairs and their full comparisons
+      ansible.builtin.assert:
+        that:
+          - powershell_async_records | length == powershell_async_cases | length
+          - >-
+            powershell_async_comparisons | selectattr('rc', 'equalto', 0) |
+            list | length == powershell_async_cases | length

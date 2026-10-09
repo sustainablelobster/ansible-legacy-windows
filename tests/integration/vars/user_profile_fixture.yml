@@ -1,0 +1,427 @@
+---
+user_profile_sources:
+  - name: legacy_windows_account
+    source: >-
+      {{ lookup('file', playbook_dir +
+      '/../../plugins/module_utils/legacy_windows_account.py') }}
+  - name: legacy_windows_group
+    source: >-
+      {{ lookup('file', playbook_dir +
+      '/../../plugins/module_utils/legacy_windows_group.py') }}
+  - name: legacy_windows_user
+    source: >-
+      {{ lookup('file', playbook_dir +
+      '/../../plugins/module_utils/legacy_windows_user.py') }}
+  - name: legacy_windows_owner
+    source: >-
+      {{ lookup('file', playbook_dir +
+      '/../../plugins/module_utils/legacy_windows_owner.py') }}
+user_profile_program: |
+  import sys, types
+  for item in {{ user_profile_sources | to_json }}:
+      module = types.ModuleType(item['name'])
+      sys.modules[item['name']] = module
+      exec(compile(item['source'], item['name'], 'exec'), module.__dict__)
+  {{ user_profile_fixture }}
+user_profile_fixture: |
+  # SPDX-License-Identifier: GPL-3.0-or-later
+  # Only initially absent accounts, SID keys and profile paths are owned.
+  import binascii
+  import ctypes
+  import json
+  import os
+  import sys
+  import tempfile
+  import uuid
+  import winreg
+  import legacy_windows_account as accounts
+  import legacy_windows_user as users
+  import legacy_windows_owner as owners
+
+  workspace, operation = os.path.abspath(sys.argv[1]), sys.argv[2]
+  journal_path = os.path.join(workspace, 'user-profile-recovery.json')
+  profile_key = r'SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList'
+  roles = ('primary', 'collision', 'orphan', 'multiple')
+
+  def bind(library, name, result, arguments):
+      function = getattr(library, name)
+      function.restype, function.argtypes = result, arguments
+      return function
+
+  def userenv():
+      return ctypes.WinDLL('userenv', use_last_error=True)
+
+  def profile_root():
+      function = bind(userenv(), 'GetProfilesDirectoryW', ctypes.c_int,
+          [ctypes.c_wchar_p, ctypes.POINTER(ctypes.c_uint32)])
+      size = ctypes.c_uint32()
+      function(None, ctypes.byref(size))
+      output = ctypes.create_unicode_buffer(size.value)
+      if not function(output, ctypes.byref(size)):
+          raise ctypes.WinError(ctypes.get_last_error())
+      return output.value
+
+  def attributes(path):
+      function = bind(ctypes.WinDLL('kernel32', use_last_error=True),
+          'GetFileAttributesW', ctypes.c_uint32, [ctypes.c_wchar_p])
+      value = function(path)
+      if value == 0xffffffff:
+          error = ctypes.get_last_error()
+          if error in (2, 3):
+              return None
+          raise ctypes.WinError(error)
+      return value
+
+  def registry_tree(path):
+      with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, path) as key:
+          child_count, value_count, unused = winreg.QueryInfoKey(key)
+          values = {}
+          for index in range(value_count):
+              name, value, kind = winreg.EnumValue(key, index)
+              if isinstance(value, bytes):
+                  value = {'hex': binascii.hexlify(value).decode('ascii')}
+              values[name] = [value, kind]
+          children = {winreg.EnumKey(key, index): None
+                      for index in range(child_count)}
+      for name in children:
+          children[name] = registry_tree(path + '\\' + name)
+      return {'values': values, 'children': children}
+
+  def identities():
+      return {name: users.read_user(name)['sid']
+              for name in accounts.local_user_names()}
+
+  def image_path(node):
+      value, kind = node['values']['ProfileImagePath']
+      return winreg.ExpandEnvironmentStrings(value) if kind == 2 else value
+
+  def write_journal(record):
+      temporary = None
+      try:
+          with tempfile.NamedTemporaryFile(
+                  mode='w', encoding='utf-8', delete=False, dir=workspace,
+                  prefix='.user-profile-recovery-') as stream:
+              temporary = stream.name
+              json.dump(record, stream, sort_keys=True)
+              stream.flush()
+              os.fsync(stream.fileno())
+          os.replace(temporary, journal_path)
+      finally:
+          if temporary is not None and os.path.exists(temporary):
+              os.remove(temporary)
+
+  def journal():
+      with open(journal_path, encoding='utf-8') as stream:
+          record = json.load(stream)
+      if record['workspace'] != workspace or record['roles'] != list(roles):
+          raise ValueError('Journal does not own this profile workspace')
+      if record['root'] != profile_root():
+          raise ValueError('Original profile root changed')
+      return record
+
+  def owned_path(record, path):
+      parent, name = os.path.split(os.path.abspath(path))
+      return (parent.lower() == os.path.abspath(record['root']).lower() and
+              name.lower().startswith(record['prefix'].lower()))
+
+  def observe(record):
+      tree = registry_tree(profile_key)
+      local = identities()
+      directory = {name: attributes(os.path.join(record['root'], name))
+                   for name in os.listdir(record['root'])}
+      entries = {}
+      for role, account in record['accounts'].items():
+          sid = account.get('sid')
+          node = tree['children'].get(sid)
+          entries[role] = None if node is None else {
+              'sid': sid, 'path': image_path(node),
+              'attributes': attributes(image_path(node))}
+      return {'registry': tree, 'accounts': local,
+              'directories': directory, 'owned_profiles': entries,
+              'system_profile_path': image_path(tree['children']['S-1-5-18'])}
+
+  def require_unowned_unchanged(record, observed):
+      tree = observed['registry']
+      unowned_tree = {'values': tree['values'], 'children': {
+          sid: node for sid, node in tree['children'].items()
+          if sid not in record['owned_sids']}}
+      local = {name: sid for name, sid in observed['accounts'].items()
+               if name not in [row['name'] for row in
+                               record['accounts'].values()]}
+      directories = {name: value for name, value in
+          observed['directories'].items()
+          if not name.lower().startswith(record['prefix'].lower())}
+      if (unowned_tree != record['before']['registry'] or
+              local != record['before']['accounts'] or
+              directories != record['before']['directories']):
+          raise ValueError('Pre-existing profile/account/directory ' +
+                           'state changed')
+
+  def adopt_paths(record):
+      tree = registry_tree(profile_key)
+      for sid in record['owned_sids']:
+          if sid not in tree['children']:
+              continue
+          path = image_path(tree['children'][sid])
+          if not owned_path(record, path):
+              raise ValueError('Owned SID points outside owned profile paths')
+          record['paths'].setdefault(sid, [])
+          if path not in record['paths'][sid]:
+              record['paths'][sid].append(path)
+          record['profile_nodes'].setdefault(sid, {})[path] = tree[
+              'children'][sid]
+      write_journal(record)
+
+  def delete_native(sid):
+      function = bind(userenv(), 'DeleteProfileW', ctypes.c_int,
+          [ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_wchar_p])
+      if not function(sid, None, None):
+          raise ctypes.WinError(ctypes.get_last_error())
+
+  def recover_registration(record, sid, path):
+      # Deleting aliased registrations can leave the other physical directory.
+      # Userenv requires its SID key even when an explicit path is supplied.
+      node = record['profile_nodes'].get(sid, {}).get(path)
+      value = attributes(path)
+      if (sid in record['before']['registry']['children'] or
+              sid not in record['owned_sids'] or node is None or
+              node['children'] or image_path(node) != path or
+              not owned_path(record, path) or
+              sid in registry_tree(profile_key)['children'] or
+              value is None or value & 0x400 or not value & 0x10):
+          raise ValueError('Unregistered profile recovery is not journal-owned')
+      record['recovery_registrations'].append({'sid': sid, 'path': path})
+      write_journal(record)
+      with winreg.CreateKeyEx(winreg.HKEY_LOCAL_MACHINE,
+          profile_key + '\\' + sid, 0, winreg.KEY_SET_VALUE) as key:
+          for name, entry in node['values'].items():
+              value, kind = entry
+              if isinstance(value, dict) and 'hex' in value:
+                  value = binascii.unhexlify(value['hex'].encode('ascii'))
+              winreg.SetValueEx(key, name, 0, kind, value)
+      delete_native(sid)
+      if (attributes(path) is not None or
+              sid in registry_tree(profile_key)['children']):
+          raise ValueError('Recovered owned profile removal is incomplete')
+
+  def clear_profiles(record):
+      adopt_paths(record)
+      # Restore only owned aliases before removal, avoiding their shared path.
+      for sid, initial in record['aliases'].items():
+          if sid in registry_tree(profile_key)['children']:
+              with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,
+                  profile_key + '\\' + sid, 0, winreg.KEY_SET_VALUE) as key:
+                  winreg.SetValueEx(key, 'ProfileImagePath', 0,
+                                   initial[1], initial[0])
+      record['aliases'] = {}
+      write_journal(record)
+      for sid in record['owned_sids']:
+          if sid in registry_tree(profile_key)['children']:
+              delete_native(sid)
+      # DeleteProfileW understands profile junctions. Never use rmtree here.
+      for sid, paths in record['paths'].items():
+          for path in paths:
+              if attributes(path) is not None:
+                  if not owned_path(record, path):
+                      raise ValueError('Recovery path is outside ' +
+                                       'owned profiles')
+                  recover_registration(record, sid, path)
+      remaining = [name for name in os.listdir(record['root'])
+                   if name.lower().startswith(record['prefix'].lower()) and
+                   name != record['bases']['collision']]
+      if remaining:
+          raise ValueError('Unregistered owned profile directories remain: ' +
+                           repr(remaining))
+
+  def create_account(record, role):
+      row = record['accounts'][role]
+      if users.read_user(row['name']) is not None:
+          raise ValueError('Account was not initially absent')
+      # A replay may recreate the orphan; keep its old SID in owned_sids.
+      row['sid'] = None
+      row['creating'] = True
+      write_journal(record)
+      users.create_user(row['name'], record['password'], 0x10200)
+      row['sid'] = users.read_user(row['name'])['sid']
+      row['creating'] = False
+      if row['sid'] in record['before']['registry']['children']:
+              raise ValueError('New account SID already had a profile')
+      record['owned_sids'].append(row['sid'])
+      write_journal(record)
+
+  def context(record):
+      return {'accounts': record['accounts'], 'bases': record['bases'],
+              'root': record['root'], 'create_available': record['create'],
+              'unmapped_sid': 'S-1-5-21-1-2-3-999999'}
+
+  def setup():
+      if os.path.exists(journal_path):
+          raise ValueError('Recovery journal must not be overwritten')
+      token = uuid.uuid4().hex[:7]
+      prefix = 'lwup_' + token + '_'
+      root = profile_root()
+      before = {'registry': registry_tree(profile_key),
+                'accounts': identities(), 'directories': {
+                    name: attributes(os.path.join(root, name))
+                    for name in os.listdir(root)}}
+      if 'S-1-5-18' not in before['registry']['children']:
+          raise ValueError('System profile binding fixture is unavailable')
+      unmapped = 'S-1-5-21-1-2-3-999999'
+      if (unmapped in before['registry']['children'] or
+              unmapped in before['accounts'].values()):
+          raise ValueError('Unmapped SID fixture is already in use')
+      if any(name.lower().startswith(prefix) for name in
+             list(before['accounts']) + list(before['directories'])):
+          raise ValueError('Fixture account or profile prefix already exists')
+      record = {'workspace': workspace, 'root': root, 'prefix': prefix,
+          'roles': list(roles), 'before': before, 'owned_sids': [],
+          'paths': {}, 'profile_nodes': {}, 'recovery_registrations': [],
+          'aliases': {}, 'accounts': {
+              role: {'name': prefix + str(index), 'sid': None,
+                     'creating': False}
+              for index, role in enumerate(roles)}, 'bases': {
+              role: prefix + role for role in roles},
+          'password': 'Aa7!' + binascii.hexlify(os.urandom(24)).decode('ascii'),
+          'create': hasattr(userenv(), 'CreateProfile')}
+      write_journal(record)
+      for role in roles:
+          create_account(record, role)
+      guard = os.path.join(root, record['bases']['collision'])
+      os.mkdir(guard)
+      with open(os.path.join(guard, 'owned-collision-marker'), 'wb') as stream:
+          stream.write(b'Journal-owned collision directory\n')
+      return {'journaled': True, 'context': context(record),
+              'before': before, 'observed': observe(record)}
+
+  def delete_orphan(record):
+      adopt_paths(record)
+      row = record['accounts']['orphan']
+      actual = users.read_user(row['name'])
+      if actual is None or actual['sid'] != row['sid']:
+          raise ValueError('Owned orphan account identity changed')
+      users.delete_user(row['name'])
+      return context(record)
+
+  def alias_multiple(record):
+      adopt_paths(record)
+      tree = registry_tree(profile_key)
+      primary = record['accounts']['primary']['sid']
+      multiple = record['accounts']['multiple']['sid']
+      path = image_path(tree['children'][primary])
+      for sid in (primary, multiple):
+          record['aliases'][sid] = tree['children'][sid]['values'][
+              'ProfileImagePath']
+      write_journal(record)
+      with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,
+          profile_key + '\\' + multiple, 0, winreg.KEY_SET_VALUE) as key:
+          winreg.SetValueEx(key, 'ProfileImagePath', 0,
+                            winreg.REG_EXPAND_SZ, path)
+      return context(record)
+
+  def seed_legacy(record):
+      # This is fixture preparation, not a fallback for the public module.
+      class ProfileInfo(ctypes.Structure):
+          _fields_ = [('size', ctypes.c_uint32), ('flags', ctypes.c_uint32),
+              ('user', ctypes.c_wchar_p), ('path', ctypes.c_wchar_p),
+              ('default', ctypes.c_wchar_p), ('server', ctypes.c_wchar_p),
+              ('policy', ctypes.c_wchar_p), ('profile', ctypes.c_void_p)]
+      security = ctypes.WinDLL('advapi32', use_last_error=True)
+      logon = bind(security, 'LogonUserW', ctypes.c_int,
+          [ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_wchar_p,
+           ctypes.c_uint32, ctypes.c_uint32, ctypes.POINTER(ctypes.c_void_p)])
+      close = bind(ctypes.WinDLL('kernel32', use_last_error=True),
+                   'CloseHandle', ctypes.c_int, [ctypes.c_void_p])
+      library = userenv()
+      load = bind(library, 'LoadUserProfileW', ctypes.c_int,
+                  [ctypes.c_void_p, ctypes.POINTER(ProfileInfo)])
+      unload = bind(library, 'UnloadUserProfile', ctypes.c_int,
+                    [ctypes.c_void_p, ctypes.c_void_p])
+      for role in ('primary', 'orphan'):
+          row = record['accounts'][role]
+          token = ctypes.c_void_p()
+          if not logon(row['name'], '.', record['password'], 2, 0,
+                       ctypes.byref(token)):
+              raise ctypes.WinError(ctypes.get_last_error())
+          try:
+              with owners.ownership_privileges(
+                      ('SeBackupPrivilege', 'SeRestorePrivilege')):
+                  info = ProfileInfo(ctypes.sizeof(ProfileInfo),
+                                     1, row['name'])
+                  if not load(token, ctypes.byref(info)):
+                      raise ctypes.WinError(ctypes.get_last_error())
+                  if not unload(token, info.profile):
+                      raise ctypes.WinError(ctypes.get_last_error())
+          finally:
+              if not close(token):
+                  raise ctypes.WinError(ctypes.get_last_error())
+          adopt_paths(record)
+      return context(record)
+
+  def cleanup():
+      if not os.path.exists(journal_path):
+          return {'restored': True, 'journal_absent': True}
+      record = journal()
+      for row in record['accounts'].values():
+          actual = users.read_user(row['name'])
+          if actual is not None and row['sid'] is None and row['creating']:
+              row['sid'] = actual['sid']
+              record['owned_sids'].append(actual['sid'])
+              write_journal(record)
+          elif actual is not None and actual['sid'] != row['sid']:
+              raise ValueError('Recovery account identity does not ' +
+                               'match journal')
+      clear_profiles(record)
+      for row in record['accounts'].values():
+          if users.read_user(row['name']) is not None:
+              users.delete_user(row['name'])
+      guard = os.path.join(record['root'], record['bases']['collision'])
+      if attributes(guard) is not None:
+          if attributes(guard) & 0x400:
+              raise ValueError('Owned collision directory became ' +
+                               'a reparse point')
+          marker = os.path.join(guard, 'owned-collision-marker')
+          if os.path.isfile(marker):
+              with open(marker, 'rb') as stream:
+                  if stream.read() != b'Journal-owned collision directory\n':
+                      raise ValueError('Collision marker identity changed')
+              os.remove(marker)
+          os.rmdir(guard)
+      after = observe(record)
+      require_unowned_unchanged(record, after)
+      if (after['registry'] != record['before']['registry'] or
+              after['accounts'] != record['before']['accounts'] or
+              after['directories'] != record['before']['directories']):
+          raise ValueError('Exact original profile/account state not restored')
+      os.remove(journal_path)
+      return {'restored': True, 'before': record['before'],
+              'after': after, 'owned_sids': record['owned_sids'],
+              'recovery_registrations': record['recovery_registrations']}
+
+  def main():
+      if sys.version_info[:3] != (3, 4, 4):
+          raise ValueError('Fixture requires actual Python 3.4.4')
+      if operation == 'setup':
+          return setup()
+      if operation == 'cleanup':
+          return cleanup()
+      record = journal()
+      if operation == 'observe':
+          adopt_paths(record)
+          observed = observe(record)
+          require_unowned_unchanged(record, observed)
+          return observed
+      if operation == 'prepare-original':
+          clear_profiles(record)
+          if users.read_user(record['accounts']['orphan']['name']) is None:
+              create_account(record, 'orphan')
+          return context(record)
+      if operation == 'delete-orphan':
+          return delete_orphan(record)
+      if operation == 'alias-multiple':
+          return alias_multiple(record)
+      if operation == 'seed-legacy':
+          return seed_legacy(record)
+      raise ValueError('Unknown user-profile fixture operation')
+
+  if __name__ == '__main__':
+      print(json.dumps(main(), sort_keys=True))

@@ -1,0 +1,1525 @@
+{
+  "provenance": {
+    "upstream": "ansible.windows 3.8.0",
+    "upstream_commit": "ff0ac96011ee196742901f34c0dd134acddbe89a",
+    "observed_at_utc": "2026-09-29T06:09:00.8056275Z",
+    "os": "Microsoft Windows NT 10.0.26100.0",
+    "powershell": "5.1.26100.7462",
+    "dotnet": "4.0.30319.42000",
+    "culture": "en-US",
+    "timezone": "Pacific Standard Time",
+    "base_utc_offset_minutes": -480,
+    "format": "yyyy-MM-dd'T'HH:mm:ss.FFFFFFFK",
+    "styles": "AssumeUniversal",
+    "controller_derived_field": "utc_input_ticks is calculated from the complete invariant input; output values are recorded Windows observations."
+  },
+  "cases": [
+    {
+      "id": "ordinary_date",
+      "value": "2040-10-27",
+      "normalized": "2040-10-27",
+      "module_branch": "datetime",
+      "success": true,
+      "parsed": {
+        "ticks": 643704804000000000,
+        "local_offset_minutes": -420,
+        "fixed_invariant": "2040-10-26T17:00:00-07:00",
+        "utc_ticks": 643705056000000000,
+        "utc_clamped": false
+      },
+      "utc_input_ticks": 643705056000000000
+    },
+    {
+      "id": "ordinary_no_zone",
+      "value": "2040-10-27T14:30:00",
+      "normalized": "2040-10-27T14:30:00",
+      "module_branch": "datetime",
+      "success": true,
+      "parsed": {
+        "ticks": 643705326000000000,
+        "local_offset_minutes": -420,
+        "fixed_invariant": "2040-10-27T07:30:00-07:00",
+        "utc_ticks": 643705578000000000,
+        "utc_clamped": false
+      },
+      "utc_input_ticks": 643705578000000000
+    },
+    {
+      "id": "ordinary_z",
+      "value": "2040-10-27T14:30:00Z",
+      "normalized": "2040-10-27T14:30:00Z",
+      "module_branch": "datetime",
+      "success": true,
+      "parsed": {
+        "ticks": 643705326000000000,
+        "local_offset_minutes": -420,
+        "fixed_invariant": "2040-10-27T07:30:00-07:00",
+        "utc_ticks": 643705578000000000,
+        "utc_clamped": false
+      },
+      "utc_input_ticks": 643705578000000000
+    },
+    {
+      "id": "ordinary_offset",
+      "value": "2040-10-27T14:30:00+02:30",
+      "normalized": "2040-10-27T14:30:00+02:30",
+      "module_branch": "datetime",
+      "success": true,
+      "parsed": {
+        "ticks": 643705236000000000,
+        "local_offset_minutes": -420,
+        "fixed_invariant": "2040-10-27T05:00:00-07:00",
+        "utc_ticks": 643705488000000000,
+        "utc_clamped": false
+      },
+      "utc_input_ticks": 643705488000000000
+    },
+    {
+      "id": "ordinary_compact_offset",
+      "value": "2040-10-27T14:30:00+0230",
+      "normalized": "2040-10-27T14:30:00+02:30",
+      "module_branch": "datetime",
+      "success": true,
+      "parsed": {
+        "ticks": 643705236000000000,
+        "local_offset_minutes": -420,
+        "fixed_invariant": "2040-10-27T05:00:00-07:00",
+        "utc_ticks": 643705488000000000,
+        "utc_clamped": false
+      },
+      "utc_input_ticks": 643705488000000000
+    },
+    {
+      "id": "ordinary_negative_offset",
+      "value": "2040-10-27T14:30:00-02:30",
+      "normalized": "2040-10-27T14:30:00-02:30",
+      "module_branch": "datetime",
+      "success": true,
+      "parsed": {
+        "ticks": 643705416000000000,
+        "local_offset_minutes": -420,
+        "fixed_invariant": "2040-10-27T10:00:00-07:00",
+        "utc_ticks": 643705668000000000,
+        "utc_clamped": false
+      },
+      "utc_input_ticks": 643705668000000000
+    },
+    {
+      "id": "ordinary_bare_dot",
+      "value": "2040-10-27T14:30:00.",
+      "normalized": "2040-10-27T14:30:00.",
+      "module_branch": "datetime",
+      "success": true,
+      "parsed": {
+        "ticks": 643705326000000000,
+        "local_offset_minutes": -420,
+        "fixed_invariant": "2040-10-27T07:30:00-07:00",
+        "utc_ticks": 643705578000000000,
+        "utc_clamped": false
+      },
+      "utc_input_ticks": 643705578000000000
+    },
+    {
+      "id": "ordinary_bare_dot_z",
+      "value": "2040-10-27T14:30:00.Z",
+      "normalized": "2040-10-27T14:30:00.Z",
+      "module_branch": "datetime",
+      "success": true,
+      "parsed": {
+        "ticks": 643705326000000000,
+        "local_offset_minutes": -420,
+        "fixed_invariant": "2040-10-27T07:30:00-07:00",
+        "utc_ticks": 643705578000000000,
+        "utc_clamped": false
+      },
+      "utc_input_ticks": 643705578000000000
+    },
+    {
+      "id": "ordinary_bare_dot_offset",
+      "value": "2040-10-27T14:30:00.+0230",
+      "normalized": "2040-10-27T14:30:00.+02:30",
+      "module_branch": "datetime",
+      "success": true,
+      "parsed": {
+        "ticks": 643705236000000000,
+        "local_offset_minutes": -420,
+        "fixed_invariant": "2040-10-27T05:00:00-07:00",
+        "utc_ticks": 643705488000000000,
+        "utc_clamped": false
+      },
+      "utc_input_ticks": 643705488000000000
+    },
+    {
+      "id": "fraction_1",
+      "value": "2040-10-27T14:30:00.1Z",
+      "normalized": "2040-10-27T14:30:00.1Z",
+      "module_branch": "datetime",
+      "success": true,
+      "parsed": {
+        "ticks": 643705326001000000,
+        "local_offset_minutes": -420,
+        "fixed_invariant": "2040-10-27T07:30:00.1-07:00",
+        "utc_ticks": 643705578001000000,
+        "utc_clamped": false
+      },
+      "utc_input_ticks": 643705578001000000
+    },
+    {
+      "id": "fraction_2",
+      "value": "2040-10-27T14:30:00.12Z",
+      "normalized": "2040-10-27T14:30:00.12Z",
+      "module_branch": "datetime",
+      "success": true,
+      "parsed": {
+        "ticks": 643705326001200000,
+        "local_offset_minutes": -420,
+        "fixed_invariant": "2040-10-27T07:30:00.12-07:00",
+        "utc_ticks": 643705578001200000,
+        "utc_clamped": false
+      },
+      "utc_input_ticks": 643705578001200000
+    },
+    {
+      "id": "fraction_3",
+      "value": "2040-10-27T14:30:00.123Z",
+      "normalized": "2040-10-27T14:30:00.123Z",
+      "module_branch": "datetime",
+      "success": true,
+      "parsed": {
+        "ticks": 643705326001230000,
+        "local_offset_minutes": -420,
+        "fixed_invariant": "2040-10-27T07:30:00.123-07:00",
+        "utc_ticks": 643705578001230000,
+        "utc_clamped": false
+      },
+      "utc_input_ticks": 643705578001230000
+    },
+    {
+      "id": "fraction_4",
+      "value": "2040-10-27T14:30:00.1234Z",
+      "normalized": "2040-10-27T14:30:00.1234Z",
+      "module_branch": "datetime",
+      "success": true,
+      "parsed": {
+        "ticks": 643705326001234000,
+        "local_offset_minutes": -420,
+        "fixed_invariant": "2040-10-27T07:30:00.1234-07:00",
+        "utc_ticks": 643705578001234000,
+        "utc_clamped": false
+      },
+      "utc_input_ticks": 643705578001234000
+    },
+    {
+      "id": "fraction_5",
+      "value": "2040-10-27T14:30:00.12345Z",
+      "normalized": "2040-10-27T14:30:00.12345Z",
+      "module_branch": "datetime",
+      "success": true,
+      "parsed": {
+        "ticks": 643705326001234500,
+        "local_offset_minutes": -420,
+        "fixed_invariant": "2040-10-27T07:30:00.12345-07:00",
+        "utc_ticks": 643705578001234500,
+        "utc_clamped": false
+      },
+      "utc_input_ticks": 643705578001234500
+    },
+    {
+      "id": "fraction_6",
+      "value": "2040-10-27T14:30:00.123456Z",
+      "normalized": "2040-10-27T14:30:00.123456Z",
+      "module_branch": "datetime",
+      "success": true,
+      "parsed": {
+        "ticks": 643705326001234560,
+        "local_offset_minutes": -420,
+        "fixed_invariant": "2040-10-27T07:30:00.123456-07:00",
+        "utc_ticks": 643705578001234560,
+        "utc_clamped": false
+      },
+      "utc_input_ticks": 643705578001234560
+    },
+    {
+      "id": "fraction_7",
+      "value": "2040-10-27T14:30:00.1234567Z",
+      "normalized": "2040-10-27T14:30:00.1234567Z",
+      "module_branch": "datetime",
+      "success": true,
+      "parsed": {
+        "ticks": 643705326001234567,
+        "local_offset_minutes": -420,
+        "fixed_invariant": "2040-10-27T07:30:00.1234567-07:00",
+        "utc_ticks": 643705578001234567,
+        "utc_clamped": false
+      },
+      "utc_input_ticks": 643705578001234567
+    },
+    {
+      "id": "fraction_trailing_zeros",
+      "value": "2040-10-27T14:30:00.1200000Z",
+      "normalized": "2040-10-27T14:30:00.1200000Z",
+      "module_branch": "datetime",
+      "success": true,
+      "parsed": {
+        "ticks": 643705326001200000,
+        "local_offset_minutes": -420,
+        "fixed_invariant": "2040-10-27T07:30:00.12-07:00",
+        "utc_ticks": 643705578001200000,
+        "utc_clamped": false
+      },
+      "utc_input_ticks": 643705578001200000
+    },
+    {
+      "id": "fraction_zero",
+      "value": "2040-10-27T14:30:00.0000000Z",
+      "normalized": "2040-10-27T14:30:00.0000000Z",
+      "module_branch": "datetime",
+      "success": true,
+      "parsed": {
+        "ticks": 643705326000000000,
+        "local_offset_minutes": -420,
+        "fixed_invariant": "2040-10-27T07:30:00-07:00",
+        "utc_ticks": 643705578000000000,
+        "utc_clamped": false
+      },
+      "utc_input_ticks": 643705578000000000
+    },
+    {
+      "id": "fraction_one_tick",
+      "value": "2040-10-27T14:30:00.0000001Z",
+      "normalized": "2040-10-27T14:30:00.0000001Z",
+      "module_branch": "datetime",
+      "success": true,
+      "parsed": {
+        "ticks": 643705326000000001,
+        "local_offset_minutes": -420,
+        "fixed_invariant": "2040-10-27T07:30:00.0000001-07:00",
+        "utc_ticks": 643705578000000001,
+        "utc_clamped": false
+      },
+      "utc_input_ticks": 643705578000000001
+    },
+    {
+      "id": "fraction_eight_digits",
+      "value": "2040-10-27T14:30:00.12345678Z",
+      "normalized": "2040-10-27T14:30:00.12345678Z",
+      "module_branch": "datetime",
+      "success": false
+    },
+    {
+      "id": "fraction_comma",
+      "value": "2040-10-27T14:30:00,123Z",
+      "normalized": "2040-10-27T14:30:00,123Z",
+      "module_branch": "datetime",
+      "success": false
+    },
+    {
+      "id": "offset_positive_one_short",
+      "value": "2040-10-27T14:30:00+1:00",
+      "normalized": "2040-10-27T14:30:00+1:00",
+      "module_branch": "datetime",
+      "success": true,
+      "parsed": {
+        "ticks": 643705290000000000,
+        "local_offset_minutes": -420,
+        "fixed_invariant": "2040-10-27T06:30:00-07:00",
+        "utc_ticks": 643705542000000000,
+        "utc_clamped": false
+      },
+      "utc_input_ticks": 643705542000000000
+    },
+    {
+      "id": "offset_negative_one_short",
+      "value": "2040-10-27T14:30:00-1:00",
+      "normalized": "2040-10-27T14:30:00-1:00",
+      "module_branch": "datetime",
+      "success": true,
+      "parsed": {
+        "ticks": 643705362000000000,
+        "local_offset_minutes": -420,
+        "fixed_invariant": "2040-10-27T08:30:00-07:00",
+        "utc_ticks": 643705614000000000,
+        "utc_clamped": false
+      },
+      "utc_input_ticks": 643705614000000000
+    },
+    {
+      "id": "offset_positive_one_long",
+      "value": "2040-10-27T14:30:00+01:00",
+      "normalized": "2040-10-27T14:30:00+01:00",
+      "module_branch": "datetime",
+      "success": true,
+      "parsed": {
+        "ticks": 643705290000000000,
+        "local_offset_minutes": -420,
+        "fixed_invariant": "2040-10-27T06:30:00-07:00",
+        "utc_ticks": 643705542000000000,
+        "utc_clamped": false
+      },
+      "utc_input_ticks": 643705542000000000
+    },
+    {
+      "id": "offset_negative_one_long",
+      "value": "2040-10-27T14:30:00-01:00",
+      "normalized": "2040-10-27T14:30:00-01:00",
+      "module_branch": "datetime",
+      "success": true,
+      "parsed": {
+        "ticks": 643705362000000000,
+        "local_offset_minutes": -420,
+        "fixed_invariant": "2040-10-27T08:30:00-07:00",
+        "utc_ticks": 643705614000000000,
+        "utc_clamped": false
+      },
+      "utc_input_ticks": 643705614000000000
+    },
+    {
+      "id": "offset_positive_one_compact",
+      "value": "2040-10-27T14:30:00+0100",
+      "normalized": "2040-10-27T14:30:00+01:00",
+      "module_branch": "datetime",
+      "success": true,
+      "parsed": {
+        "ticks": 643705290000000000,
+        "local_offset_minutes": -420,
+        "fixed_invariant": "2040-10-27T06:30:00-07:00",
+        "utc_ticks": 643705542000000000,
+        "utc_clamped": false
+      },
+      "utc_input_ticks": 643705542000000000
+    },
+    {
+      "id": "offset_negative_one_compact",
+      "value": "2040-10-27T14:30:00-0100",
+      "normalized": "2040-10-27T14:30:00-01:00",
+      "module_branch": "datetime",
+      "success": true,
+      "parsed": {
+        "ticks": 643705362000000000,
+        "local_offset_minutes": -420,
+        "fixed_invariant": "2040-10-27T08:30:00-07:00",
+        "utc_ticks": 643705614000000000,
+        "utc_clamped": false
+      },
+      "utc_input_ticks": 643705614000000000
+    },
+    {
+      "id": "offset_positive_fifteen",
+      "value": "2040-10-27T14:30:00+15:00",
+      "normalized": "2040-10-27T14:30:00+15:00",
+      "module_branch": "datetime",
+      "success": true,
+      "parsed": {
+        "ticks": 643704786000000000,
+        "local_offset_minutes": -420,
+        "fixed_invariant": "2040-10-26T16:30:00-07:00",
+        "utc_ticks": 643705038000000000,
+        "utc_clamped": false
+      },
+      "utc_input_ticks": 643705038000000000
+    },
+    {
+      "id": "offset_negative_fifteen",
+      "value": "2040-10-27T14:30:00-15:00",
+      "normalized": "2040-10-27T14:30:00-15:00",
+      "module_branch": "datetime",
+      "success": true,
+      "parsed": {
+        "ticks": 643705866000000000,
+        "local_offset_minutes": -420,
+        "fixed_invariant": "2040-10-27T22:30:00-07:00",
+        "utc_ticks": 643706118000000000,
+        "utc_clamped": false
+      },
+      "utc_input_ticks": 643706118000000000
+    },
+    {
+      "id": "offset_positive_maximum",
+      "value": "2040-10-27T14:30:00+99:59",
+      "normalized": "2040-10-27T14:30:00+99:59",
+      "module_branch": "datetime",
+      "success": true,
+      "parsed": {
+        "ticks": 643701726600000000,
+        "local_offset_minutes": -420,
+        "fixed_invariant": "2040-10-23T03:31:00-07:00",
+        "utc_ticks": 643701978600000000,
+        "utc_clamped": false
+      },
+      "utc_input_ticks": 643701978600000000
+    },
+    {
+      "id": "offset_negative_maximum",
+      "value": "2040-10-27T14:30:00-99:59",
+      "normalized": "2040-10-27T14:30:00-99:59",
+      "module_branch": "datetime",
+      "success": true,
+      "parsed": {
+        "ticks": 643708925400000000,
+        "local_offset_minutes": -420,
+        "fixed_invariant": "2040-10-31T11:29:00-07:00",
+        "utc_ticks": 643709177400000000,
+        "utc_clamped": false
+      },
+      "utc_input_ticks": 643709177400000000
+    },
+    {
+      "id": "offset_missing_offset_minutes",
+      "value": "2040-10-27T14:30:00+01",
+      "normalized": "2040-10-27T14:30:00+01",
+      "module_branch": "datetime",
+      "success": false
+    },
+    {
+      "id": "offset_invalid_offset_minutes",
+      "value": "2040-10-27T14:30:00+01:60",
+      "normalized": "2040-10-27T14:30:00+01:60",
+      "module_branch": "datetime",
+      "success": false
+    },
+    {
+      "id": "offset_invalid_offset_hours",
+      "value": "2040-10-27T14:30:00+100:00",
+      "normalized": "2040-10-27T14:30:00+100:00",
+      "module_branch": "datetime",
+      "success": false
+    },
+    {
+      "id": "offset_lowercase_z",
+      "value": "2040-10-27T14:30:00z",
+      "normalized": "2040-10-27T14:30:00z",
+      "module_branch": "datetime",
+      "success": false
+    },
+    {
+      "id": "year_0001_date",
+      "value": "0001-01-01",
+      "normalized": "0001-01-01",
+      "module_branch": "datetime",
+      "success": true,
+      "parsed": {
+        "ticks": 576000000000,
+        "local_offset_minutes": -480,
+        "fixed_invariant": "0001-01-01T16:00:00-08:00",
+        "utc_ticks": 864000000000,
+        "utc_clamped": false
+      },
+      "utc_input_ticks": 0
+    },
+    {
+      "id": "year_0001_no_zone",
+      "value": "0001-01-01T00:00:00",
+      "normalized": "0001-01-01T00:00:00",
+      "module_branch": "datetime",
+      "success": true,
+      "parsed": {
+        "ticks": 576000000000,
+        "local_offset_minutes": -480,
+        "fixed_invariant": "0001-01-01T16:00:00-08:00",
+        "utc_ticks": 864000000000,
+        "utc_clamped": false
+      },
+      "utc_input_ticks": 0
+    },
+    {
+      "id": "year_0001_z",
+      "value": "0001-01-01T00:00:00Z",
+      "normalized": "0001-01-01T00:00:00Z",
+      "module_branch": "datetime",
+      "success": true,
+      "parsed": {
+        "ticks": 576000000000,
+        "local_offset_minutes": -480,
+        "fixed_invariant": "0001-01-01T16:00:00-08:00",
+        "utc_ticks": 864000000000,
+        "utc_clamped": false
+      },
+      "utc_input_ticks": 0
+    },
+    {
+      "id": "year_0001_positive_offset",
+      "value": "0001-01-01T00:00:00+15:00",
+      "normalized": "0001-01-01T00:00:00+15:00",
+      "module_branch": "datetime",
+      "success": true,
+      "parsed": {
+        "ticks": 36000000000,
+        "local_offset_minutes": -480,
+        "fixed_invariant": "0001-01-01T01:00:00-08:00",
+        "utc_ticks": 324000000000,
+        "utc_clamped": false
+      },
+      "utc_input_ticks": -540000000000
+    },
+    {
+      "id": "year_0001_negative_offset",
+      "value": "0001-01-01T00:00:00-15:00",
+      "normalized": "0001-01-01T00:00:00-15:00",
+      "module_branch": "datetime",
+      "success": true,
+      "parsed": {
+        "ticks": 252000000000,
+        "local_offset_minutes": -480,
+        "fixed_invariant": "0001-01-01T07:00:00-08:00",
+        "utc_ticks": 540000000000,
+        "utc_clamped": false
+      },
+      "utc_input_ticks": 540000000000
+    },
+    {
+      "id": "year_0099_date",
+      "value": "0099-01-01",
+      "normalized": "0099-01-01",
+      "module_branch": "datetime",
+      "success": true,
+      "parsed": {
+        "ticks": 30925728000000000,
+        "local_offset_minutes": -480,
+        "fixed_invariant": "0098-12-31T16:00:00-08:00",
+        "utc_ticks": 30926016000000000,
+        "utc_clamped": false
+      },
+      "utc_input_ticks": 30926016000000000
+    },
+    {
+      "id": "year_0099_no_zone",
+      "value": "0099-01-01T00:00:00",
+      "normalized": "0099-01-01T00:00:00",
+      "module_branch": "datetime",
+      "success": true,
+      "parsed": {
+        "ticks": 30925728000000000,
+        "local_offset_minutes": -480,
+        "fixed_invariant": "0098-12-31T16:00:00-08:00",
+        "utc_ticks": 30926016000000000,
+        "utc_clamped": false
+      },
+      "utc_input_ticks": 30926016000000000
+    },
+    {
+      "id": "year_0099_z",
+      "value": "0099-01-01T00:00:00Z",
+      "normalized": "0099-01-01T00:00:00Z",
+      "module_branch": "datetime",
+      "success": true,
+      "parsed": {
+        "ticks": 30925728000000000,
+        "local_offset_minutes": -480,
+        "fixed_invariant": "0098-12-31T16:00:00-08:00",
+        "utc_ticks": 30926016000000000,
+        "utc_clamped": false
+      },
+      "utc_input_ticks": 30926016000000000
+    },
+    {
+      "id": "year_0099_positive_offset",
+      "value": "0099-01-01T00:00:00+15:00",
+      "normalized": "0099-01-01T00:00:00+15:00",
+      "module_branch": "datetime",
+      "success": true,
+      "parsed": {
+        "ticks": 30925188000000000,
+        "local_offset_minutes": -480,
+        "fixed_invariant": "0098-12-31T01:00:00-08:00",
+        "utc_ticks": 30925476000000000,
+        "utc_clamped": false
+      },
+      "utc_input_ticks": 30925476000000000
+    },
+    {
+      "id": "year_0099_negative_offset",
+      "value": "0099-01-01T00:00:00-15:00",
+      "normalized": "0099-01-01T00:00:00-15:00",
+      "module_branch": "datetime",
+      "success": true,
+      "parsed": {
+        "ticks": 30926268000000000,
+        "local_offset_minutes": -480,
+        "fixed_invariant": "0099-01-01T07:00:00-08:00",
+        "utc_ticks": 30926556000000000,
+        "utc_clamped": false
+      },
+      "utc_input_ticks": 30926556000000000
+    },
+    {
+      "id": "year_0100_date",
+      "value": "0100-01-01",
+      "normalized": "0100-01-01",
+      "module_branch": "datetime",
+      "success": true,
+      "parsed": {
+        "ticks": 31241088000000000,
+        "local_offset_minutes": -480,
+        "fixed_invariant": "0099-12-31T16:00:00-08:00",
+        "utc_ticks": 31241376000000000,
+        "utc_clamped": false
+      },
+      "utc_input_ticks": 31241376000000000
+    },
+    {
+      "id": "year_0100_no_zone",
+      "value": "0100-01-01T00:00:00",
+      "normalized": "0100-01-01T00:00:00",
+      "module_branch": "datetime",
+      "success": true,
+      "parsed": {
+        "ticks": 31241088000000000,
+        "local_offset_minutes": -480,
+        "fixed_invariant": "0099-12-31T16:00:00-08:00",
+        "utc_ticks": 31241376000000000,
+        "utc_clamped": false
+      },
+      "utc_input_ticks": 31241376000000000
+    },
+    {
+      "id": "year_0100_z",
+      "value": "0100-01-01T00:00:00Z",
+      "normalized": "0100-01-01T00:00:00Z",
+      "module_branch": "datetime",
+      "success": true,
+      "parsed": {
+        "ticks": 31241088000000000,
+        "local_offset_minutes": -480,
+        "fixed_invariant": "0099-12-31T16:00:00-08:00",
+        "utc_ticks": 31241376000000000,
+        "utc_clamped": false
+      },
+      "utc_input_ticks": 31241376000000000
+    },
+    {
+      "id": "year_0100_positive_offset",
+      "value": "0100-01-01T00:00:00+15:00",
+      "normalized": "0100-01-01T00:00:00+15:00",
+      "module_branch": "datetime",
+      "success": true,
+      "parsed": {
+        "ticks": 31240548000000000,
+        "local_offset_minutes": -480,
+        "fixed_invariant": "0099-12-31T01:00:00-08:00",
+        "utc_ticks": 31240836000000000,
+        "utc_clamped": false
+      },
+      "utc_input_ticks": 31240836000000000
+    },
+    {
+      "id": "year_0100_negative_offset",
+      "value": "0100-01-01T00:00:00-15:00",
+      "normalized": "0100-01-01T00:00:00-15:00",
+      "module_branch": "datetime",
+      "success": true,
+      "parsed": {
+        "ticks": 31241628000000000,
+        "local_offset_minutes": -480,
+        "fixed_invariant": "0100-01-01T07:00:00-08:00",
+        "utc_ticks": 31241916000000000,
+        "utc_clamped": false
+      },
+      "utc_input_ticks": 31241916000000000
+    },
+    {
+      "id": "year_9999_date",
+      "value": "9999-01-01",
+      "normalized": "9999-01-01",
+      "module_branch": "datetime",
+      "success": true,
+      "parsed": {
+        "ticks": 3155063328000000000,
+        "local_offset_minutes": -480,
+        "fixed_invariant": "9998-12-31T16:00:00-08:00",
+        "utc_ticks": 3155063616000000000,
+        "utc_clamped": false
+      },
+      "utc_input_ticks": 3155063616000000000
+    },
+    {
+      "id": "year_9999_no_zone",
+      "value": "9999-01-01T00:00:00",
+      "normalized": "9999-01-01T00:00:00",
+      "module_branch": "datetime",
+      "success": true,
+      "parsed": {
+        "ticks": 3155063328000000000,
+        "local_offset_minutes": -480,
+        "fixed_invariant": "9998-12-31T16:00:00-08:00",
+        "utc_ticks": 3155063616000000000,
+        "utc_clamped": false
+      },
+      "utc_input_ticks": 3155063616000000000
+    },
+    {
+      "id": "year_9999_z",
+      "value": "9999-01-01T00:00:00Z",
+      "normalized": "9999-01-01T00:00:00Z",
+      "module_branch": "datetime",
+      "success": true,
+      "parsed": {
+        "ticks": 3155063328000000000,
+        "local_offset_minutes": -480,
+        "fixed_invariant": "9998-12-31T16:00:00-08:00",
+        "utc_ticks": 3155063616000000000,
+        "utc_clamped": false
+      },
+      "utc_input_ticks": 3155063616000000000
+    },
+    {
+      "id": "year_9999_positive_offset",
+      "value": "9999-01-01T00:00:00+15:00",
+      "normalized": "9999-01-01T00:00:00+15:00",
+      "module_branch": "datetime",
+      "success": true,
+      "parsed": {
+        "ticks": 3155062788000000000,
+        "local_offset_minutes": -480,
+        "fixed_invariant": "9998-12-31T01:00:00-08:00",
+        "utc_ticks": 3155063076000000000,
+        "utc_clamped": false
+      },
+      "utc_input_ticks": 3155063076000000000
+    },
+    {
+      "id": "year_9999_negative_offset",
+      "value": "9999-01-01T00:00:00-15:00",
+      "normalized": "9999-01-01T00:00:00-15:00",
+      "module_branch": "datetime",
+      "success": true,
+      "parsed": {
+        "ticks": 3155063868000000000,
+        "local_offset_minutes": -480,
+        "fixed_invariant": "9999-01-01T07:00:00-08:00",
+        "utc_ticks": 3155064156000000000,
+        "utc_clamped": false
+      },
+      "utc_input_ticks": 3155064156000000000
+    },
+    {
+      "id": "minimum_local_midnight",
+      "value": "0001-01-01T00:00:00-08:00",
+      "normalized": "0001-01-01T00:00:00-08:00",
+      "module_branch": "datetime",
+      "success": true,
+      "parsed": {
+        "ticks": 0,
+        "local_offset_minutes": -480,
+        "fixed_invariant": "0001-01-01T00:00:00-08:00",
+        "utc_ticks": 288000000000,
+        "utc_clamped": false
+      },
+      "utc_input_ticks": 288000000000
+    },
+    {
+      "id": "minimum_one_second_before_local_midnight",
+      "value": "0001-01-01T07:59:59Z",
+      "normalized": "0001-01-01T07:59:59Z",
+      "module_branch": "datetime",
+      "success": true,
+      "parsed": {
+        "ticks": 863990000000,
+        "local_offset_minutes": -480,
+        "fixed_invariant": "0001-01-01T23:59:59-08:00",
+        "utc_ticks": 1151990000000,
+        "utc_clamped": false
+      },
+      "utc_input_ticks": 287990000000
+    },
+    {
+      "id": "minimum_day_two_large_offset",
+      "value": "0001-01-02T00:00:00+99:59",
+      "normalized": "0001-01-02T00:00:00+99:59",
+      "module_branch": "datetime",
+      "success": false,
+      "utc_input_ticks": -2735400000000
+    },
+    {
+      "id": "maximum_whole_second",
+      "value": "9999-12-31T23:59:59Z",
+      "normalized": "9999-12-31T23:59:59Z",
+      "module_branch": "datetime",
+      "success": true,
+      "parsed": {
+        "ticks": 3155378687990000000,
+        "local_offset_minutes": -480,
+        "fixed_invariant": "9999-12-31T15:59:59-08:00",
+        "utc_ticks": 3155378975990000000,
+        "utc_clamped": false
+      },
+      "utc_input_ticks": 3155378975990000000
+    },
+    {
+      "id": "maximum_last_tick",
+      "value": "9999-12-31T23:59:59.9999999Z",
+      "normalized": "9999-12-31T23:59:59.9999999Z",
+      "module_branch": "datetime",
+      "success": true,
+      "parsed": {
+        "ticks": 3155378687999999999,
+        "local_offset_minutes": -480,
+        "fixed_invariant": "9999-12-31T15:59:59.9999999-08:00",
+        "utc_ticks": 3155378975999999999,
+        "utc_clamped": false
+      },
+      "utc_input_ticks": 3155378975999999999
+    },
+    {
+      "id": "maximum_local_last_tick",
+      "value": "9999-12-31T23:59:59.9999999-08:00",
+      "normalized": "9999-12-31T23:59:59.9999999-08:00",
+      "module_branch": "datetime",
+      "success": true,
+      "parsed": {
+        "ticks": 3155378975999999999,
+        "local_offset_minutes": -480,
+        "fixed_invariant": "9999-12-31T23:59:59.9999999-08:00",
+        "utc_ticks": 3155378975999999999,
+        "utc_clamped": true
+      },
+      "utc_input_ticks": 3155379263999999999
+    },
+    {
+      "id": "maximum_beyond_local_range",
+      "value": "9999-12-31T23:59:59.9999999-15:00",
+      "normalized": "9999-12-31T23:59:59.9999999-15:00",
+      "module_branch": "datetime",
+      "success": false,
+      "utc_input_ticks": 3155379515999999999
+    },
+    {
+      "id": "invalid_year_zero",
+      "value": "0000-01-01",
+      "normalized": "0000-01-01",
+      "module_branch": "datetime",
+      "success": false
+    },
+    {
+      "id": "invalid_year_ten_thousand",
+      "value": "10000-01-01",
+      "normalized": "10000-01-01",
+      "module_branch": "datetime",
+      "success": false
+    },
+    {
+      "id": "invalid_leap_day",
+      "value": "2041-02-29",
+      "normalized": "2041-02-29",
+      "module_branch": "datetime",
+      "success": false
+    },
+    {
+      "id": "invalid_hour",
+      "value": "2040-10-27T24:00:00Z",
+      "normalized": "2040-10-27T24:00:00Z",
+      "module_branch": "datetime",
+      "success": false
+    },
+    {
+      "id": "invalid_leap_second",
+      "value": "2040-10-27T23:59:60Z",
+      "normalized": "2040-10-27T23:59:60Z",
+      "module_branch": "datetime",
+      "success": false
+    },
+    {
+      "id": "invalid_short_fields",
+      "value": "2040-1-2T3:4:5Z",
+      "normalized": "2040-1-2T3:4:5Z",
+      "module_branch": "datetime",
+      "success": false
+    },
+    {
+      "id": "invalid_lowercase_t",
+      "value": "2040-10-27t14:30:00Z",
+      "normalized": "2040-10-27t14:30:00Z",
+      "module_branch": "datetime",
+      "success": false
+    },
+    {
+      "id": "invalid_leading_space",
+      "value": " 2040-10-27T14:30:00Z",
+      "normalized": " 2040-10-27T14:30:00Z",
+      "module_branch": "datetime",
+      "success": false
+    },
+    {
+      "id": "invalid_trailing_space",
+      "value": "2040-10-27T14:30:00Z ",
+      "normalized": "2040-10-27T14:30:00Z ",
+      "module_branch": "datetime",
+      "success": false
+    },
+    {
+      "id": "empty_ignored_by_module",
+      "value": "",
+      "normalized": "",
+      "module_branch": "ignored",
+      "success": false
+    },
+    {
+      "id": "never_module_sentinel",
+      "value": "never",
+      "normalized": "never",
+      "module_branch": "never",
+      "success": false
+    },
+    {
+      "id": "never_uppercase_module_sentinel",
+      "value": "NEVER",
+      "normalized": "NEVER",
+      "module_branch": "never",
+      "success": false
+    },
+    {
+      "id": "invalid_padded_never",
+      "value": " never ",
+      "normalized": " never ",
+      "module_branch": "datetime",
+      "success": false
+    },
+    {
+      "id": "overlap_daylight_offset",
+      "value": "2025-11-02T01:30:00.1234567-07:00",
+      "normalized": "2025-11-02T01:30:00.1234567-07:00",
+      "module_branch": "datetime",
+      "success": true,
+      "parsed": {
+        "ticks": 638976438001234567,
+        "local_offset_minutes": -420,
+        "fixed_invariant": "2025-11-02T01:30:00.1234567-07:00",
+        "utc_ticks": 638976690001234567,
+        "utc_clamped": false
+      },
+      "utc_input_ticks": 638976690001234567
+    },
+    {
+      "id": "overlap_standard_offset",
+      "value": "2025-11-02T01:30:00.1234567-08:00",
+      "normalized": "2025-11-02T01:30:00.1234567-08:00",
+      "module_branch": "datetime",
+      "success": true,
+      "parsed": {
+        "ticks": 638976438001234567,
+        "local_offset_minutes": -480,
+        "fixed_invariant": "2025-11-02T01:30:00.1234567-08:00",
+        "utc_ticks": 638976726001234567,
+        "utc_clamped": false
+      },
+      "utc_input_ticks": 638976726001234567
+    },
+    {
+      "id": "overlap_daylight_z",
+      "value": "2025-11-02T08:30:00.1234567Z",
+      "normalized": "2025-11-02T08:30:00.1234567Z",
+      "module_branch": "datetime",
+      "success": true,
+      "parsed": {
+        "ticks": 638976438001234567,
+        "local_offset_minutes": -420,
+        "fixed_invariant": "2025-11-02T01:30:00.1234567-07:00",
+        "utc_ticks": 638976690001234567,
+        "utc_clamped": false
+      },
+      "utc_input_ticks": 638976690001234567
+    },
+    {
+      "id": "overlap_standard_z",
+      "value": "2025-11-02T09:30:00.1234567Z",
+      "normalized": "2025-11-02T09:30:00.1234567Z",
+      "module_branch": "datetime",
+      "success": true,
+      "parsed": {
+        "ticks": 638976438001234567,
+        "local_offset_minutes": -480,
+        "fixed_invariant": "2025-11-02T01:30:00.1234567-08:00",
+        "utc_ticks": 638976726001234567,
+        "utc_clamped": false
+      },
+      "utc_input_ticks": 638976726001234567
+    }
+  ],
+  "formatting": [
+    {
+      "calendar": "System.Globalization.GregorianCalendar",
+      "culture": "en-US",
+      "kind": "Unspecified",
+      "rendered": "2040-10-27T14:30:00",
+      "requested_culture": "current",
+      "ticks": 643705578000000000,
+      "time_separator": ":"
+    },
+    {
+      "calendar": "System.Globalization.GregorianCalendar",
+      "culture": "en-US",
+      "kind": "Unspecified",
+      "rendered": "2040-10-27T14:30:00.12",
+      "requested_culture": "current",
+      "ticks": 643705578001200000,
+      "time_separator": ":"
+    },
+    {
+      "calendar": "System.Globalization.GregorianCalendar",
+      "culture": "en-US",
+      "kind": "Unspecified",
+      "rendered": "2040-10-27T14:30:00.1234567",
+      "requested_culture": "current",
+      "ticks": 643705578001234567,
+      "time_separator": ":"
+    },
+    {
+      "calendar": "System.Globalization.GregorianCalendar",
+      "culture": "en-US",
+      "kind": "Local",
+      "rendered": "2040-10-27T14:30:00-07:00",
+      "requested_culture": "current",
+      "ticks": 643705578000000000,
+      "time_separator": ":"
+    },
+    {
+      "calendar": "System.Globalization.GregorianCalendar",
+      "culture": "en-US",
+      "kind": "Local",
+      "rendered": "2040-10-27T14:30:00.12-07:00",
+      "requested_culture": "current",
+      "ticks": 643705578001200000,
+      "time_separator": ":"
+    },
+    {
+      "calendar": "System.Globalization.GregorianCalendar",
+      "culture": "en-US",
+      "kind": "Local",
+      "rendered": "2040-10-27T14:30:00.1234567-07:00",
+      "requested_culture": "current",
+      "ticks": 643705578001234567,
+      "time_separator": ":"
+    },
+    {
+      "calendar": "System.Globalization.GregorianCalendar",
+      "culture": "en-US",
+      "kind": "Utc",
+      "rendered": "2040-10-27T14:30:00Z",
+      "requested_culture": "current",
+      "ticks": 643705578000000000,
+      "time_separator": ":"
+    },
+    {
+      "calendar": "System.Globalization.GregorianCalendar",
+      "culture": "en-US",
+      "kind": "Utc",
+      "rendered": "2040-10-27T14:30:00.12Z",
+      "requested_culture": "current",
+      "ticks": 643705578001200000,
+      "time_separator": ":"
+    },
+    {
+      "calendar": "System.Globalization.GregorianCalendar",
+      "culture": "en-US",
+      "kind": "Utc",
+      "rendered": "2040-10-27T14:30:00.1234567Z",
+      "requested_culture": "current",
+      "ticks": 643705578001234567,
+      "time_separator": ":"
+    },
+    {
+      "calendar": "System.Globalization.GregorianCalendar",
+      "culture": "en-US",
+      "kind": "Unspecified",
+      "rendered": "2040-10-27T14:30:00",
+      "requested_culture": "en-US",
+      "ticks": 643705578000000000,
+      "time_separator": ":"
+    },
+    {
+      "calendar": "System.Globalization.GregorianCalendar",
+      "culture": "en-US",
+      "kind": "Unspecified",
+      "rendered": "2040-10-27T14:30:00.12",
+      "requested_culture": "en-US",
+      "ticks": 643705578001200000,
+      "time_separator": ":"
+    },
+    {
+      "calendar": "System.Globalization.GregorianCalendar",
+      "culture": "en-US",
+      "kind": "Unspecified",
+      "rendered": "2040-10-27T14:30:00.1234567",
+      "requested_culture": "en-US",
+      "ticks": 643705578001234567,
+      "time_separator": ":"
+    },
+    {
+      "calendar": "System.Globalization.GregorianCalendar",
+      "culture": "en-US",
+      "kind": "Local",
+      "rendered": "2040-10-27T14:30:00-07:00",
+      "requested_culture": "en-US",
+      "ticks": 643705578000000000,
+      "time_separator": ":"
+    },
+    {
+      "calendar": "System.Globalization.GregorianCalendar",
+      "culture": "en-US",
+      "kind": "Local",
+      "rendered": "2040-10-27T14:30:00.12-07:00",
+      "requested_culture": "en-US",
+      "ticks": 643705578001200000,
+      "time_separator": ":"
+    },
+    {
+      "calendar": "System.Globalization.GregorianCalendar",
+      "culture": "en-US",
+      "kind": "Local",
+      "rendered": "2040-10-27T14:30:00.1234567-07:00",
+      "requested_culture": "en-US",
+      "ticks": 643705578001234567,
+      "time_separator": ":"
+    },
+    {
+      "calendar": "System.Globalization.GregorianCalendar",
+      "culture": "en-US",
+      "kind": "Utc",
+      "rendered": "2040-10-27T14:30:00Z",
+      "requested_culture": "en-US",
+      "ticks": 643705578000000000,
+      "time_separator": ":"
+    },
+    {
+      "calendar": "System.Globalization.GregorianCalendar",
+      "culture": "en-US",
+      "kind": "Utc",
+      "rendered": "2040-10-27T14:30:00.12Z",
+      "requested_culture": "en-US",
+      "ticks": 643705578001200000,
+      "time_separator": ":"
+    },
+    {
+      "calendar": "System.Globalization.GregorianCalendar",
+      "culture": "en-US",
+      "kind": "Utc",
+      "rendered": "2040-10-27T14:30:00.1234567Z",
+      "requested_culture": "en-US",
+      "ticks": 643705578001234567,
+      "time_separator": ":"
+    },
+    {
+      "calendar": "System.Globalization.ThaiBuddhistCalendar",
+      "culture": "th-TH",
+      "kind": "Unspecified",
+      "rendered": "2583-10-27T14:30:00",
+      "requested_culture": "th-TH",
+      "ticks": 643705578000000000,
+      "time_separator": ":"
+    },
+    {
+      "calendar": "System.Globalization.ThaiBuddhistCalendar",
+      "culture": "th-TH",
+      "kind": "Unspecified",
+      "rendered": "2583-10-27T14:30:00.12",
+      "requested_culture": "th-TH",
+      "ticks": 643705578001200000,
+      "time_separator": ":"
+    },
+    {
+      "calendar": "System.Globalization.ThaiBuddhistCalendar",
+      "culture": "th-TH",
+      "kind": "Unspecified",
+      "rendered": "2583-10-27T14:30:00.1234567",
+      "requested_culture": "th-TH",
+      "ticks": 643705578001234567,
+      "time_separator": ":"
+    },
+    {
+      "calendar": "System.Globalization.ThaiBuddhistCalendar",
+      "culture": "th-TH",
+      "kind": "Local",
+      "rendered": "2583-10-27T14:30:00-07:00",
+      "requested_culture": "th-TH",
+      "ticks": 643705578000000000,
+      "time_separator": ":"
+    },
+    {
+      "calendar": "System.Globalization.ThaiBuddhistCalendar",
+      "culture": "th-TH",
+      "kind": "Local",
+      "rendered": "2583-10-27T14:30:00.12-07:00",
+      "requested_culture": "th-TH",
+      "ticks": 643705578001200000,
+      "time_separator": ":"
+    },
+    {
+      "calendar": "System.Globalization.ThaiBuddhistCalendar",
+      "culture": "th-TH",
+      "kind": "Local",
+      "rendered": "2583-10-27T14:30:00.1234567-07:00",
+      "requested_culture": "th-TH",
+      "ticks": 643705578001234567,
+      "time_separator": ":"
+    },
+    {
+      "calendar": "System.Globalization.ThaiBuddhistCalendar",
+      "culture": "th-TH",
+      "kind": "Utc",
+      "rendered": "2583-10-27T14:30:00Z",
+      "requested_culture": "th-TH",
+      "ticks": 643705578000000000,
+      "time_separator": ":"
+    },
+    {
+      "calendar": "System.Globalization.ThaiBuddhistCalendar",
+      "culture": "th-TH",
+      "kind": "Utc",
+      "rendered": "2583-10-27T14:30:00.12Z",
+      "requested_culture": "th-TH",
+      "ticks": 643705578001200000,
+      "time_separator": ":"
+    },
+    {
+      "calendar": "System.Globalization.ThaiBuddhistCalendar",
+      "culture": "th-TH",
+      "kind": "Utc",
+      "rendered": "2583-10-27T14:30:00.1234567Z",
+      "requested_culture": "th-TH",
+      "ticks": 643705578001234567,
+      "time_separator": ":"
+    },
+    {
+      "calendar": "System.Globalization.GregorianCalendar",
+      "culture": "he-IL",
+      "kind": "Unspecified",
+      "rendered": "2040-10-27T14:30:00",
+      "requested_culture": "he-IL",
+      "ticks": 643705578000000000,
+      "time_separator": ":"
+    },
+    {
+      "calendar": "System.Globalization.GregorianCalendar",
+      "culture": "he-IL",
+      "kind": "Unspecified",
+      "rendered": "2040-10-27T14:30:00.12",
+      "requested_culture": "he-IL",
+      "ticks": 643705578001200000,
+      "time_separator": ":"
+    },
+    {
+      "calendar": "System.Globalization.GregorianCalendar",
+      "culture": "he-IL",
+      "kind": "Unspecified",
+      "rendered": "2040-10-27T14:30:00.1234567",
+      "requested_culture": "he-IL",
+      "ticks": 643705578001234567,
+      "time_separator": ":"
+    },
+    {
+      "calendar": "System.Globalization.GregorianCalendar",
+      "culture": "he-IL",
+      "kind": "Local",
+      "rendered": "2040-10-27T14:30:00-07:00",
+      "requested_culture": "he-IL",
+      "ticks": 643705578000000000,
+      "time_separator": ":"
+    },
+    {
+      "calendar": "System.Globalization.GregorianCalendar",
+      "culture": "he-IL",
+      "kind": "Local",
+      "rendered": "2040-10-27T14:30:00.12-07:00",
+      "requested_culture": "he-IL",
+      "ticks": 643705578001200000,
+      "time_separator": ":"
+    },
+    {
+      "calendar": "System.Globalization.GregorianCalendar",
+      "culture": "he-IL",
+      "kind": "Local",
+      "rendered": "2040-10-27T14:30:00.1234567-07:00",
+      "requested_culture": "he-IL",
+      "ticks": 643705578001234567,
+      "time_separator": ":"
+    },
+    {
+      "calendar": "System.Globalization.GregorianCalendar",
+      "culture": "he-IL",
+      "kind": "Utc",
+      "rendered": "2040-10-27T14:30:00Z",
+      "requested_culture": "he-IL",
+      "ticks": 643705578000000000,
+      "time_separator": ":"
+    },
+    {
+      "calendar": "System.Globalization.GregorianCalendar",
+      "culture": "he-IL",
+      "kind": "Utc",
+      "rendered": "2040-10-27T14:30:00.12Z",
+      "requested_culture": "he-IL",
+      "ticks": 643705578001200000,
+      "time_separator": ":"
+    },
+    {
+      "calendar": "System.Globalization.GregorianCalendar",
+      "culture": "he-IL",
+      "kind": "Utc",
+      "rendered": "2040-10-27T14:30:00.1234567Z",
+      "requested_culture": "he-IL",
+      "ticks": 643705578001234567,
+      "time_separator": ":"
+    },
+    {
+      "calendar": "System.Globalization.UmAlQuraCalendar",
+      "culture": "ar-SA",
+      "kind": "Unspecified",
+      "rendered": "1462-10-21T14:30:00",
+      "requested_culture": "ar-SA",
+      "ticks": 643705578000000000,
+      "time_separator": ":"
+    },
+    {
+      "calendar": "System.Globalization.UmAlQuraCalendar",
+      "culture": "ar-SA",
+      "kind": "Unspecified",
+      "rendered": "1462-10-21T14:30:00.12",
+      "requested_culture": "ar-SA",
+      "ticks": 643705578001200000,
+      "time_separator": ":"
+    },
+    {
+      "calendar": "System.Globalization.UmAlQuraCalendar",
+      "culture": "ar-SA",
+      "kind": "Unspecified",
+      "rendered": "1462-10-21T14:30:00.1234567",
+      "requested_culture": "ar-SA",
+      "ticks": 643705578001234567,
+      "time_separator": ":"
+    },
+    {
+      "calendar": "System.Globalization.UmAlQuraCalendar",
+      "culture": "ar-SA",
+      "kind": "Local",
+      "rendered": "1462-10-21T14:30:00-07:00",
+      "requested_culture": "ar-SA",
+      "ticks": 643705578000000000,
+      "time_separator": ":"
+    },
+    {
+      "calendar": "System.Globalization.UmAlQuraCalendar",
+      "culture": "ar-SA",
+      "kind": "Local",
+      "rendered": "1462-10-21T14:30:00.12-07:00",
+      "requested_culture": "ar-SA",
+      "ticks": 643705578001200000,
+      "time_separator": ":"
+    },
+    {
+      "calendar": "System.Globalization.UmAlQuraCalendar",
+      "culture": "ar-SA",
+      "kind": "Local",
+      "rendered": "1462-10-21T14:30:00.1234567-07:00",
+      "requested_culture": "ar-SA",
+      "ticks": 643705578001234567,
+      "time_separator": ":"
+    },
+    {
+      "calendar": "System.Globalization.UmAlQuraCalendar",
+      "culture": "ar-SA",
+      "kind": "Utc",
+      "rendered": "1462-10-21T14:30:00Z",
+      "requested_culture": "ar-SA",
+      "ticks": 643705578000000000,
+      "time_separator": ":"
+    },
+    {
+      "calendar": "System.Globalization.UmAlQuraCalendar",
+      "culture": "ar-SA",
+      "kind": "Utc",
+      "rendered": "1462-10-21T14:30:00.12Z",
+      "requested_culture": "ar-SA",
+      "ticks": 643705578001200000,
+      "time_separator": ":"
+    },
+    {
+      "calendar": "System.Globalization.UmAlQuraCalendar",
+      "culture": "ar-SA",
+      "kind": "Utc",
+      "rendered": "1462-10-21T14:30:00.1234567Z",
+      "requested_culture": "ar-SA",
+      "ticks": 643705578001234567,
+      "time_separator": ":"
+    },
+    {
+      "calendar": "System.Globalization.GregorianCalendar",
+      "culture": "ja-JP",
+      "kind": "Unspecified",
+      "rendered": "2040-10-27T14:30:00",
+      "requested_culture": "ja-JP",
+      "ticks": 643705578000000000,
+      "time_separator": ":"
+    },
+    {
+      "calendar": "System.Globalization.GregorianCalendar",
+      "culture": "ja-JP",
+      "kind": "Unspecified",
+      "rendered": "2040-10-27T14:30:00.12",
+      "requested_culture": "ja-JP",
+      "ticks": 643705578001200000,
+      "time_separator": ":"
+    },
+    {
+      "calendar": "System.Globalization.GregorianCalendar",
+      "culture": "ja-JP",
+      "kind": "Unspecified",
+      "rendered": "2040-10-27T14:30:00.1234567",
+      "requested_culture": "ja-JP",
+      "ticks": 643705578001234567,
+      "time_separator": ":"
+    },
+    {
+      "calendar": "System.Globalization.GregorianCalendar",
+      "culture": "ja-JP",
+      "kind": "Local",
+      "rendered": "2040-10-27T14:30:00-07:00",
+      "requested_culture": "ja-JP",
+      "ticks": 643705578000000000,
+      "time_separator": ":"
+    },
+    {
+      "calendar": "System.Globalization.GregorianCalendar",
+      "culture": "ja-JP",
+      "kind": "Local",
+      "rendered": "2040-10-27T14:30:00.12-07:00",
+      "requested_culture": "ja-JP",
+      "ticks": 643705578001200000,
+      "time_separator": ":"
+    },
+    {
+      "calendar": "System.Globalization.GregorianCalendar",
+      "culture": "ja-JP",
+      "kind": "Local",
+      "rendered": "2040-10-27T14:30:00.1234567-07:00",
+      "requested_culture": "ja-JP",
+      "ticks": 643705578001234567,
+      "time_separator": ":"
+    },
+    {
+      "calendar": "System.Globalization.GregorianCalendar",
+      "culture": "ja-JP",
+      "kind": "Utc",
+      "rendered": "2040-10-27T14:30:00Z",
+      "requested_culture": "ja-JP",
+      "ticks": 643705578000000000,
+      "time_separator": ":"
+    },
+    {
+      "calendar": "System.Globalization.GregorianCalendar",
+      "culture": "ja-JP",
+      "kind": "Utc",
+      "rendered": "2040-10-27T14:30:00.12Z",
+      "requested_culture": "ja-JP",
+      "ticks": 643705578001200000,
+      "time_separator": ":"
+    },
+    {
+      "calendar": "System.Globalization.GregorianCalendar",
+      "culture": "ja-JP",
+      "kind": "Utc",
+      "rendered": "2040-10-27T14:30:00.1234567Z",
+      "requested_culture": "ja-JP",
+      "ticks": 643705578001234567,
+      "time_separator": ":"
+    }
+  ]
+}

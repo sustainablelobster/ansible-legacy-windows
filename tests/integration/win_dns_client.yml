@@ -1,0 +1,166 @@
+---
+- name: Verify real adapter DNS changes and exact recovery
+  hosts: legacy_windows
+  gather_facts: false
+  vars_files:
+    - vars/dns_client.yml
+    - vars/dns_client_fixture.yml
+  vars:
+    dns_client_wmi_source: >-
+      {{ lookup('ansible.builtin.file', playbook_dir ~
+         '/../../plugins/module_utils/legacy_windows_wmi.py') }}
+    dns_client_script: >-
+      {{ dns_client_wmi_source ~ ('%c' | format(10)) ~ dns_client_fixture }}
+  tasks:
+    - name: Allocate a private controller evidence file
+      ansible.builtin.tempfile:
+        state: file
+        path: '{{ playbook_dir }}/../../tmp/codex/evidence'
+        prefix: dns-client-{{ inventory_hostname }}-
+        suffix: .json
+      register: dns_client_capture_file
+      delegate_to: localhost
+      vars: &capture_connection
+        ansible_connection: local
+        ansible_shell_type: sh
+        ansible_python_interpreter: '{{ ansible_playbook_python }}'
+      changed_when: false
+      check_mode: false
+
+    - name: Record the private evidence location
+      ansible.builtin.debug:
+        msg: 'DNS evidence: {{ dns_client_capture_file.path }}'
+
+    - name: Initialize complete result records
+      ansible.builtin.set_fact:
+        dns_client_results: []
+
+    - name: Require Python 3.4.4 and retain existing staging directories
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import glob, json, os, sys, tempfile;
+        assert sys.version_info[:3] == (3, 4, 4);
+        print(json.dumps(sorted(glob.glob(os.path.join(tempfile.gettempdir(),
+        'ansible-tmp-*')))))""
+      register: dns_client_staging_before
+      changed_when: false
+
+    - name: Exercise settings with a durable recovery journal
+      block:
+        - name: Allocate the recovery workspace
+          sustainablelobster.legacy_windows.win_tempfile:  # noqa: args[module]
+            state: directory
+            prefix: legacy-windows-dns-client-
+          register: dns_client_workspace
+          check_mode: false
+
+        - name: Journal original DNS before creating the controlled baseline
+          sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - '-'
+              - '{{ dns_client_workspace.path }}'
+              - setup
+              - '{{ ansible_host }}'
+            stdin: '{{ dns_client_script }}'
+          register: dns_client_setup
+          changed_when: true
+          check_mode: false
+
+        - name: Retain adapter identity and the controlled observation
+          ansible.builtin.set_fact:
+            dns_client_name: >-
+              {{ (dns_client_setup.stdout | from_json).identity.name }}
+            dns_client_previous: '{{ dns_client_setup.stdout | from_json }}'
+            dns_client_ipv6: >-
+              {{ (dns_client_setup.stdout | from_json).v6 is not none }}
+
+        - name: Exercise DNS writes repeats check mode and failures
+          ansible.builtin.include_tasks: tasks/win_dns_client_case.yml
+          loop: '{{ dns_client_cases }}'
+          loop_control:
+            loop_var: dns_client_case
+            label: '{{ dns_client_case.name }}'
+          when: >-
+            (not (dns_client_case.ipv6 | default(false)) or dns_client_ipv6)
+            and (not (dns_client_case.no_ipv6 | default(false)) or
+                 not dns_client_ipv6)
+      always:
+        - name: Recover DNS and retain final evidence
+          block:
+            - name: Restore and verify original DNS state  # noqa: args[module]
+              sustainablelobster.legacy_windows.win_command:
+                argv:
+                  - '{{ ansible_python_interpreter }}'
+                  - '-'
+                  - '{{ dns_client_workspace.path }}'
+                  - cleanup
+                  - '{{ ansible_host }}'
+                stdin: '{{ dns_client_script }}'
+              register: dns_client_cleanup
+              changed_when: true
+              check_mode: false
+              when: dns_client_workspace.path is defined
+
+            - name: Require restoration before removing the journal
+              ansible.builtin.assert:
+                that:
+                  - (dns_client_cleanup.stdout | from_json).restored
+              when: dns_client_workspace.path is defined
+
+            - name: Remove only the verified recovery workspace
+              sustainablelobster.legacy_windows.win_file:  # noqa: args[module]
+                path: '{{ dns_client_workspace.path }}'
+                state: absent
+              check_mode: false
+              when: dns_client_workspace.path is defined
+          always:
+            - name: Save private results and recovery evidence
+              ansible.builtin.copy:
+                content: >-
+                  {{ {'results': dns_client_results,
+                      'workspace': dns_client_workspace.path | default(none),
+                      'setup': dns_client_setup | default(none),
+                      'cleanup': dns_client_cleanup | default(none)}
+                     | to_nice_json }}
+                dest: '{{ dns_client_capture_file.path }}'
+                mode: '0600'
+              delegate_to: localhost
+              vars: *capture_connection
+              changed_when: false
+
+        - name: Verify workspace and staging cleanup
+          ansible.builtin.raw: >-
+            cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+            "import glob, json, os, sys, tempfile;
+            assert not os.path.exists(sys.argv[1]);
+            print(json.dumps(sorted(glob.glob(os.path.join(tempfile.gettempdir(),
+            'ansible-tmp-*')))))" "{{ dns_client_workspace.path }}""
+          when: dns_client_workspace.path is defined
+          register: dns_client_staging_after
+          changed_when: false
+          check_mode: false
+
+        - name: Require staging-directory cleanup
+          ansible.builtin.assert:
+            that:
+              - >-
+                (dns_client_staging_before.stdout | from_json) ==
+                (dns_client_staging_after.stdout | from_json)
+          when: dns_client_workspace.path is defined
+
+        - name: Retain final workspace and staging-cleanup evidence
+          ansible.builtin.copy:
+            content: >-
+              {{ {'results': dns_client_results,
+                  'workspace': dns_client_workspace.path | default(none),
+                  'setup': dns_client_setup | default(none),
+                  'cleanup': dns_client_cleanup | default(none),
+                  'staging_before': dns_client_staging_before,
+                  'staging_after': dns_client_staging_after | default(none)}
+                 | to_nice_json }}
+            dest: '{{ dns_client_capture_file.path }}'
+            mode: '0600'
+          delegate_to: localhost
+          vars: *capture_connection
+          changed_when: false

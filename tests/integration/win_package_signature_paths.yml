@@ -1,0 +1,171 @@
+---
+- name: >-
+    Verify released signature wildcard selection and literal sample protection
+  hosts: legacy_windows
+  gather_facts: false
+  vars_files:
+    - vars/package_signature_fixture.yml
+    - vars/package_signature_paths_fixture.yml
+  vars:
+    signature_paths_cases: >-
+      {{ package_signature_paths_case_indices |
+      default(range((signature_paths_setup.stdout | from_json).cases | length) |
+      list) | map('extract', (signature_paths_setup.stdout | from_json).cases) |
+      list }}
+  tasks:
+    - name: Require actual Python and original global staging
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import glob,json,os,sys,tempfile;assert sys.version_info[:3]==(3,4,4);
+        print(json.dumps(sorted(glob.glob(os.path.join(
+        tempfile.gettempdir(),'ansible-tmp-*')))))""
+      register: signature_paths_staging_before
+      changed_when: false
+
+    - name: Allocate private evidence before changing the guest
+      ansible.builtin.tempfile:
+        path: '{{ playbook_dir }}/../../tmp'
+        state: file
+        prefix: 'package-signature-paths-{{ inventory_hostname }}-'
+        suffix: .json
+      register: signature_paths_capture
+      delegate_to: localhost
+      vars: &local
+        ansible_connection: local
+        ansible_shell_type: sh
+        ansible_python_interpreter: '{{ ansible_playbook_python }}'
+
+    - name: Own the bounded sample workspace
+      sustainablelobster.legacy_windows.win_tempfile:
+        state: directory
+        prefix: legacy-windows-signature-wildcard-
+      register: signature_paths_workspace
+
+    - name: Exercise samples with literal protection and cleanup
+      block:
+        - name: Create exclusively owned signed and invalid samples
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - '-'
+              - '{{ signature_paths_workspace.path }}'
+              - setup
+            stdin: '{{ package_signature_paths_program }}'
+          register: signature_paths_setup
+          changed_when: false
+          no_log: true
+
+        - name: Retain complete released public results including failures
+          when: package_signature_paths_compare | default(true) | bool
+          ansible.windows.win_package:
+            path: '{{ signature_paths_workspace.path }}\{{ item }}'
+            provider: registry
+            product_id: '{CB2A9E39-72AD-4D03-92B3-114F4839F41B}'
+            arguments: /c exit 0
+            verify_signature: true
+          loop: '{{ signature_paths_cases }}'
+          register: signature_paths_original
+          ignore_errors: true
+          no_log: true
+
+        - name: Retain complete native public results including failures
+          sustainablelobster.legacy_windows.win_package:
+            path: '{{ signature_paths_workspace.path }}\{{ item }}'
+            provider: registry
+            product_id: '{CB2A9E39-72AD-4D03-92B3-114F4839F41B}'
+            arguments: /c exit 0
+            verify_signature: true
+          loop: '{{ signature_paths_cases }}'
+          register: signature_paths_native
+          ignore_errors: true
+          no_log: true
+
+        - name: Compare every public field type and ordered case
+          when: package_signature_paths_compare | default(true) | bool
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - '-'
+              - '{{ signature_paths_workspace.path }}'
+              - compare
+            stdin: '{{ package_signature_paths_program }}'
+          register: signature_paths_comparison
+          changed_when: false
+          vars:
+            signature_paths_pair: >-
+              {{ {'native': signature_paths_native,
+                  'original': signature_paths_original} | to_json | b64encode }}
+      always:
+        - name: Observe original system executable and literal owned samples
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - '-'
+              - '{{ signature_paths_workspace.path }}'
+              - observe
+            stdin: '{{ package_signature_paths_program }}'
+          register: signature_paths_recovery
+          changed_when: false
+          failed_when: false
+          no_log: true
+
+        - name: Retain raw evidence before cleanup assertions
+          ansible.builtin.copy:
+            content: >-
+              {{ {'workspace': signature_paths_workspace,
+                  'setup': signature_paths_setup | default(none),
+                  'original': signature_paths_original | default(none),
+                  'native': signature_paths_native | default(none),
+                  'comparison': signature_paths_comparison | default(none),
+                  'recovery': signature_paths_recovery,
+                  'staging_before': signature_paths_staging_before} |
+                  to_nice_json }}
+            dest: '{{ signature_paths_capture.path }}'
+            mode: '0600'
+          delegate_to: localhost
+          vars: *local
+          changed_when: false
+          no_log: true
+
+        - name: Require literal measured protection
+          ansible.builtin.assert:
+            that:
+              - signature_paths_recovery.rc == 0
+              - (signature_paths_recovery.stdout | from_json).literal_protection
+
+        - name: Remove only the verified owned sample workspace
+          sustainablelobster.legacy_windows.win_file:
+            path: '{{ signature_paths_workspace.path }}'
+            state: absent
+
+        - name: Require workspace absence and original global staging
+          ansible.builtin.raw: >-
+            cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+            "import glob,json,os,tempfile;
+            assert not os.path.exists(r'{{ signature_paths_workspace.path }}');
+            print(json.dumps(sorted(glob.glob(os.path.join(
+            tempfile.gettempdir(),'ansible-tmp-*')))))""
+          register: signature_paths_staging_after
+          changed_when: false
+          failed_when: >-
+            signature_paths_staging_after.rc != 0 or
+            (signature_paths_staging_after.stdout | from_json) !=
+            (signature_paths_staging_before.stdout | from_json)
+
+        - name: Retain final cleanup observations
+          ansible.builtin.copy:
+            content: >-
+              {{ ((lookup('ansible.builtin.file',
+                  signature_paths_capture.path) | from_json) |
+                  combine({'staging_after':
+                    signature_paths_staging_after})) | to_nice_json }}
+            dest: '{{ signature_paths_capture.path }}'
+            mode: '0600'
+          delegate_to: localhost
+          vars: *local
+          changed_when: false
+          no_log: true
+
+        - name: >-
+            Close this owned persistent connection after verified cleanup
+          ansible.builtin.meta: reset_connection

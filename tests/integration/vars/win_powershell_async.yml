@@ -1,0 +1,47 @@
+---
+# SPDX-License-Identifier: GPL-3.0-or-later
+powershell_async_program: |
+  RESOURCE_SOURCE = {{ lookup('ansible.builtin.file', playbook_dir +
+    '/fixtures/win_powershell.py') | to_json }}
+  ASYNC_SOURCE = {{ lookup('ansible.builtin.file', playbook_dir +
+    '/fixtures/native_async.py') | to_json }}
+  WMI_SOURCE = {{ lookup('ansible.builtin.file', playbook_dir +
+    '/../../plugins/module_utils/legacy_windows_wmi.py') | to_json }}
+  FILE_SCRIPT = {{ lookup('ansible.builtin.file', playbook_dir +
+    '/fixtures/win_powershell_async.ps1') | to_json }}
+  {{ lookup('ansible.builtin.file', playbook_dir +
+    '/fixtures/win_powershell_async.py') }}
+powershell_async_header: |
+  param([string]$MarkerPath, [string]$ReleasePath)
+  [IO.File]::WriteAllText($MarkerPath, [string]$PID)
+  $timer = [Diagnostics.Stopwatch]::StartNew()
+  while (-not [IO.File]::Exists($ReleasePath)) {
+      if ($timer.Elapsed.TotalSeconds -gt 90) {
+          throw 'owned async release missing'
+      }
+      Start-Sleep -Milliseconds 100
+  }
+powershell_async_cases:
+  - name: Nested inline objects and information retain Unicode types and order
+    params:
+      depth: 4
+      script: |
+        $Ansible.Changed=$false
+        $Ansible.Result=@{nested=@{rows=@(1,$null,'λ');yes=$true};number=2.5}
+        ,@(@{name='one';count=1},@{name='two';count=2})
+        Write-Information -MessageData @{label='information λ'} `
+            -Tags first,second -InformationAction Continue
+  - name: Remote UTF8 script preserves its original path and root
+    remote: true
+    params:
+      remote_src: true
+      parameters: {Text: 'remote parameter λ'}
+  - name: Controller UTF8 script supports async through the original action
+    local: true
+    params:
+      parameters: {Text: 'controller parameter λ'}
+  - name: Real terminating script failure preserves preceding output
+    failed: true
+    params:
+      script: >-
+        $Ansible.Changed=$false;'before λ';throw 'async failure λ';'after λ'

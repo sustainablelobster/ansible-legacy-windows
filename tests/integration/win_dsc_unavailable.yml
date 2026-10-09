@@ -1,0 +1,107 @@
+---
+- name: Verify classic DSC engine absence without provider writes
+  hosts: legacy_windows
+  gather_facts: false
+  vars_files:
+    - vars/win_dsc_unavailable.yml
+  tasks:
+    - name: Require actual Python and observe original staging
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import glob,json,os,sys,tempfile;
+        assert sys.version_info[:3] == (3,4,4);
+        print(json.dumps(sorted(glob.glob(os.path.join(
+        tempfile.gettempdir(),'ansible-tmp-*')))))""
+      register: win_dsc_absence_staging_before
+      changed_when: false
+
+    - name: Allocate private controller evidence
+      ansible.builtin.tempfile:
+        path: '{{ playbook_dir }}/../../tmp'
+        prefix: 'win-dsc-absence-{{ inventory_hostname }}-'
+        suffix: .json
+        state: file
+      register: win_dsc_absence_capture
+      delegate_to: localhost
+      vars: &local
+        ansible_connection: local
+        ansible_shell_type: sh
+        ansible_python_interpreter: '{{ ansible_playbook_python }}'
+
+    - name: Require engine absence and observe protected original configuration
+      sustainablelobster.legacy_windows.win_command:
+        argv: ['{{ ansible_python_interpreter }}', '-']
+        stdin: '{{ win_dsc_absence_program }}'
+      register: win_dsc_absence_before
+      changed_when: false
+      no_log: true
+
+    - name: Exercise normal and preview prerequisite failures
+      block:
+        - name: Request the public DSC interface without an engine
+          sustainablelobster.legacy_windows.win_dsc:
+            resource_name: File
+            DestinationPath: 'C:\Windows\Temp\legacy-win-dsc-absent-engine'
+            Ensure: Present
+          check_mode: '{{ item }}'
+          loop: [false, true]
+          register: win_dsc_absence_results
+          ignore_errors: true
+      always:
+        - name: Observe exact protected configuration after both failures
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}', '-']
+            stdin: '{{ win_dsc_absence_program }}'
+          register: win_dsc_absence_after
+          changed_when: false
+          no_log: true
+
+        - name: Observe final global staging without a payload
+          ansible.builtin.raw: >-
+            cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+            "import glob,json,os,tempfile;
+            print(json.dumps(sorted(glob.glob(os.path.join(
+            tempfile.gettempdir(),'ansible-tmp-*')))))""
+          register: win_dsc_absence_staging_after
+          changed_when: false
+
+        - name: Retain complete raw failure and protected-state evidence
+          ansible.builtin.copy:
+            content: >-
+              {{ {'before': win_dsc_absence_before,
+                  'after': win_dsc_absence_after,
+                  'results': win_dsc_absence_results,
+                  'staging_before': win_dsc_absence_staging_before,
+                  'staging_after': win_dsc_absence_staging_after} |
+                 to_nice_json }}
+            dest: '{{ win_dsc_absence_capture.path }}'
+            mode: '0600'
+          delegate_to: localhost
+          vars: *local
+          changed_when: false
+          no_log: true
+
+        - name: Require protected configuration and exact staging nonmutation
+          ansible.builtin.assert:
+            that:
+              - win_dsc_absence_before.rc == 0
+              - win_dsc_absence_after.rc == 0
+              - >-
+                win_dsc_absence_before.stdout == win_dsc_absence_after.stdout
+              - >-
+                win_dsc_absence_staging_before.stdout ==
+                win_dsc_absence_staging_after.stdout
+
+    - name: Require literal early failures without resource result fields
+      ansible.builtin.assert:
+        that:
+          - item is failed
+          - not item.changed
+          - >-
+            item.msg == 'win_dsc requires the installed Windows PowerShell
+            5.0 or newer DSC engine; it is not available on this host'
+          - item.module_version is not defined
+          - item.reboot_required is not defined
+      loop: '{{ win_dsc_absence_results.results }}'
+      loop_control:
+        label: '{{ item.item }}'

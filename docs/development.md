@@ -1,132 +1,203 @@
 # Development
 
-Use the source checkout for development. Collection archives contain user
-documentation and plugins, but exclude development tools and tests.
+## Environment
 
-## Enter the Nix environment
-
-Install Nix on x86-64 Linux with its `nix-command` and `flakes` experimental
-features enabled. From the source directory:
-
-```console
-nix develop path:.
-```
-
-The explicit `path:.` also works for source files that have not been added to
-Git. To enable the experimental features for one invocation without changing
-Nix configuration:
+Install Nix on x86-64 Linux with the `nix-command` and `flakes` features enabled.
+Enter the standalone environment from this checkout:
 
 ```console
 nix --extra-experimental-features 'nix-command flakes' develop path:.
 ```
 
-`flake.lock` pins the tools. A separate virtual environment or pip installation
-is not required. The `NixOS/nixpkgs` input is the Nix package repository; using
-it does not require NixOS as the workstation operating system. The
-`nixos-` branch name identifies the stable package set shared with a NixOS
-release; it does not install NixOS.
+`flake.lock` pins developer tools. The `path:.` form includes files that
+have not been added to Git. A separate virtual environment is not needed.
+The Nix Python interpreter is for development, not the Windows target runtime.
 
-## Build a collection archive
+## Build and check
 
-From the source directory inside the Nix shell, build the archive:
+Inside the Nix shell:
 
 ```console
 just build
-ls dist/sustainablelobster-legacy_windows-*.tar.gz
+just lint check
+pytest
 ```
 
-`just build` writes a distributable archive to `dist/`, replacing an existing
-archive of the same version. Use the archive path reported by the build;
-`dist/` may also contain older versions. Copy that archive to the Ansible
-controller and follow the [installation instructions](../README.md#install).
-The controller does not need Nix or the source checkout to install it.
+`just build` writes the collection archive to `dist/`, replacing an archive
+of the same version. Archives contain plugins and user documentation, not
+tests, developer tools, or private files.
 
-## Local checks
+`just lint` checks tracked and untracked nonignored files through pre-commit.
+Some hooks format files. For focused work, use
+`pre-commit run --files <paths>`. Neither command stages files.
 
-Run these commands inside the Nix shell:
+`just check` builds in a disposable directory, verifies all plugin paths and
+bytes, checks licenses and private-file exclusions, and installs offline.
+Check an existing archive with:
 
 ```console
-just lint check
+python scripts/check_collection.py --artifact dist/sustainablelobster-legacy_windows-1.0.0.tar.gz
 ```
 
-`just lint` runs `pre-commit run --all-files`, which checks tracked files. To
-check untracked files without staging them, run
-`pre-commit run --files <paths>`. Both commands require a Git checkout.
+Pytest exercises controller and developer behavior using Nix Python.
+Routine checks do not contact Windows or establish target compatibility.
+The Ansible-lint hook refreshes the checkout's offline installation under
+`.ansible/collections`; do not use that changing installation for live tests.
 
-`just check` builds a collection in a disposable directory, verifies its
-identity and archive contents, and installs it locally without resolving
-dependencies.
-
-Packaging checks contact no Windows hosts. They do not establish target
-compatibility. Add behavior tests with each implementation, and record the
-runtime each test exercises. Follow the [compatibility contract](compatibility.md)
-for target execution and parity evidence.
-
-## Commit hooks
-
-In a Git checkout, install the hooks explicitly:
+Install commit hooks explicitly if you want them:
 
 ```console
 just setup
 ```
 
-Entering the Nix shell does not install hooks. Run commits inside the shell so
-the hooks can find the Nix-provided tools. Do not install hooks into a parent
-repository when working in a nested source directory.
+Entering the Nix shell does not install hooks. The first Nix or pre-commit
+setup can download pinned dependencies. Do not change global Git or Nix
+configuration to make checks pass.
 
-Pre-commit loads hooks from the upstream repositories pinned in
-`.pre-commit-config.yaml`. Its first run needs network access to fetch those
-repositories. Executable hooks use the tools provided by Nix rather than
-installing separate Python environments. Nix also needs access to its inputs
-and package downloads when first preparing the environment.
+## GitHub CI and releases
 
-## Python tooling
+The source checkout's `.github/workflows/ci.yml` runs on pull requests, pushes
+to `main` and `v1`, tags beginning with `v`, and manual dispatch. All jobs use
+Ubuntu 24.04 x86-64 and the development environment pinned by `flake.lock`.
+The three quality jobs run in parallel:
 
-`pyproject.toml` holds tool settings; it does not declare a Python package.
-Ansible collection identity and dependencies belong in `galaxy.yml`.
+- **Lint** runs `just lint` and rejects tracked-file changes from hooks.
+- **Unit tests** runs the full `pytest -ra` suite, including its skip summary,
+  and records JUnit results.
+- **Package** runs `just build`, checks that exact archive, and installs it
+  offline. It does not rebuild the archive during verification.
 
-| Code                                                             | Formatting and static checks                                                                 |
-| ---------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| Windows payloads in `plugins/modules` and `plugins/module_utils` | Black and Pylint target Python 3.4; Vermin checks for newer syntax and library requirements. |
-| Controller plugins                                               | Black, Pylint, and Mypy use the controller Python floor in the tooling configuration.        |
-| Developer scripts and tests                                      | Tools use the Python interpreter supplied by the locked Nix environment.                     |
+CI does not contact Windows hosts or the lab. These checks establish controller
+and packaging behavior, not legacy Windows execution or target compatibility.
+Windows integration remains a separate, explicitly invoked workflow below.
 
-The controller floor follows the locked `ansible-core` version's Python
-requirement; revisit it when updating that toolchain. `meta/runtime.yml`
-declares the minimum `ansible-core` version. These are compatibility
-requirements, not evidence of tested controller or Windows support. Record
-tested combinations in the
-[support record](status.md).
+The workflow caches Nix dependencies and pre-commit environments using hashes
+of the locked toolchain and hook configuration. Only trusted branch pushes save
+caches; test outcomes are never cached. Superseded branch and pull-request runs
+are canceled, but tag runs and active publication are not. Explicit test reports
+and the verified package bundle are retained for 30 days. Private inventories
+and whole workspaces are not uploaded.
 
-Isort orders imports with Black-compatible formatting. Its Python 3 standard
-library classification does not establish target compatibility. Mypy checks
-controller and developer code; it does not support analyzing Python 3.4.
-Static target checks likewise do not replace execution under Python 3.4.4 on
-Windows.
+### Repository setup
 
-The environment also supplies Pytest for behavior tests, Codespell for spelling,
-Ansible-lint for Ansible content, and checks for YAML, Markdown, Nix, and file
-hygiene. Rumdl lints and formats Markdown through the commit hooks, including
-aligning table columns. Use the checked-in hook and tool configuration for the
-exact enabled checks and exclusions.
+After committing and pushing the complete reviewed source, configure branch
+rules to require the `Lint`, `Unit tests`, and `Package` checks for `main` and
+`v1` where used. Protect `v*` tags against unauthorized creation, updates, and
+deletion. Review workflow changes as release-sensitive code.
 
-## Code and tests
+Actions are pinned to full commit SHAs; update each pin to a verified release
+from its original repository and retain its version comment. `actionlint` and
+ShellCheck are included in the Nix environment and local hooks. Workflow YAML
+is excluded only from Ansible-lint, not from the other applicable checks.
 
-- `plugins/modules`: Windows module implementations and their Ansible interface
-  documentation.
-- `plugins/module_utils`: helpers imported by target modules; their imports must
-  also support Python 3.4.4.
-- `plugins/action`: action plugins executed by the Ansible controller.
-- `tests/unit`: focused tests of observable behavior and failures.
-- `tests/integration/targets`: Windows execution tests on authorized hosts.
-- `scripts`: tools run by developers, using the Nix environment's Python.
+The workflow uses read-only repository permissions by default and does not
+persist checkout credentials. Only publication receives `contents: write`.
+The built-in `GITHUB_TOKEN` is sufficient; no personal token or lab credential
+is required once the release's workflow files are present on the repository's
+default branch. [GitHub requires workflow-write permission](https://docs.github.com/en/rest/releases/releases#create-a-release)
+to release a commit whose workflow files differ from that branch, which
+`GITHUB_TOKEN` cannot receive. Merge workflow changes into the default branch
+before tagging a release, including this first CI implementation. Manual
+dispatch and pull requests never publish.
 
-Keep controller and developer dependencies out of code sent to Windows. The
-workstation Python version does not determine the supported controller or
-Windows Python versions.
+### Publish a version
 
-Follow the source tree's `AGENTS.md` for demonstrations, review, and contribution
-guardrails. Keep support claims and module availability in
-[the support record](status.md), with links to the corresponding module
-reference and test evidence. Changes to source checks belong in the tooling
-configuration and this guide rather than in the user README.
+Update `galaxy.yml` and add a nonempty matching `## X.Y.Z` section to
+`CHANGELOG.md`. Complete review and local checks, commit the complete intended
+source, push it, and verify branch CI before creating the release tag. For
+version 1.0.0, the final authorized release operations are:
+
+```console
+git tag -a v1.0.0 -m 'Release 1.0.0'
+git push origin v1.0.0
+```
+
+Pushing a stable `vX.Y.Z` tag in the originating repository automatically
+publishes after all three quality jobs pass. Tags must exactly match both
+`galaxy.yml` and the archive manifest. Leading-zero versions, prereleases, and
+build metadata are rejected. The workflow never rewrites versions or creates
+tags itself, and it does not publish to Ansible Galaxy.
+
+`scripts/ci_release.py` prepares the verified archive, checksum, release notes,
+and a manifest recording its tested commit. Publication downloads this exact
+bundle and checks the archive against the package job's recorded SHA-256. It
+also confirms that the remote tag still resolves to the tested commit. A draft
+GitHub Release becomes public only after its archive and checksum attachments
+are complete. Download the collection archive attachment for installation;
+GitHub's automatic source archives are not collection packages.
+
+### Retry publication
+
+If publication fails, rerun only the failed publication job while its verified
+package artifact is retained. Matching draft assets can be reused; conflicting
+assets are never overwritten. An already published matching release is a no-op.
+
+Collection archives are not byte-reproducible: rebuilding the same source can
+change archive timestamps and its SHA-256. A full workflow rerun can therefore
+conflict with an existing draft or release. Do not move the tag or replace
+published assets to force a retry. Diagnose the failure using the original
+artifact; a different published package needs a new reviewed version.
+
+## Windows integration tests
+
+Use only authorized hosts. Prepare a private inventory using the
+[connection example](../README.md#connect-and-run-a-task). Choose a playbook
+whose prerequisites and mutations fit the target; inspect its variables first.
+Integration playbooks target the `legacy_windows` inventory group. Use that
+group name instead of `windows` in the README example inventory.
+
+Install into a dedicated directory and keep it unchanged until the test and
+cleanup finish:
+
+```console
+mkdir -p tmp/codex/evidence tmp/codex/artifacts
+ansible-galaxy collection install . --offline --no-deps --force --collections-path tmp/codex/collections/integration
+ANSIBLE_COLLECTIONS_PATH="$PWD/tmp/codex/collections/integration" ansible-playbook -i tmp/codex/inventories/inventory.yml tests/integration/release_smoke.yml --limit legacy_windows
+```
+
+The release smoke exercises connectivity, commands, temporary paths,
+Unicode/binary copying, metadata, file reads, idempotence and check mode.
+Other playbooks exercise individual modules. Integration fixtures themselves
+must remain compatible with the minimum target version, Python 3.4.4. The
+release smoke accepts Python 3.4.4 or newer; probes specifically verifying
+the compatibility floor still require the actual 3.4.4 runtime.
+
+Coordinate exclusive access when tests mutate or inspect shared guest state.
+Hold access through cleanup and connection closure. Servicing tests need a
+restorable baseline appropriate to their changes. Do not substitute fake
+providers or controller checks for Windows execution.
+
+Keep agent-created inventories, logs, captures, snapshots and working files
+under `tmp/codex/`. This directory is private and excluded from archives.
+Preserve failed captures and recovery records. Historical development records
+are not product restrictions or release requirements.
+
+## Code and compatibility
+
+- `plugins/modules` and `plugins/module_utils`: Windows payloads and helpers,
+  including their Python 3.4.4-compatible imports.
+- `plugins/action`, `plugins/plugin_utils` and `plugins/filter`: controller code.
+- `tests/unit`: local behavior tests.
+- `tests/integration`: explicitly invoked Windows tests.
+- `scripts`: developer tools.
+
+The reference release is `ansible.windows` 3.8.0, tag `3.8.0`, commit
+`ff0ac96011ee196742901f34c0dd134acddbe89a`. Preserve familiar interfaces where
+practical; use the standard library and native Windows APIs rather than
+recreating PowerShell or .NET internals.
+
+`meta/runtime.yml` is Ansible collection metadata. Its `requires_ansible`
+field declares the minimum controller `ansible-core` version, not a Windows
+version, target Python version, or connection-plugin allowlist.
+
+Static target checks use the Python 3.4 floor. Controller checks use the Python
+floor required by the supported Ansible release. Neither replaces execution
+with actual Python 3.4.4 on Windows.
+
+Before claiming a workflow works, demonstrate observable results on Windows,
+including repeat runs, check mode where applicable, failures and cleanup.
+Record the controller, Windows build, architecture, interpreter and connection
+with the evidence; these observations do not form an allowlist. Retain valid
+evidence when executable behavior and dependencies are unchanged.
+
+Follow the source checkout's `AGENTS.md` for review and contribution rules.

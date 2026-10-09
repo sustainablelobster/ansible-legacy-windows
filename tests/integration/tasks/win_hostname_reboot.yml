@@ -1,0 +1,87 @@
+---
+- name: Retain the independent boot identifier
+  ansible.builtin.set_fact:
+    hostname_boot_before: '{{ hostname_previous_snapshot.boot_id }}'
+
+- name: Schedule a native reboot  # noqa: args[module]
+  sustainablelobster.legacy_windows.win_command:
+    argv: [shutdown.exe, /r, /t, '5', /f]
+  check_mode: false
+
+- name: Wait for the existing SSH service to stop
+  ansible.builtin.wait_for:
+    host: >-
+      {{ hostvars[inventory_hostname].ansible_host |
+         default(inventory_hostname) }}
+    port: '{{ hostvars[inventory_hostname].ansible_port | default(22) }}'
+    state: stopped
+    timeout: 120
+    connect_timeout: 2
+    sleep: 1
+  delegate_to: localhost
+  vars:
+    ansible_connection: local
+    ansible_shell_type: sh
+    ansible_python_interpreter: '{{ ansible_playbook_python }}'
+
+- name: Discard the pre-reboot SSH connection
+  ansible.builtin.meta: reset_connection
+
+- name: Wait for the existing SSH service to start
+  ansible.builtin.wait_for:
+    host: >-
+      {{ hostvars[inventory_hostname].ansible_host |
+         default(inventory_hostname) }}
+    port: '{{ hostvars[inventory_hostname].ansible_port | default(22) }}'
+    state: started
+    search_regex: '^SSH-'
+    delay: 3
+    timeout: 600
+    connect_timeout: 5
+    sleep: 3
+  delegate_to: localhost
+  vars:
+    ansible_connection: local
+    ansible_shell_type: sh
+    ansible_python_interpreter: '{{ ansible_playbook_python }}'
+
+- name: Require maintained Python execution after reboot
+  sustainablelobster.legacy_windows.win_ping:
+  register: hostname_ping
+  until: hostname_ping is succeeded and hostname_ping.ping == 'pong'
+  retries: 30
+  delay: 5
+  vars:
+    ansible_ssh_retries: 10
+  check_mode: false
+
+- name: Require a new boot and the activated native name
+  sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+    argv:
+      - '{{ ansible_python_interpreter }}'
+      - '-'
+      - '{{ hostname_workspace.path }}'
+      - observe
+    stdin: '{{ hostname_fixture }}'
+  register: hostname_boot_observation
+  changed_when: false
+  check_mode: false
+  until: >-
+    hostname_boot_observation is succeeded and
+    (hostname_boot_observation.stdout | from_json).boot_id !=
+    hostname_boot_before and
+    (hostname_boot_observation.stdout | from_json)['names']['native']
+    ['dns_hostname'] | upper == hostname_case.active | upper
+  retries: 60
+  delay: 5
+
+- name: Retain the verified activation and new boot identifier
+  vars:
+    observation: '{{ hostname_boot_observation.stdout | from_json }}'
+    record:
+      case: '{{ hostname_case.name }}'
+      before_boot: '{{ hostname_boot_before }}'
+      snapshot: '{{ observation }}'
+  ansible.builtin.set_fact:
+    hostname_previous_snapshot: '{{ observation }}'
+    hostname_reboots: '{{ hostname_reboots | default([]) + [record] }}'

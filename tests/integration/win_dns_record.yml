@@ -1,0 +1,21 @@
+---
+- name: Select record requests within the existing journaled DNS recovery flow
+  hosts: legacy_windows
+  gather_facts: false
+  vars_files:
+    - vars/dns_record_fixture.yml
+  tasks:
+    - name: Bind record cases without changing ordinary DNS zone tests
+      # Facts intentionally override the imported play's default zone cases.
+      ansible.builtin.set_fact:
+        dns_zone_case_tasks: tasks/win_dns_record_case.yml
+        dns_zone_cases: '{{ dns_record_cases }}'
+        dns_zone_capture: >-
+          {{ dns_record_capture | default(playbook_dir +
+          '/../../tmp/codex/evidence/dns-record-' +
+          inventory_hostname + '.json') }}
+        dns_record_fixture_program: '{{ dns_record_fixture_program }}'
+        dns_zone_recovery_reboot_authorized: true
+
+- name: Compare records and restore only owned DNS role and zone resources
+  ansible.builtin.import_playbook: win_dns_zone.yml

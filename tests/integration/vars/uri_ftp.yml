@@ -1,0 +1,45 @@
+---
+# SPDX-License-Identifier: GPL-3.0-or-later
+uri_ftp_validate: true
+uri_ftp_cases:
+  - name: preliminary_response
+    params:
+      status_code: [150]
+  - name: completed_download
+    params:
+      return_content: true
+      status_code: [226]
+  - name: unaccepted_final_status
+    failed: true
+    params:
+      return_content: true
+  - name: destination_download
+    changed: true
+    params:
+      status_code: [226]
+      dest: '{{ get_url_workspace.path }}\output\result.bin'
+  - name: repeated_destination
+    fixture_payload: true
+    params:
+      status_code: [226]
+      dest: '{{ get_url_workspace.path }}\output\result.bin'
+  - name: check_destination
+    check: true
+    changed: true
+    params:
+      status_code: [226]
+      dest: '{{ get_url_workspace.path }}\output\result.bin'
+  - name: preliminary_125
+    params:
+      url: ftp://127.0.0.1:2121/preliminary-125.bin
+      status_code: [125]
+  - name: file_timestamp
+    params:
+      url_method: MDTM
+      status_code: [213]
+      return_content: true
+  - name: working_directory
+    params:
+      url_method: PWD
+      status_code: [257]
+      return_content: true

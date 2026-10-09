@@ -1,0 +1,185 @@
+---
+- name: Initialize one Event Log result record
+  ansible.builtin.set_fact:
+    eventlog_before: {}
+    eventlog_after: {}
+    eventlog_result:
+    eventlog_validated: false
+
+- name: Observe, capture, and validate the Event Log request
+  vars:
+    eventlog_pending: '{{ eventlog_results + [eventlog_case_record] }}'
+    eventlog_owned_before: >-
+      {{ (eventlog_before.stdout | from_json) | combine({'protected': none}) }}
+    eventlog_owned_after: >-
+      {{ (eventlog_after.stdout | from_json) | combine({'protected': none}) }}
+    eventlog_case_record:
+      name: "{{ eventlog_case.name }}"
+      params: '{{ eventlog_case.params }}'
+      check: "{{ eventlog_case.check | default(false) }}"
+      validated: "{{ eventlog_validated }}"
+      result: "{{ eventlog_result }}"
+      before: >-
+        {{ (eventlog_before.stdout | from_json)
+        if eventlog_before.rc | default(1) == 0 else none }}
+      after: >-
+        {{ (eventlog_after.stdout | from_json)
+        if eventlog_after.rc | default(1) == 0 else none }}
+      before_command: '{{ eventlog_before }}'
+      after_command: '{{ eventlog_after }}'
+  block:
+    - name: Write exactly one owned native event when requested
+      sustainablelobster.legacy_windows.win_command: # noqa: args[module]
+        argv:
+          - "{{ ansible_python_interpreter }}"
+          - "-"
+          - "{{ eventlog_workspace.path }}"
+          - write
+        stdin: "{{ eventlog_fixture }}"
+      when: eventlog_case.write | default(false)
+      changed_when: true
+      check_mode: false
+
+    - name: Independently observe registry and entry count before the request
+      sustainablelobster.legacy_windows.win_command: # noqa: args[module]
+        argv:
+          - "{{ ansible_python_interpreter }}"
+          - "-"
+          - "{{ eventlog_workspace.path }}"
+          - "{{ 'observe_protected' if eventlog_case.protect_builtin |
+            default(false) else 'observe' }}"
+          - '{{ eventlog_case.params.name }}'
+        stdin: "{{ eventlog_fixture }}"
+      register: eventlog_before
+      changed_when: false
+      check_mode: false
+
+    - name: Capture the public Event Log success or failure
+      block:
+        - name: Run the public Event Log case # noqa: args[module]
+          sustainablelobster.legacy_windows.win_eventlog: >-
+            {{ eventlog_case.params }}
+          register: eventlog_result
+          check_mode: "{{ eventlog_case.check | default(false) }}"
+      rescue:
+        - name: Retain expected failure until after independent observation
+          ansible.builtin.assert:
+            that: [eventlog_result is failed]
+
+    - name: Independently observe registry and entry count after the request
+      sustainablelobster.legacy_windows.win_command: # noqa: args[module]
+        argv:
+          - "{{ ansible_python_interpreter }}"
+          - "-"
+          - "{{ eventlog_workspace.path }}"
+          - "{{ 'observe_protected' if eventlog_case.protect_builtin |
+            default(false) else 'observe' }}"
+          - '{{ eventlog_case.params.name }}'
+        stdin: "{{ eventlog_fixture }}"
+      register: eventlog_after
+      changed_when: false
+      check_mode: false
+
+    - name: Save public results and independent evidence before asserting
+      ansible.builtin.copy:
+        content: >-
+          {{ eventlog_capture | combine({'results': eventlog_pending})
+          | to_nice_json }}
+        dest: "{{ eventlog_capture_file.path }}"
+        mode: "0600"
+      delegate_to: localhost
+      vars: &local
+        ansible_connection: local
+        ansible_shell_type: sh
+        ansible_python_interpreter: "{{ ansible_playbook_python }}"
+      changed_when: false
+
+    - name: Verify public result flags and source changes
+      ansible.builtin.assert:
+        that:
+          - eventlog_result.changed == eventlog_case.changed
+          - (eventlog_result is failed) == (eventlog_case.failed |
+            default(false))
+          - eventlog_result.sources_changed == eventlog_case.sources_changed |
+            default([])
+          - eventlog_case.message | default('') in eventlog_result.msg |
+            default('')
+          - >-
+            (eventlog_case.mutates | default(eventlog_case.changed)
+            and not (eventlog_case.check | default(false)))
+            or eventlog_owned_before == eventlog_owned_after
+
+    - name: Verify explicitly expected public fields
+      ansible.builtin.assert:
+        that:
+          - eventlog_result[item.key] == item.value
+      loop: "{{ eventlog_case.expected | default({}) | dict2items }}"
+
+    - name: Verify exact source resource replacement and omitted-value removal
+      vars:
+        native_sources: '{{ (eventlog_after.stdout | from_json).log.sources }}'
+        source_values: '{{ native_sources[eventlog_names.sources[0]] }}'
+      ansible.builtin.assert:
+        that:
+          - source_values.get(item.key, [none])[0] == item.value
+      loop: "{{ eventlog_case.resources | default({}) | dict2items }}"
+
+    - name: Compare public actual-state output with independent native reads
+      vars:
+        native_log: >-
+          {{ (eventlog_after.stdout | from_json)[eventlog_case.observed_log |
+          default('log')] }}
+        native_values: '{{ native_log["values"] | default({}) }}'
+        native_retention: "{{ native_values.get('Retention', [604800])[0] }}"
+      ansible.builtin.assert:
+        that:
+          - eventlog_result.exists == (native_log is not none)
+          - >-
+            native_log is none or
+            (eventlog_result.sources == native_log.source_order
+            and eventlog_result.entries == native_log.entries
+            and eventlog_result.maximum_size_kb
+            == native_values.get('MaxSize', [524288])[0] // 1024)
+          - >-
+            native_log is none or eventlog_result.overflow_action ==
+            ('OverwriteAsNeeded' if native_retention == 0 else
+            'DoNotOverwrite' if native_retention == 4294967295
+            else 'OverwriteOlder')
+          - >-
+            native_log is none or eventlog_result.retention_days ==
+            (0 if native_retention == 0 else -1
+            if native_retention == 4294967295
+            else native_retention // 86400)
+      when: not (eventlog_case.failed | default(false))
+
+    - name: Verify protected built-in registrations and retained entry counts
+      vars:
+        before: '{{ (eventlog_before.stdout | from_json).protected[item] }}'
+        after: '{{ (eventlog_after.stdout | from_json).protected[item] }}'
+      ansible.builtin.assert:
+        that:
+          - >-
+            before | combine({'entries': none}) ==
+            after | combine({'entries': none})
+          - after.entries >= before.entries
+          - not (eventlog_before.stdout | from_json).rejected_registered
+          - not (eventlog_after.stdout | from_json).rejected_registered
+      loop: [Application, Security, System]
+      when: eventlog_case.protect_builtin | default(false)
+
+    - name: Record successful case validation
+      ansible.builtin.set_fact:
+        eventlog_validated: true
+  always:
+    - name: Retain this case after success or failure
+      ansible.builtin.set_fact:
+        eventlog_results: "{{ eventlog_results + [eventlog_case_record] }}"
+
+    - name: Save the complete private Event Log evidence
+      ansible.builtin.copy:
+        content: "{{ eventlog_capture | to_nice_json }}"
+        dest: "{{ eventlog_capture_file.path }}"
+        mode: "0600"
+      delegate_to: localhost
+      vars: *local
+      changed_when: false

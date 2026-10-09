@@ -1,0 +1,159 @@
+---
+# SPDX-License-Identifier: GPL-3.0-or-later
+- name: Compare released Copy and Template async rejection before transfers
+  hosts: legacy_windows
+  gather_facts: false
+  vars:
+    boundary_program: >-
+      {{ lookup('ansible.builtin.file', playbook_dir +
+      '/fixtures/async_action_boundary.py', rstrip=false) | b64encode }}
+    boundary_command: >-
+      "{{ ansible_python_interpreter }}" -c
+      "import base64;exec(base64.b64decode('{{ boundary_program }}'))"
+    template_value: 'This must not replace the protected sentinel'
+  tasks:
+    - name: Require actual Python 3.4.4 and record original staging
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c "{{ boundary_command }}"
+      register: boundary_before
+      changed_when: false
+
+    - name: Allocate owner-private controller capture
+      ansible.builtin.tempfile:
+        state: file
+        path: '{{ playbook_dir }}/../../tmp'
+        prefix: 'async-action-boundaries-{{ inventory_hostname }}-'
+        suffix: .json
+      register: boundary_capture
+      delegate_to: localhost
+      vars: &controller
+        ansible_connection: local
+        ansible_shell_type: sh
+        ansible_python_interpreter: '{{ ansible_playbook_python }}'
+      changed_when: false
+
+    - name: Compare failures only inside an owned workspace
+      block:
+        - name: Allocate owned protected workspace
+          sustainablelobster.legacy_windows.win_tempfile:
+            state: directory
+            prefix: legacy-windows-async-action-boundary-
+          register: boundary_workspace
+
+        - name: Create the sentinel whose bytes and metadata must not change
+          sustainablelobster.legacy_windows.win_copy:
+            content: 'Protected Café 雪 % ! &'
+            dest: '{{ boundary_workspace.path }}\sentinel.txt'
+
+        - name: Observe exact protected tree and current staging
+          ansible.builtin.raw: >-
+            cmd.exe /d /s /c "{{ boundary_command }}
+            "{{ boundary_workspace.path }}""
+          register: boundary_protected
+          changed_when: false
+
+        - name: Reject native Copy async before changing protected content
+          sustainablelobster.legacy_windows.win_copy:
+            content: 'This must never be transferred'
+            dest: '{{ boundary_workspace.path }}\sentinel.txt'
+          async: 30
+          poll: '{{ boundary_poll }}'
+          loop: [0, 1]
+          loop_control: {loop_var: boundary_poll}
+          register: boundary_native_copy
+          ignore_errors: true
+
+        - name: Reject released Copy async before changing protected content
+          ansible.windows.win_copy:
+            content: 'This must never be transferred'
+            dest: '{{ boundary_workspace.path }}\sentinel.txt'
+          async: 30
+          poll: '{{ boundary_poll }}'
+          loop: [0, 1]
+          loop_control: {loop_var: boundary_poll}
+          register: boundary_original_copy
+          ignore_errors: true
+          vars:
+            ansible_shell_type: cmd
+
+        - name: Reject native Template async before rendering or transferring
+          sustainablelobster.legacy_windows.win_template:
+            src: '{{ playbook_dir }}/templates/win_template/basic.j2'
+            dest: '{{ boundary_workspace.path }}\sentinel.txt'
+          async: 30
+          poll: '{{ boundary_poll }}'
+          loop: [0, 1]
+          loop_control: {loop_var: boundary_poll}
+          register: boundary_native_template
+          ignore_errors: true
+
+        - name: Reject released Template async before rendering or transferring
+          ansible.windows.win_template:
+            src: '{{ playbook_dir }}/templates/win_template/basic.j2'
+            dest: '{{ boundary_workspace.path }}\sentinel.txt'
+          async: 30
+          poll: '{{ boundary_poll }}'
+          loop: [0, 1]
+          loop_control: {loop_var: boundary_poll}
+          register: boundary_original_template
+          ignore_errors: true
+          vars:
+            ansible_shell_type: cmd
+
+        - name: Observe literal protected state after all rejected tasks
+          ansible.builtin.raw: >-
+            cmd.exe /d /s /c "{{ boundary_command }}
+            "{{ boundary_workspace.path }}""
+          register: boundary_after
+          changed_when: false
+      always:
+        - name: Remove only the allocated owned workspace
+          sustainablelobster.legacy_windows.win_file:
+            path: '{{ boundary_workspace.path }}'
+            state: absent
+          when: boundary_workspace.path is defined
+
+        - name: Observe owned workspace absence and original global staging
+          ansible.builtin.raw: >-
+            cmd.exe /d /s /c "{{ boundary_command }}
+            "{{ boundary_workspace.path }}""
+          register: boundary_final
+          changed_when: false
+          when: boundary_workspace.path is defined
+
+        - name: Retain complete unmodified public results and recovery
+          ansible.builtin.copy:
+            content: >-
+              {{ {'before': boundary_before,
+              'workspace': boundary_workspace | default(none),
+              'protected': boundary_protected | default(none),
+              'native_win_copy': boundary_native_copy | default(none),
+              'original_win_copy': boundary_original_copy | default(none),
+              'native_win_template': boundary_native_template | default(none),
+              'original_win_template': boundary_original_template |
+              default(none),
+              'after': boundary_after | default(none),
+              'final': boundary_final | default(none),
+              'workspace_absent':
+              (boundary_final.stdout | from_json).root_exists == false
+              if boundary_final.stdout is defined else false} | to_nice_json }}
+            dest: '{{ boundary_capture.path }}'
+            mode: '0600'
+          delegate_to: localhost
+          vars: *controller
+          changed_when: false
+
+        - name: Verify literal public failures and exact owned recovery
+          ansible.builtin.command:
+            argv:
+              - '{{ ansible_playbook_python }}'
+              - >-
+                {{ playbook_dir +
+                '/../../scripts/verify_async_action_boundaries_capture.py' }}
+              - '{{ boundary_capture.path }}'
+          delegate_to: localhost
+          vars: *controller
+          changed_when: false
+
+        - name: Reset the owner-scoped standard SSH connection
+          ansible.builtin.meta: reset_connection

@@ -1,0 +1,448 @@
+---
+- name: Verify temporary objects and exact binary reads on Windows Python 3.4.4
+  hosts: legacy_windows
+  gather_facts: false
+  vars:
+    workspace_path: '{{ workspace.stdout | from_json }}'
+    writer_ready: '{{ workspace_path }}\writer-ready'
+    writer_release: '{{ workspace_path }}\writer-release'
+    writer_done: '{{ workspace_path }}\writer-done'
+    writer_path: '{{ workspace_path }}\shared-read.bin'
+  tasks:
+    - name: Require the intended runtime and record task directories
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import glob, json, os, sys, tempfile;
+        assert sys.version_info[:3] == (3, 4, 4);
+        print(json.dumps(sorted(glob.glob(os.path.join(tempfile.gettempdir(),
+        'ansible-tmp-*')))))""
+      register: task_directories_before
+      changed_when: false
+      check_mode: false
+
+    - name: Allocate a private workspace for the test
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import json, tempfile;
+        print(json.dumps(tempfile.mkdtemp(prefix='legacy-windows-files-')))""
+      register: workspace
+      changed_when: true
+      check_mode: false
+
+    - name: Exercise temporary objects and reads in the owned workspace
+      block:
+        - name: Predict files and directories below a missing parent
+          # WANT_JSON arguments are verified by these runtime assertions.
+          sustainablelobster.legacy_windows.win_tempfile:  # noqa: args[module]
+            path: '{{ workspace_path }}\check-parent'
+            state: '{{ item }}'
+            suffix: ' '
+          loop: [file, directory]
+          check_mode: true
+          register: predicted
+
+        - name: Create a temporary file with the default name prefix
+          # WANT_JSON arguments are verified by these runtime assertions.
+          sustainablelobster.legacy_windows.win_tempfile:  # noqa: args[module]
+            path: '{{ workspace_path }}'
+          register: first_file
+
+        - name: Repeat temporary file creation
+          # WANT_JSON arguments are verified by these runtime assertions.
+          sustainablelobster.legacy_windows.win_tempfile:  # noqa: args[module]
+            path: '{{ workspace_path }}'
+          register: second_file
+
+        - name: Prefer the destination alias and preserve a literal Unicode name
+          # WANT_JSON arguments are verified by these runtime assertions.
+          sustainablelobster.legacy_windows.win_tempfile:  # noqa: args[module]
+            path: '{{ workspace_path }}\unused-parent'
+            dest: '{{ workspace_path }}'
+            prefix: 'Café 雪 [x]-'
+            suffix: '.bin '
+          register: unicode_file
+
+        - name: Create a directory and its missing parents
+          # WANT_JSON arguments are verified by these runtime assertions.
+          sustainablelobster.legacy_windows.win_tempfile:  # noqa: args[module]
+            path: '{{ workspace_path }}\new-parent\child'
+            state: DiReCtOrY
+            prefix: null
+            suffix: null
+          register: created_directory
+
+        - name: Create a file in the account's default temporary directory
+          # WANT_JSON arguments are verified by these runtime assertions.
+          sustainablelobster.legacy_windows.win_tempfile:  # noqa: args[module]
+            prefix: legacy-windows-tempfile-default-
+          register: default_file
+
+        - name: Verify temporary creation results
+          ansible.builtin.assert:
+            that:
+              - first_file is changed
+              - second_file is changed
+              - first_file.path != second_file.path
+              - first_file.state == 'file'
+              - (first_file.path | win_basename).startswith('ansible.')
+              - unicode_file is changed
+              - (unicode_file.path | win_basename).startswith('Café 雪 [x]-')
+              - unicode_file.path.endswith('.bin')
+              - created_directory is changed
+              - created_directory.state == 'DiReCtOrY'
+              - default_file is changed
+              - default_file.state == 'file'
+
+        - name: Verify check-mode results
+          ansible.builtin.assert:
+            that:
+              - item is changed
+              - item.state == item.item
+              - item.path is string
+              - not item.path.endswith(' ')
+          loop: '{{ predicted.results }}'
+          loop_control:
+            label: '{{ item.item }}'
+
+        - name: Inspect created objects and confirm check mode made no paths
+          # WANT_JSON arguments are verified by the child assertions.
+          sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - |
+                import ctypes, json, os, sys
+                data = json.loads(sys.stdin.buffer.read().decode('utf-8'))
+                for path in data['files']:
+                    assert os.path.isfile(path) and os.path.getsize(path) == 0
+                assert os.path.isdir(data['directory'])
+                for path in data['predicted']:
+                    assert not os.path.exists(path)
+                for name in ('check-parent', 'unused-parent'):
+                    assert not os.path.exists(os.path.join(data['root'], name))
+                kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+                temporary = ctypes.create_unicode_buffer(32768)
+                size = kernel.GetTempPathW(len(temporary), temporary)
+                assert 0 < size < len(temporary)
+                expanded = ctypes.create_unicode_buffer(32768)
+                size = kernel.GetLongPathNameW(
+                    temporary, expanded, len(expanded))
+                assert 0 < size < len(expanded)
+                expected = os.path.normcase(expanded.value.rstrip('\\/'))
+                actual = os.path.normcase(os.path.dirname(data['default']))
+                assert actual == expected
+                print('objects and check mode verified')
+            stdin: >-
+              {{ {'files': [first_file.path, second_file.path,
+                            unicode_file.path, default_file.path],
+                  'directory': created_directory.path,
+                  'predicted': predicted.results | map(attribute='path') | list,
+                  'default': default_file.path, 'root': workspace_path}
+                 | to_json }}
+          changed_when: false
+
+        - name: Read an empty file and ignore unknown legacy options
+          # The pinned legacy parser deliberately ignores unrelated parameters.
+          sustainablelobster.legacy_windows.slurp:  # noqa: args[module]
+            path: '{{ unicode_file.path }}'
+            ignored_option: value
+            armor: false
+          register: empty_read
+
+        - name: Expand an environment variable in the source path
+          # WANT_JSON arguments are verified by these runtime assertions.
+          sustainablelobster.legacy_windows.slurp:  # noqa: args[module]
+            src: '%temp%\{{ default_file.path | win_basename }}'
+          register: environment_read
+
+        - name: Write every byte value repeatedly into the owned file
+          # WANT_JSON arguments are verified by the subsequent exact read.
+          sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - >-
+                import sys;
+                data = bytes(bytearray(range(256))) * 1024;
+                open(sys.argv[1], 'wb').write(data)
+              - '{{ first_file.path }}'
+
+        - name: Read all binary bytes
+          # WANT_JSON arguments are verified by these runtime assertions.
+          sustainablelobster.legacy_windows.slurp:  # noqa: args[module]
+            src: '{{ first_file.path }}'
+          register: binary_read
+
+        - name: Repeat the read while preferring src over its alias
+          # WANT_JSON arguments are verified by these runtime assertions.
+          sustainablelobster.legacy_windows.slurp:  # noqa: args[module]
+            src: '{{ first_file.path }}'
+            path: '{{ second_file.path }}'
+          register: repeated_read
+
+        - name: Read through the alias in check mode
+          # WANT_JSON arguments are verified by these runtime assertions.
+          sustainablelobster.legacy_windows.slurp:  # noqa: args[module]
+            path: '{{ first_file.path }}'
+          check_mode: true
+          register: check_read
+
+        - name: Verify read results and the pinned return shape
+          ansible.builtin.assert:
+            that:
+              - empty_read is not changed
+              - empty_read.content == ''
+              - empty_read.encoding == 'base64'
+              - environment_read.content == ''
+              - environment_read is not changed
+              - binary_read is not changed
+              - binary_read.encoding == 'base64'
+              - binary_read.source is not defined
+              - repeated_read is not changed
+              - repeated_read.content == binary_read.content
+              - check_read is not changed
+              - check_read.content == binary_read.content
+
+        - name: Verify the complete returned binary content
+          # The child assertion verifies every returned byte.
+          sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - >-
+                import base64, sys;
+                assert base64.b64decode(sys.stdin.buffer.read()) ==
+                bytes(bytearray(range(256))) * 1024;
+                print('262144 bytes verified')
+            stdin: '{{ binary_read.content }}'
+          changed_when: false
+
+        - name: Verify missing and directory read failures
+          block:
+            - name: Attempt invalid reads
+              # These invalid requests must reach the target payload.
+              sustainablelobster.legacy_windows.slurp:  # noqa: args[module]
+                src: '{{ item }}'
+              loop:
+                - '{{ workspace_path }}\not-present'
+                - '{{ created_directory.path }}'
+              register: invalid_reads
+
+            - name: Reject unexpected success from invalid reads
+              ansible.builtin.fail:
+                msg: A missing file or directory was unexpectedly readable
+          rescue:
+            - name: Verify both failures leave the target unchanged
+              ansible.builtin.assert:
+                that:
+                  - invalid_reads.results | length == 2
+                  - invalid_reads.results[0] is failed
+                  - invalid_reads.results[1] is failed
+                  - invalid_reads.results[0] is not changed
+                  - invalid_reads.results[1] is not changed
+                  - invalid_reads.results[0].msg.endswith(' is not found')
+                  - invalid_reads.results[1].msg.endswith(' is a directory')
+
+        - name: Verify creation failures retain the upstream changed flag
+          block:
+            - name: Create a file below a missing parent  # noqa: args[module]
+              # This deliberately invalid creation is asserted in rescue.
+              sustainablelobster.legacy_windows.win_tempfile:
+                path: '{{ workspace_path }}\missing-file-parent'
+              register: failed_creation
+
+            - name: Reject unexpected creation below a missing parent
+              ansible.builtin.fail:
+                msg: A file was unexpectedly created below a missing parent
+          rescue:
+            - name: Verify the five-attempt creation failure
+              ansible.builtin.assert:
+                that:
+                  - failed_creation is failed
+                  - failed_creation is changed
+                  - failed_creation.state == 'file'
+                  - >-
+                    failed_creation.msg.startswith(
+                    'No random temporary file worked in 5 attempts. Error:')
+
+        - name: Verify invalid names fail in both execution modes
+          block:
+            - name: Reject invalid temporary names  # noqa: args[module]
+              # These cases must fail before creating a file or data stream.
+              sustainablelobster.legacy_windows.win_tempfile:
+                path: '{{ workspace_path }}'
+                prefix: '{{ item.prefix | default("ansible.") }}'
+                suffix: '{{ item.suffix | default(none) }}'
+              check_mode: '{{ item.check }}'
+              loop:
+                - {prefix: 'bad*', check: true}
+                - {prefix: 'bad?', check: true}
+                - {suffix: '"', check: true}
+                - {suffix: '|', check: true}
+                - {suffix: ':stream', check: true}
+                - {suffix: ':stream', check: false}
+              register: invalid_names
+
+            - name: Reject unexpected success for invalid names
+              ansible.builtin.fail:
+                msg: An invalid temporary name was unexpectedly accepted
+          rescue:
+            - name: Verify each invalid name has the upstream failure shape
+              ansible.builtin.assert:
+                that:
+                  - item is failed
+                  - item is changed
+                  - item.state == 'file'
+                  - item.path is not defined
+                  - >-
+                    item.msg.startswith(
+                    'No random temporary file worked in 5 attempts. Error:')
+              loop: '{{ invalid_names.results }}'
+
+        - name: Confirm invalid names did not create objects or data streams
+          # Extra root entries would expose an accidentally created base file.
+          sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - |
+                import json, os, sys
+                root, files = json.loads(
+                    sys.stdin.buffer.read().decode('utf-8'))
+                expected = set(os.path.basename(path) for path in files)
+                expected.add('new-parent')
+                assert set(os.listdir(root)) == expected
+            stdin: >-
+              {{ [workspace_path,
+                  [first_file.path, second_file.path, unicode_file.path]]
+                 | to_json }}
+          changed_when: false
+
+        - name: Start a bounded writer for the owned sharing-test file
+          # The detached child inherits no SSH pipes and exits on release.
+          sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - |
+                import os, subprocess, sys, time
+                process = subprocess.Popen(
+                    [sys.executable, '-c'] + sys.argv[1:],
+                    close_fds=True, creationflags=8)
+                deadline = time.time() + 5
+                while (not os.path.isfile(sys.argv[3])
+                       and time.time() < deadline):
+                    time.sleep(0.05)
+                assert os.path.isfile(sys.argv[3]), 'Writer was not ready'
+                print(process.pid)
+              - |
+                import os, sys, time
+                with open(sys.argv[1], 'wb') as stream:
+                    stream.write(b'owned sharing test')
+                    stream.flush()
+                    open(sys.argv[2], 'wb').close()
+                    deadline = time.time() + 60
+                    while (not os.path.isfile(sys.argv[3])
+                           and time.time() < deadline):
+                        time.sleep(0.05)
+                open(sys.argv[4], 'wb').close()
+              - '{{ writer_path }}'
+              - '{{ writer_ready }}'
+              - '{{ writer_release }}'
+              - '{{ writer_done }}'
+
+        - name: Verify upstream-compatible shared-read protection
+          block:
+            - name: Read the file while a writer holds it open
+              # The sharing violation is the intended observable failure.
+              sustainablelobster.legacy_windows.slurp:  # noqa: args[module]
+                src: '{{ writer_path }}'
+              register: sharing_read
+
+            - name: Reject a read that bypassed shared-read protection
+              ansible.builtin.fail:
+                msg: The reader accepted a file with an active writer
+          rescue:
+            - name: Verify a sharing violation without reported changes
+              ansible.builtin.assert:
+                that:
+                  - sharing_read is failed
+                  - sharing_read is not changed
+                  - "'32' in sharing_read.msg"
+
+        - name: Release the writer and wait for its file handle to close
+          # WANT_JSON arguments are verified by the child completion assertion.
+          sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - |
+                import os, sys, time
+                open(sys.argv[1], 'wb').close()
+                deadline = time.time() + 10
+                while (not os.path.isfile(sys.argv[2])
+                       and time.time() < deadline):
+                    time.sleep(0.05)
+                assert os.path.isfile(sys.argv[2]), 'Writer did not close'
+              - '{{ writer_release }}'
+              - '{{ writer_done }}'
+
+        - name: Read successfully after the writer closes
+          # WANT_JSON arguments are verified by these runtime assertions.
+          sustainablelobster.legacy_windows.slurp:  # noqa: args[module]
+            src: '{{ writer_path }}'
+          register: recovered_read
+
+        - name: Verify recovery preserved exact content
+          ansible.builtin.assert:
+            that:
+              - recovered_read is not changed
+              - recovered_read.content == ('owned sharing test' | b64encode)
+      always:
+        - name: Stop the owned writer and remove only test-created resources
+          # Prefix guards reject unrelated paths before cleanup.
+          sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - |
+                import json, os, shutil, sys, time
+                root, extra = json.loads(
+                    sys.stdin.buffer.read().decode('utf-8'))
+                open(os.path.join(root, 'writer-release'), 'wb').close()
+                deadline = time.time() + 10
+                while (os.path.isfile(os.path.join(root, 'writer-ready'))
+                       and not os.path.isfile(os.path.join(root, 'writer-done'))
+                       and time.time() < deadline):
+                    time.sleep(0.05)
+                if os.path.isfile(os.path.join(root, 'writer-ready')):
+                    assert os.path.isfile(os.path.join(root, 'writer-done'))
+                if extra is not None:
+                    name = os.path.basename(extra)
+                    assert name.startswith('legacy-windows-tempfile-default-')
+                    os.remove(extra)
+                assert os.path.basename(root).startswith(
+                    'legacy-windows-files-')
+                shutil.rmtree(root)
+            stdin: >-
+              {{ [workspace_path,
+                  (default_file | default({})).path | default(none)]
+                 | to_json }}
+          check_mode: false
+
+    - name: Record remaining task directories
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import glob, json, os, tempfile;
+        print(json.dumps(sorted(glob.glob(os.path.join(tempfile.gettempdir(),
+        'ansible-tmp-*')))))""
+      register: task_directories_after
+      changed_when: false
+      check_mode: false
+
+    - name: Verify successful and failed tasks removed their staged files
+      ansible.builtin.assert:
+        that:
+          - >-
+            (task_directories_before.stdout | from_json) ==
+            (task_directories_after.stdout | from_json)

@@ -1,0 +1,122 @@
+---
+# SPDX-License-Identifier: GPL-3.0-or-later
+- name: Bind the identical journal-owned script input for one automatic phase
+  ansible.builtin.set_fact:
+    powershell_poll_params: >-
+      {{ powershell_poll_case.params |
+      combine({'script': powershell_poll_header ~
+        powershell_poll_case.params.script}
+        if powershell_poll_case.params.script is defined else {}) |
+      combine({'path': playbook_dir + '/fixtures/win_powershell_async.ps1'}
+        if powershell_poll_case.local | default(false) else {}) |
+      combine({'parameters': powershell_poll_case.params.parameters |
+        default({}) | combine({
+          'MarkerPath': powershell_poll_workspace.path ~ '/owned-jobs/' ~
+            powershell_poll_index ~ '-' ~ powershell_poll_phase ~ '.pid',
+          'ReleasePath': powershell_poll_workspace.path ~ '/owned-jobs/' ~
+            powershell_poll_index ~ '-' ~ powershell_poll_phase ~ '.release'}) |
+        combine({'OutputPath': powershell_poll_workspace.path ~
+          '/resources/output.txt'} if powershell_poll_case.check |
+          default(false) else {})}) }}
+
+- name: Reset only owned output and observe before the public request
+  sustainablelobster.legacy_windows.win_command:
+    argv: ['{{ ansible_python_interpreter }}', '-',
+           '{{ powershell_poll_workspace.path }}', prepare,
+           '{{ powershell_poll_index }}', '{{ powershell_poll_phase }}']
+    stdin: '{{ powershell_poll_program }}'
+  register: powershell_poll_before
+  changed_when: false
+  no_log: true
+
+- name: Automatically poll the public native PowerShell request
+  sustainablelobster.legacy_windows.win_powershell: >-
+    {{ powershell_poll_params }}
+  async: 120
+  poll: 1
+  check_mode: '{{ powershell_poll_case.check | default(false) }}'
+  vars:
+    ansible_remote_tmp: '{{ powershell_poll_workspace.path }}\staging'
+    ansible_async_dir: '{{ powershell_poll_workspace.path }}\native-cache'
+  register: powershell_poll_native
+  ignore_errors: true
+  no_log: true
+  when: powershell_poll_phase == 'native'
+
+- name: Automatically poll the untouched released PowerShell request
+  ansible.windows.win_powershell: '{{ powershell_poll_params }}'
+  async: 120
+  poll: 1
+  check_mode: '{{ powershell_poll_case.check | default(false) }}'
+  vars:
+    ansible_remote_tmp: '{{ powershell_poll_workspace.path }}\staging'
+    ansible_async_dir: '{{ powershell_poll_workspace.path }}\original-cache'
+    ansible_shell_type: cmd
+  register: powershell_poll_original
+  ignore_errors: true
+  no_log: true
+  when: powershell_poll_phase == 'original'
+
+- name: Retain the literal completed automatic result
+  ansible.builtin.set_fact:
+    powershell_poll_result: >-
+      {{ powershell_poll_native if powershell_poll_phase == 'native'
+         else powershell_poll_original }}
+  no_log: true
+
+- name: Observe cache deletion protection and birth-pinned processes
+  sustainablelobster.legacy_windows.win_command:
+    argv: ['{{ ansible_python_interpreter }}', '-',
+           '{{ powershell_poll_workspace.path }}', observe]
+    stdin: '{{ powershell_poll_program }}'
+  register: powershell_poll_after
+  changed_when: false
+  no_log: true
+
+- name: Preserve every public field before any outcome assertion
+  ansible.builtin.set_fact:
+    powershell_poll_records: >-
+      {{ powershell_poll_records + [{'case': powershell_poll_case,
+        'index': powershell_poll_index, 'phase': powershell_poll_phase,
+        'request': powershell_poll_params,
+        'check_mode': powershell_poll_case.check | default(false),
+        'before': powershell_poll_before, 'after': powershell_poll_after,
+        'result': powershell_poll_result, 'validated': false}] }}
+  no_log: true
+
+- name: Preserve the complete and current raw results durably
+  ansible.builtin.copy:
+    content: '{{ {"records": powershell_poll_records} | to_nice_json }}'
+    dest: '{{ powershell_poll_capture.path }}'
+    mode: '0600'
+  delegate_to: localhost
+  vars:
+    ansible_connection: local
+    ansible_shell_type: sh
+    ansible_python_interpreter: '{{ ansible_playbook_python }}'
+  changed_when: false
+  no_log: true
+
+- name: Require the original change failure and automatic deletion semantics
+  ansible.builtin.assert:
+    that:
+      - powershell_poll_result.started
+      - powershell_poll_result.finished
+      - >-
+        powershell_poll_result.changed ==
+        powershell_poll_case.changed | default(false)
+      - >-
+        (powershell_poll_result is failed) ==
+        powershell_poll_case.failed | default(false)
+      - (powershell_poll_after.stdout | from_json).cache.native == {}
+      - (powershell_poll_after.stdout | from_json).cache.original == {}
+      - (powershell_poll_after.stdout | from_json).staging == []
+      - (powershell_poll_after.stdout | from_json).engine_scratch == []
+      - (powershell_poll_after.stdout | from_json).output['output.txt'] == none
+
+- name: Mark only the validated complete public phase
+  ansible.builtin.set_fact:
+    powershell_poll_records: >-
+      {{ powershell_poll_records[:-1] +
+         [powershell_poll_records[-1] | combine({'validated': true})] }}
+  no_log: true

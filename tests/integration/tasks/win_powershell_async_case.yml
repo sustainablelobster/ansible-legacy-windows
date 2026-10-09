@@ -1,0 +1,50 @@
+---
+# SPDX-License-Identifier: GPL-3.0-or-later
+- name: Initialize one literal public pair
+  ansible.builtin.set_fact:
+    powershell_async_pair:
+      case: '{{ powershell_async_case }}'
+      workspace: '{{ powershell_async_workspace.path }}'
+
+- name: Exercise native and released launch status and cleanup interfaces
+  ansible.builtin.include_tasks: win_powershell_async_phase.yml
+  loop: [native, original]
+  loop_control:
+    loop_var: powershell_async_phase
+
+- name: Retain every paired raw field before parity verification
+  ansible.builtin.set_fact:
+    powershell_async_records: >-
+      {{ powershell_async_records + [powershell_async_pair] }}
+
+- name: Persist the complete accumulated public pairs
+  ansible.builtin.copy:
+    content: >-
+      {{ {'results': powershell_async_records,
+          'workspace': powershell_async_workspace} | to_nice_json }}
+    dest: '{{ powershell_async_capture.path }}'
+    mode: '0600'
+  delegate_to: localhost
+  vars: &local
+    ansible_connection: local
+    ansible_shell_type: sh
+    ansible_python_interpreter: '{{ ansible_playbook_python }}'
+  changed_when: false
+  no_log: true
+
+- name: Compare complete launch and completed status fields without alteration
+  ansible.builtin.command:
+    argv: ['{{ ansible_playbook_python }}',
+           '{{ playbook_dir }}/../../scripts/verify_win_powershell_capture.py',
+           '{{ powershell_async_capture.path }}', --last]
+  delegate_to: localhost
+  vars: *local
+  register: powershell_async_comparison
+  changed_when: false
+  failed_when: false
+  no_log: true
+
+- name: Retain comparison success without discarding a mismatched public pair
+  ansible.builtin.set_fact:
+    powershell_async_comparisons: >-
+      {{ powershell_async_comparisons + [powershell_async_comparison] }}

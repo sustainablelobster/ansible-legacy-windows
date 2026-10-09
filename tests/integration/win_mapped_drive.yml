@@ -1,0 +1,99 @@
+---
+- name: Verify persistent mapped drives and clean up the owned SMB endpoint
+  hosts: legacy_windows
+  gather_facts: false
+  vars_files:
+    - vars/mapped_drive.yml
+    - vars/mapped_drive_fixture.yml
+  tasks:
+    - name: Require Python 3.4.4 and record existing task directories
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import glob, json, os, sys, tempfile;
+        assert sys.version_info[:3] == (3, 4, 4);
+        print(json.dumps(sorted(glob.glob(os.path.join(tempfile.gettempdir(),
+        'ansible-tmp-*')))))""
+      register: task_directories_before
+      changed_when: false
+
+    - name: Exercise owned mappings with a durable cleanup journal
+      block:
+        - name: Allocate the recovery workspace
+          sustainablelobster.legacy_windows.win_tempfile:  # noqa: args[module]
+            state: directory
+            prefix: legacy-windows-mapped-drive-
+          register: mapped_drive_workspace
+          check_mode: false
+
+        - name: Journal unused letter and create the owned loopback endpoint
+          sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - '-'
+              - '{{ mapped_drive_workspace.path }}'
+              - setup
+            stdin: '{{ mapped_drive_fixture }}'
+          register: mapped_drive_setup
+          changed_when: true
+          check_mode: false
+
+        - name: Retain controlled endpoint paths and original native state
+          ansible.builtin.set_fact:
+            mapped_drive_initial: '{{ mapped_drive_setup.stdout | from_json }}'
+            mapped_drive_previous: >-
+              {{ (mapped_drive_setup.stdout | from_json).snapshot }}
+
+        - name: Exercise mapping changes repeats check mode and failures
+          ansible.builtin.include_tasks: tasks/win_mapped_drive_case.yml
+          loop: '{{ range(mapped_drive_cases | length) | list }}'
+          loop_control:
+            loop_var: mapped_drive_case_index
+          vars:
+            mapped_drive_case: >-
+              {{ mapped_drive_cases[mapped_drive_case_index] }}
+      always:
+        - name: Clean owned resources before discarding recovery data
+          when: mapped_drive_workspace.path is defined
+          block:
+            - name: Restore mappings and remove share  # noqa: args[module]
+              sustainablelobster.legacy_windows.win_command:
+                argv:
+                  - '{{ ansible_python_interpreter }}'
+                  - '-'
+                  - '{{ mapped_drive_workspace.path }}'
+                  - cleanup
+                stdin: '{{ mapped_drive_fixture }}'
+              register: mapped_drive_restoration
+              changed_when: true
+              check_mode: false
+
+            - name: Require exact restoration before discarding the journal
+              ansible.builtin.assert:
+                that:
+                  - (mapped_drive_restoration.stdout | from_json).restored
+
+            - name: Remove only the verified recovery workspace
+              sustainablelobster.legacy_windows.win_file:  # noqa: args[module]
+                path: '{{ mapped_drive_workspace.path }}'
+                state: absent
+              check_mode: false
+
+        - name: Verify recovery-workspace and staging cleanup
+          ansible.builtin.raw: >-
+            cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+            "import glob, json, os, sys, tempfile;
+            assert not os.path.exists(sys.argv[1]);
+            print(json.dumps(sorted(glob.glob(os.path.join(tempfile.gettempdir(),
+            'ansible-tmp-*')))))" "{{ mapped_drive_workspace.path }}""
+          when: mapped_drive_workspace.path is defined
+          register: task_directories_after
+          changed_when: false
+          check_mode: false
+
+        - name: Require task-directory cleanup
+          ansible.builtin.assert:
+            that:
+              - >-
+                (task_directories_before.stdout | from_json) ==
+                (task_directories_after.stdout | from_json)
+          when: mapped_drive_workspace.path is defined

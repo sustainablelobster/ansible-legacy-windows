@@ -1,0 +1,169 @@
+---
+- name: Verify native file ownership in an isolated workspace
+  hosts: legacy_windows
+  gather_facts: false
+  vars_files:
+    - vars/owner.yml
+    - vars/owner_fixture.yml
+  tasks:
+    - name: Require Python 3.4.4 and record existing task directories
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import glob, json, os, sys, tempfile;
+        assert sys.version_info[:3] == (3, 4, 4);
+        print(json.dumps(sorted(glob.glob(os.path.join(tempfile.gettempdir(),
+        'ansible-tmp-*')))))""
+      register: task_directories_before
+      changed_when: false
+
+    - name: Exercise ownership in a temporary workspace
+      block:
+        - name: Allocate an isolated workspace
+          # Native WANT_JSON interfaces are checked by this playbook.
+          sustainablelobster.legacy_windows.win_tempfile:  # noqa: args[module]
+            state: directory
+            prefix: legacy-windows-owner-
+          register: owner_workspace
+          check_mode: false
+
+        - name: Create Unicode files and a restricted-permission subtree
+          sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - '-'
+              - '{{ owner_workspace.path }}'
+              - setup
+            stdin: '{{ owner_fixture }}'
+          register: owner_setup
+          changed_when: true
+          check_mode: false
+
+        - name: Change ownership on a fresh inherited directory
+          sustainablelobster.legacy_windows.win_owner:  # noqa: args[module]
+            path: '{{ owner_workspace.path }}\fresh'
+            user: SYSTEM
+          register: inheritance_owner
+
+        - name: Verify exact inherited ACL metadata on the root and children
+          sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - '-'
+              - '{{ owner_workspace.path }}'
+              - inheritance
+            stdin: '{{ owner_fixture }}'
+          changed_when: false
+
+        - name: Require the fresh owner change and retain its public result
+          ansible.builtin.assert:
+            that:
+              - inheritance_owner.changed
+              - inheritance_owner.warnings | default([]) == []
+
+        - name: Retain the fresh inheritance result for comparison
+          ansible.builtin.set_fact:
+            owner_results: ['{{ inheritance_owner }}']
+
+        - name: Exercise file directory and recursive ownership
+          ansible.builtin.include_tasks: tasks/win_owner_case.yml
+          # Keep loop items identical across hosts; resolve paths inside each
+          # included task so Ansible cannot regroup host-specific cases.
+          loop: '{{ range(owner_cases | length) | list }}'
+          loop_control:
+            loop_var: owner_case_index
+            label: '{{ owner_cases[owner_case_index].name }}'
+          vars:
+            owner_case: '{{ owner_cases[owner_case_index] }}'
+
+        - name: Exercise missing-path failure before principal lookup
+          block:
+            - name: Reject a missing target  # noqa: args[module]
+              sustainablelobster.legacy_windows.win_owner:
+                path: '{{ owner_tree }}\missing'
+                user: legacy-owner-nonexistent-account
+              register: missing_owner
+
+            - name: Reject unexpected success
+              ansible.builtin.fail:
+                msg: A missing ownership target unexpectedly succeeded
+          rescue:
+            - name: Check the missing-path result
+              ansible.builtin.assert:
+                that:
+                  - missing_owner is failed
+                  - not missing_owner.changed
+                  - >-
+                    missing_owner.msg == owner_tree +
+                    '\missing file or directory does not exist on the host'
+
+        - name: Exercise unresolvable principal failure
+          block:
+            - name: Reject an unknown account  # noqa: args[module]
+              sustainablelobster.legacy_windows.win_owner:
+                path: '{{ owner_tree }}'
+                user: legacy-owner-nonexistent-account
+              register: invalid_owner
+
+            - name: Reject unexpected account resolution
+              ansible.builtin.fail:
+                msg: A nonexistent account unexpectedly resolved
+          rescue:
+            - name: Check native account lookup failure
+              ansible.builtin.assert:
+                that:
+                  - invalid_owner is failed
+                  - not invalid_owner.changed
+                  - >-
+                    ("Failed to translate 'legacy-owner-nonexistent-account' " +
+                     "to a SecurityIdentifier:") in invalid_owner.msg
+
+        - name: Recover after expected failures
+          ansible.builtin.include_tasks: tasks/win_owner_case.yml
+          vars:
+            owner_case:
+              name: Verify unchanged owners after failed requests
+              user: S-1-5-32-544
+              recurse: true
+              changed: false
+              system: []
+              secure_owner: BA
+      always:
+        - name: Restore and remove the allocated workspace
+          when: owner_workspace.path is defined
+          block:
+            - name: Restore fixture security  # noqa: args[module]
+              sustainablelobster.legacy_windows.win_command:
+                argv:
+                  - '{{ ansible_python_interpreter }}'
+                  - '-'
+                  - '{{ owner_workspace.path }}'
+                  - restore
+                stdin: '{{ owner_fixture }}'
+              changed_when: true
+              check_mode: false
+          always:
+            - name: Remove only the workspace allocated by this test
+              sustainablelobster.legacy_windows.win_file:  # noqa: args[module]
+                path: '{{ owner_workspace.path }}'
+                state: absent
+              check_mode: false
+
+        - name: Verify workspace removal and record task directories
+          ansible.builtin.raw: >-
+            cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+            "import glob, json, os, sys, tempfile;
+            assert not os.path.exists(sys.argv[1]);
+            print(json.dumps(sorted(glob.glob(os.path.join(tempfile.gettempdir(),
+            'ansible-tmp-*')))))" "{{ owner_workspace.path }}""
+          when: owner_workspace.path is defined
+          register: task_directories_after
+          changed_when: false
+          check_mode: false
+
+        - name: Require staging cleanup after successful and failed requests
+          ansible.builtin.assert:
+            that:
+              - >-
+                (task_directories_before.stdout | from_json) ==
+                (task_directories_after.stdout | from_json)
+          when: owner_workspace.path is defined

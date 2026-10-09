@@ -1,0 +1,252 @@
+---
+# SPDX-License-Identifier: GPL-3.0-or-later
+- name: Verify endpoint facts with Python 3.4.4 and native process observations
+  hosts: legacy_windows
+  gather_facts: false
+  vars_files:
+    - vars/ports_observation.yml
+  vars:
+    observed: '{{ native_before.stdout | from_json }}'
+    ssh_port: '{{ ansible_port | default(22) | int }}'
+    endpoint_fields: [address, name, pid, port, protocol, stime, user]
+  tasks:
+    - name: Require the target runtime and an initially clean staging area
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import glob, os, sys, tempfile;
+        assert sys.version_info[:3] == (3, 4, 4);
+        assert not glob.glob(os.path.join(tempfile.gettempdir(),
+        'ansible-tmp-*'));
+        print('Python 3.4.4 and clean staging verified')""
+      changed_when: false
+      check_mode: false
+
+    - name: Exercise read-only facts and validation recovery
+      block:
+        - name: Observe the SSH listener using netstat and native process APIs
+          # stdin keeps the observer below CMD's command-line size limit.
+          sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - import sys;exec(sys.stdin.read())
+              - '{{ ssh_port | string }}'
+            stdin: '{{ ports_observation_code }}'
+          register: native_before
+          changed_when: false
+          check_mode: false
+
+        - name: Read listening TCP and UDP facts
+          sustainablelobster.legacy_windows.win_listen_ports_facts:
+          register: listeners
+
+        - name: Repeat the read with a case-insensitive state
+          sustainablelobster.legacy_windows.win_listen_ports_facts:
+            tcp_filter: [listen]
+          register: repeated
+
+        - name: Read facts in check mode
+          sustainablelobster.legacy_windows.win_listen_ports_facts:
+          check_mode: true
+          diff: true
+          register: checked
+
+        - name: Verify stable listener details and public fact shape
+          ansible.builtin.assert:
+            that:
+              - item is not changed
+              - item is not skipped
+              - item.diff is not defined
+              - item.ansible_facts.keys() | sort == ['tcp_listen', 'udp_listen']
+              - item.ansible_facts.tcp_listen | type_debug == 'list'
+              - item.ansible_facts.udp_listen | type_debug == 'list'
+              - item.ansible_facts.udp_listen | length > 0
+              - >-
+                item.ansible_facts.tcp_listen |
+                selectattr('port', 'equalto', ssh_port) |
+                sort(attribute='address')
+                == observed.ssh_listeners | sort(attribute='address')
+          loop: ['{{ listeners }}', '{{ repeated }}', '{{ checked }}']
+          loop_control:
+            label: '{{ item.ansible_facts.tcp_listen | length }} TCP endpoints'
+
+        - name: Verify endpoint fields and types without assuming a static table
+          ansible.builtin.assert:
+            that:
+              - item.keys() | sort == endpoint_fields
+              - item.address is string
+              - item.name is string
+              - item.pid | type_debug == 'int'
+              - item.pid >= 0
+              - item.port | type_debug == 'int'
+              - item.port >= 0 and item.port <= 65535
+              - item.protocol in ['tcp', 'udp']
+              - item.stime is none or item.stime is string
+              - item.user is none or item.user is string
+          loop: >-
+            {{ listeners.ansible_facts.tcp_listen +
+            listeners.ansible_facts.udp_listen }}
+          loop_control:
+            label: '{{ item.protocol }} {{ item.address }}:{{ item.port }}'
+
+        - name: Request a custom year format
+          sustainablelobster.legacy_windows.win_listen_ports_facts:
+            date_uformat: '%Y'
+          register: year_format
+
+        - name: Verify the independent process creation year
+          ansible.builtin.assert:
+            that:
+              - year_format is not changed
+              - >-
+                year_format.ansible_facts.tcp_listen |
+                selectattr('port', 'equalto', ssh_port) |
+                map(attribute='stime') |
+                unique | list == [observed.creation_year]
+
+        - name: Read UDP endpoints only
+          sustainablelobster.legacy_windows.win_listen_ports_facts:
+            tcp_filter: []
+          register: udp_only
+
+        - name: Verify an empty TCP selection retains UDP facts
+          ansible.builtin.assert:
+            that:
+              - udp_only is not changed
+              - udp_only.ansible_facts.tcp_listen == []
+              - udp_only.ansible_facts.udp_listen | length > 0
+
+        - name: Preserve the upstream null-format date representation
+          sustainablelobster.legacy_windows.win_listen_ports_facts:
+            date_uformat: null
+          register: null_format
+
+        - name: Verify serialized creation time against native FILETIME
+          ansible.builtin.assert:
+            that:
+              - null_format is not changed
+              - >-
+                null_format.ansible_facts.tcp_listen |
+                selectattr('port', 'equalto', ssh_port) |
+                map(attribute='stime') |
+                unique | list == [observed.creation_json]
+
+        - name: Exercise composite formats requiring optional locale fields
+          sustainablelobster.legacy_windows.win_listen_ports_facts:
+            date_uformat: '{{ item.pattern }}'
+          loop:
+            - {field: short_time, pattern: '{0:t}'}
+            - {field: month_day, pattern: '{0:M}'}
+            - {field: month_genitive, pattern: '{0:MMMM d}'}
+          loop_control:
+            label: '{{ item.field }}'
+          register: composite_formats
+          # Missing native fields must fail; the next assertion verifies each.
+          ignore_errors: true
+
+        - name: Verify composite dates or a named unavailable-field failure
+          ansible.builtin.assert:
+            that:
+              - item is not changed
+              - >-
+                (item is failed) ==
+                (not observed.locale_fields[item.item.field])
+              - >-
+                (item.ansible_facts is not defined and
+                item.item.field + ' locale field' in item.msg)
+                if item is failed else
+                (item.ansible_facts.tcp_listen |
+                selectattr('port', 'equalto', ssh_port) |
+                map(attribute='stime') | unique | list ==
+                [observed.composite_dates[item.item.field]])
+          loop: '{{ composite_formats.results }}'
+          loop_control:
+            label: '{{ item.item.field }}'
+
+        - name: Read established TCP connections
+          sustainablelobster.legacy_windows.win_listen_ports_facts:
+            tcp_filter: [Established]
+          register: established
+
+        - name: Verify the active SSH connection is included
+          ansible.builtin.assert:
+            that:
+              - established is not changed
+              - >-
+                established.ansible_facts.tcp_listen |
+                selectattr('port', 'equalto', ssh_port) | list | length > 0
+
+        - name: Request Bound state information
+          sustainablelobster.legacy_windows.win_listen_ports_facts:
+            tcp_filter: [Bound]
+          register: bound
+
+        - name: Verify available Bound facts or an explicit legacy warning
+          ansible.builtin.assert:
+            that:
+              - bound is not changed
+              - >-
+                not (bound.warnings | default([])) or
+                ('Bound TCP endpoints cannot be reported' in
+                (bound.warnings | join(' ')) and
+                bound.ansible_facts.tcp_listen == [])
+
+        - name: Verify invalid state failure
+          block:
+            - name: Request an invalid TCP state
+              sustainablelobster.legacy_windows.win_listen_ports_facts:
+                tcp_filter: [not_a_state]
+              register: invalid_state
+            - name: Reject an unexpectedly successful invalid state
+              ansible.builtin.fail:
+                msg: Invalid TCP state unexpectedly succeeded
+          rescue:
+            - name: Require a useful error with no partial facts
+              ansible.builtin.assert:
+                that:
+                  - invalid_state is failed
+                  - invalid_state is not changed
+                  - invalid_state.ansible_facts is not defined
+                  - "'not_a_state' in invalid_state.msg"
+
+        - name: Read facts after failure
+          sustainablelobster.legacy_windows.win_listen_ports_facts:
+          register: recovered
+
+        - name: Verify successful recovery
+          ansible.builtin.assert:
+            that:
+              - recovered is not changed
+              - >-
+                recovered.ansible_facts.tcp_listen |
+                selectattr('port', 'equalto', ssh_port) |
+                sort(attribute='address')
+                == observed.ssh_listeners | sort(attribute='address')
+
+        - name: Verify the observed SSH process and listener remain unchanged
+          sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - import sys;exec(sys.stdin.read())
+              - '{{ ssh_port | string }}'
+            stdin: '{{ ports_observation_code }}'
+          register: native_after
+          changed_when: false
+          check_mode: false
+
+        - name: Require identical native listener observations
+          ansible.builtin.assert:
+            that:
+              - (native_after.stdout | from_json) == observed
+      always:
+        - name: Require task-directory cleanup under the actual target runtime
+          ansible.builtin.raw: >-
+            cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+            "import glob, os, sys, tempfile;
+            assert sys.version_info[:3] == (3, 4, 4);
+            assert not glob.glob(os.path.join(tempfile.gettempdir(),
+            'ansible-tmp-*'));
+            print('Python 3.4.4 and task-directory cleanup verified')""
+          changed_when: false
+          check_mode: false

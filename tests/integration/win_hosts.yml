@@ -1,0 +1,97 @@
+---
+- name: Verify hosts changes and exact restoration of the original file
+  hosts: legacy_windows
+  gather_facts: false
+  vars_files:
+    - vars/hosts.yml
+    - vars/hosts_fixture.yml
+  tasks:
+    - name: Require Python 3.4.4 and record existing task directories
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import glob, json, os, sys, tempfile;
+        assert sys.version_info[:3] == (3, 4, 4);
+        print(json.dumps(sorted(glob.glob(os.path.join(tempfile.gettempdir(),
+        'ansible-tmp-*')))))""
+      register: task_directories_before
+      changed_when: false
+
+    - name: Exercise controlled hosts contents with a verified recovery backup
+      block:
+        - name: Allocate the backup and recovery workspace
+          sustainablelobster.legacy_windows.win_tempfile:  # noqa: args[module]
+            state: directory
+            prefix: legacy-windows-hosts-
+          register: hosts_workspace
+          check_mode: false
+
+        - name: Back up the original hosts file before creating test entries
+          sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - '-'
+              - '{{ hosts_workspace.path }}'
+              - setup
+            stdin: '{{ hosts_fixture }}'
+          register: hosts_setup
+          changed_when: true
+          check_mode: false
+
+        - name: Retain the initial independent byte observation
+          ansible.builtin.set_fact:
+            hosts_initial: '{{ hosts_setup.stdout | from_json }}'
+            hosts_previous_bytes: '{{ (hosts_setup.stdout | from_json).bytes }}'
+
+        - name: Exercise mappings aliases check mode failures and recovery
+          ansible.builtin.include_tasks: tasks/win_hosts_case.yml
+          loop: '{{ range(hosts_cases | length) | list }}'
+          loop_control:
+            loop_var: hosts_case_index
+          vars:
+            hosts_case: '{{ hosts_cases[hosts_case_index] }}'
+      always:
+        - name: Restore the original hosts file before removing recovery data
+          when: hosts_workspace.path is defined
+          block:
+            - name: Restore and verify original hosts  # noqa: args[module]
+              sustainablelobster.legacy_windows.win_command:
+                argv:
+                  - '{{ ansible_python_interpreter }}'
+                  - '-'
+                  - '{{ hosts_workspace.path }}'
+                  - cleanup
+                stdin: '{{ hosts_fixture }}'
+              register: hosts_restoration
+              changed_when: true
+              check_mode: false
+
+            - name: Require verified restoration before discarding the backup
+              ansible.builtin.assert:
+                that:
+                  - (hosts_restoration.stdout | from_json).restored
+
+            - name: Remove only the verified recovery workspace
+              sustainablelobster.legacy_windows.win_file:  # noqa: args[module]
+                path: '{{ hosts_workspace.path }}'
+                state: absent
+              check_mode: false
+
+        - name: Verify recovery-workspace and staging cleanup
+          ansible.builtin.raw: >-
+            cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+            "import glob, json, os, sys, tempfile;
+            assert not os.path.exists(sys.argv[1]);
+            print(json.dumps(sorted(glob.glob(os.path.join(tempfile.gettempdir(),
+            'ansible-tmp-*')))))" "{{ hosts_workspace.path }}""
+          when: hosts_workspace.path is defined
+          register: task_directories_after
+          changed_when: false
+          check_mode: false
+
+        - name: Require task-directory cleanup after all hosts operations
+          ansible.builtin.assert:
+            that:
+              - >-
+                (task_directories_before.stdout | from_json) ==
+                (task_directories_after.stdout | from_json)
+          when: hosts_workspace.path is defined

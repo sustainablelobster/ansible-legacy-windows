@@ -1,0 +1,969 @@
+---
+certificate_store_fixture: |
+  # Copyright 2026 Joe Lustri
+  # SPDX-License-Identifier: GPL-3.0-or-later
+  """Journal owned certificates, provider keys, stores and export files."""
+
+  import base64
+  import binascii
+  import contextlib
+  import ctypes
+  import hashlib
+  import json
+  import os
+  import struct
+  import sys
+  import tempfile
+  import uuid
+  import winreg
+
+  POINTER, DWORD, BOOL = ctypes.c_void_p, ctypes.c_uint32, ctypes.c_int32
+  ENCODING = 0x10001
+  PROVIDER = 'Microsoft Enhanced Cryptographic Provider v1.0'
+  KSP = 'Microsoft Software Key Storage Provider'
+  CERTIFICATE_ROOT = r'SOFTWARE\Microsoft\SystemCertificates'
+  SERVICE_ROOT = r'SOFTWARE\Microsoft\Cryptography\Services'
+  STANDARD = ('AuthRoot', 'CA', 'ClientAuthIssuer', 'Disallowed', 'My',
+              'Root', 'Trust', 'TrustedPeople', 'TrustedPublisher')
+  workspace, operation = sys.argv[1:3]
+  journal = os.path.join(workspace, 'certificate-store-recovery.json')
+
+
+  class Blob(ctypes.Structure):
+      _fields_ = [('size', DWORD), ('data', POINTER)]
+
+
+  class CertificateContext(ctypes.Structure):
+      _fields_ = [('encoding', DWORD), ('encoded', POINTER), ('size', DWORD),
+                 ('info', POINTER), ('store', POINTER)]
+
+
+  class KeyInfo(ctypes.Structure):
+      _fields_ = [('container', ctypes.c_wchar_p),
+                 ('provider', ctypes.c_wchar_p), ('provider_type', DWORD),
+                 ('flags', DWORD), ('count', DWORD), ('parameters', POINTER),
+                 ('specification', DWORD)]
+
+
+  class CngName(ctypes.Structure):
+      _fields_ = [('name', ctypes.c_wchar_p), ('algorithm', ctypes.c_wchar_p),
+                 ('specification', DWORD), ('flags', DWORD)]
+
+
+  def native(library, name, result, arguments):
+      function = getattr(ctypes.WinDLL(library, use_last_error=True), name)
+      function.restype, function.argtypes = result, arguments
+      return function
+
+
+  def require(success):
+      if not success:
+          raise ctypes.WinError(ctypes.get_last_error())
+
+
+  def checked(code):
+      if code:
+          raise ctypes.WinError(ctypes.c_int32(code).value)
+
+
+  def hexadecimal(data):
+      return binascii.hexlify(data).decode('ascii')
+
+
+  def save(record):
+      temporary = None
+      try:
+          with tempfile.NamedTemporaryFile(
+                  mode='w', encoding='utf-8', delete=False, dir=workspace,
+                  prefix='.certificate-store-recovery-') as stream:
+              temporary = stream.name
+              json.dump(record, stream, sort_keys=True)
+              stream.flush()
+              os.fsync(stream.fileno())
+          os.replace(temporary, journal)
+      finally:
+          if temporary is not None and os.path.exists(temporary):
+              os.remove(temporary)
+
+
+  def load():
+      with open(journal, encoding='utf-8') as stream:
+          return json.load(stream)
+
+
+  def registry_tree(hive, path):
+      try:
+          key = winreg.OpenKey(hive, path, 0,
+                               winreg.KEY_READ | winreg.KEY_WOW64_64KEY)
+      except OSError as error:
+          if error.winerror in (2, 3):
+              return None
+          raise
+      with key:
+          values, children = {}, {}
+          for index in range(winreg.QueryInfoKey(key)[1]):
+              name, value, kind = winreg.EnumValue(key, index)
+              if isinstance(value, bytes):
+                  value = {'bytes': hexadecimal(value)}
+              values[name] = [value, kind]
+          security = native('advapi32', 'RegGetKeySecurity', ctypes.c_int32,
+                            [POINTER, DWORD, POINTER, POINTER])
+          size = DWORD()
+          code = security(int(key), 7, None, ctypes.byref(size))
+          if code not in (0, 122):
+              checked(code)
+          buffer = ctypes.create_string_buffer(size.value)
+          checked(security(int(key), 7, buffer, ctypes.byref(size)))
+          for index in range(winreg.QueryInfoKey(key)[0]):
+              name = winreg.EnumKey(key, index)
+              children[name] = registry_tree(hive, path + '\\' + name)
+          return {'values': values, 'children': children,
+                  'owner_group_dacl': hexadecimal(buffer.raw[:size.value])}
+
+
+  def delete_registry(hive, path):
+      tree = registry_tree(hive, path)
+      if tree is None:
+          return
+      for child in tree['children']:
+          delete_registry(hive, path + '\\' + child)
+      with winreg.OpenKey(hive, os.path.dirname(path), 0,
+                          winreg.KEY_WRITE | winreg.KEY_WOW64_64KEY) as parent:
+          winreg.DeleteKey(parent, os.path.basename(path))
+
+
+  def cert_property(context, identifier):
+      get = native('crypt32', 'CertGetCertificateContextProperty', BOOL,
+                   [POINTER, DWORD, POINTER, POINTER])
+      size = DWORD()
+      if not get(context, identifier, None, ctypes.byref(size)):
+          code = ctypes.get_last_error() & 0xffffffff
+          if code == 0x80092004:
+              return None
+          require(False)
+      buffer = ctypes.create_string_buffer(size.value)
+      require(get(context, identifier, buffer, ctypes.byref(size)))
+      if identifier == 2:
+          key = ctypes.cast(buffer, ctypes.POINTER(KeyInfo)).contents
+          return {'container': key.container, 'provider': key.provider,
+                  'provider_type': key.provider_type, 'flags': key.flags,
+                  'specification': key.specification}
+      return buffer.raw[:size.value]
+
+
+  def cert_record(context):
+      structure = ctypes.cast(context,
+                              ctypes.POINTER(CertificateContext)).contents
+      data = ctypes.string_at(structure.encoded, structure.size)
+      provider = cert_property(context, 2)
+      return {'thumbprint': hashlib.sha1(data).hexdigest().upper(),
+              'der': hexadecimal(data), 'provider': provider,
+              'has_private_key': provider is not None or
+                                 cert_property(context, 5) is not None}
+
+
+  @contextlib.contextmanager
+  def store(name, scope, existing=True, physical=False):
+      flags = scope | (0x4000 if existing else 0) | 0x1004
+      open_store = native('crypt32', 'CertOpenStore', POINTER,
+                          [POINTER, DWORD, POINTER, DWORD, ctypes.c_wchar_p])
+      handle = open_store(13 if physical else 10, 0, None, flags, name)
+      require(handle)
+      try:
+          yield handle
+      finally:
+          require(native('crypt32', 'CertCloseStore', BOOL,
+                         [POINTER, DWORD])(handle, 0))
+
+
+  def certificates(handle, sort=True):
+      enumerate_cert = native('crypt32', 'CertEnumCertificatesInStore',
+                              POINTER, [POINTER, POINTER])
+      free = native('crypt32', 'CertFreeCertificateContext', BOOL, [POINTER])
+      result, context = [], None
+      try:
+          while True:
+              previous, context = context, None
+              context = enumerate_cert(handle, previous)
+              if not context:
+                  if ctypes.get_last_error() & 0xffffffff != 0x80092004:
+                      require(False)
+                  break
+              result.append(cert_record(context))
+      finally:
+          if context:
+              require(free(context))
+      return (sorted(result, key=lambda item: item['thumbprint'])
+              if sort else result)
+
+
+  def providers():
+      enum = native('advapi32', 'CryptEnumProvidersW', BOOL,
+                    [DWORD, POINTER, DWORD, POINTER, ctypes.c_wchar_p, POINTER])
+      rows, index = [], 0
+      while True:
+          kind, size = DWORD(), DWORD(1024)
+          name = ctypes.create_unicode_buffer(1024)
+          if not enum(index, None, 0, ctypes.byref(kind), name,
+                      ctypes.byref(size)):
+              if ctypes.get_last_error() == 259:
+                  break
+              require(False)
+          rows.append({'provider': name.value, 'provider_type': kind.value})
+          index += 1
+      return rows
+
+
+  @contextlib.contextmanager
+  def capi(entry, create=False):
+      acquire = native('advapi32', 'CryptAcquireContextW', BOOL,
+                       [POINTER, ctypes.c_wchar_p, ctypes.c_wchar_p,
+                        DWORD, DWORD])
+      handle = POINTER()
+      require(acquire(ctypes.byref(handle), entry['container'],
+                      entry['provider'], entry['provider_type'],
+                      0x40 | entry['scope'] | (8 if create else 0)))
+      try:
+          yield handle
+      finally:
+          require(native('advapi32', 'CryptReleaseContext', BOOL,
+                         [POINTER, DWORD])(handle, 0))
+
+
+  def provider_property(handle, identifier, flags=0):
+      get = native('advapi32', 'CryptGetProvParam', BOOL,
+                   [POINTER, DWORD, POINTER, POINTER, DWORD])
+      size = DWORD()
+      require(get(handle, identifier, None, ctypes.byref(size), flags))
+      buffer = ctypes.create_string_buffer(size.value)
+      require(get(handle, identifier, buffer, ctypes.byref(size), flags))
+      return buffer.raw[:size.value]
+
+
+  def rsa_identity(data, kind):
+      if kind == 'capi':
+          if len(data) < 20 or data[0] != 6:
+              return None
+          magic, bits, exponent = struct.unpack('<III', data[8:20])
+          if magic != 0x31415352:
+              return None
+          modulus = data[20:20 + bits // 8][::-1]
+      else:
+          if len(data) < 24:
+              return None
+          magic, _bits, exponent_size, modulus_size, _p, _q = struct.unpack(
+              '<IIIIII', data[:24])
+          if magic != 0x31415352:
+              return None
+          exponent = int.from_bytes(data[24:24 + exponent_size], 'big')
+          modulus = data[24 + exponent_size:
+                         24 + exponent_size + modulus_size]
+      return hashlib.sha256(str(exponent).encode('ascii') + b':' +
+                            modulus).hexdigest()
+
+
+  def capi_key(entry):
+      with capi(entry) as handle:
+          result = {'identity': entry,
+                    'owner_group_dacl': hexadecimal(
+                        provider_property(handle, 8, 7)), 'keys': {}}
+          get = native('advapi32', 'CryptGetUserKey', BOOL,
+                       [POINTER, DWORD, POINTER])
+          export = native('advapi32', 'CryptExportKey', BOOL,
+                          [POINTER, POINTER, DWORD, DWORD, POINTER, POINTER])
+          parameter = native('advapi32', 'CryptGetKeyParam', BOOL,
+                             [POINTER, DWORD, POINTER, POINTER, DWORD])
+          destroy = native('advapi32', 'CryptDestroyKey', BOOL, [POINTER])
+          for specification in (1, 2):
+              key, size = POINTER(), DWORD()
+              if not get(handle, specification, ctypes.byref(key)):
+                  code = ctypes.get_last_error() & 0xffffffff
+                  if code == 0x8009000d:
+                      continue
+                  require(False)
+              try:
+                  require(export(key, None, 6, 0, None, ctypes.byref(size)))
+                  buffer = ctypes.create_string_buffer(size.value)
+                  require(export(key, None, 6, 0, buffer, ctypes.byref(size)))
+                  data = buffer.raw[:size.value]
+                  permissions, permission_size = DWORD(), DWORD(4)
+                  require(parameter(key, 6, ctypes.byref(permissions),
+                                    ctypes.byref(permission_size), 0))
+                  result['keys'][str(specification)] = {
+                      'public': hexadecimal(data),
+                      'permissions': permissions.value,
+                      'rsa_identity': rsa_identity(data, 'capi')}
+              finally:
+                  require(destroy(key))
+          return result
+
+
+  def capi_catalogue():
+      acquire = native('advapi32', 'CryptAcquireContextW', BOOL,
+                       [POINTER, ctypes.c_wchar_p, ctypes.c_wchar_p,
+                        DWORD, DWORD])
+      release = native('advapi32', 'CryptReleaseContext', BOOL,
+                       [POINTER, DWORD])
+      enum = native('advapi32', 'CryptGetProvParam', BOOL,
+                    [POINTER, DWORD, POINTER, POINTER, DWORD])
+      rows = {}
+      for provider in providers():
+          for scope in (0, 0x20):
+              handle = POINTER()
+              label = json.dumps([provider['provider'], scope])
+              if not acquire(ctypes.byref(handle), None, provider['provider'],
+                             provider['provider_type'], 0xf0000040 | scope):
+                  rows[label] = {'error': ctypes.get_last_error() & 0xffffffff}
+                  continue
+              try:
+                  flag = 1
+                  while True:
+                      buffer = ctypes.create_string_buffer(8192)
+                      size = DWORD(len(buffer))
+                      if not enum(handle, 2, buffer, ctypes.byref(size), flag):
+                          if ctypes.get_last_error() == 259:
+                              break
+                          rows[label] = {'error':
+                                         ctypes.get_last_error() & 0xffffffff}
+                          break
+                      flag = 2
+                      entry = dict(provider, kind='capi', scope=scope,
+                                   container=buffer.value.decode('mbcs'))
+                      identifier = json.dumps(entry, sort_keys=True)
+                      try:
+                          rows[identifier] = capi_key(entry)
+                      except OSError as error:
+                          rows[identifier] = {'identity': entry,
+                                              'error': error.winerror}
+              finally:
+                  require(release(handle, 0))
+      return rows
+
+
+  @contextlib.contextmanager
+  def cng_provider():
+      handle = POINTER()
+      checked(native('ncrypt', 'NCryptOpenStorageProvider', ctypes.c_int32,
+                     [POINTER, ctypes.c_wchar_p, DWORD])(
+                         ctypes.byref(handle), KSP, 0))
+      try:
+          yield handle
+      finally:
+          checked(native('ncrypt', 'NCryptFreeObject', ctypes.c_int32,
+                         [POINTER])(handle))
+
+
+  @contextlib.contextmanager
+  def cng_key(entry):
+      with cng_provider() as provider:
+          handle = POINTER()
+          checked(native('ncrypt', 'NCryptOpenKey', ctypes.c_int32,
+                         [POINTER, POINTER, ctypes.c_wchar_p, DWORD, DWORD])(
+                             provider, ctypes.byref(handle),
+                             entry['container'], entry['specification'],
+                             0x40 | entry['scope']))
+          try:
+              yield handle
+          finally:
+              checked(native('ncrypt', 'NCryptFreeObject', ctypes.c_int32,
+                             [POINTER])(handle))
+
+
+  def cng_property(handle, name, flags=0):
+      get = native('ncrypt', 'NCryptGetProperty', ctypes.c_int32,
+                   [POINTER, ctypes.c_wchar_p, POINTER, DWORD, POINTER, DWORD])
+      size = DWORD()
+      checked(get(handle, name, None, 0, ctypes.byref(size), flags))
+      buffer = ctypes.create_string_buffer(size.value)
+      checked(get(handle, name, buffer, size.value, ctypes.byref(size), flags))
+      return buffer.raw[:size.value]
+
+
+  def cng_record(entry):
+      with cng_key(entry) as handle:
+          result = {'identity': entry,
+                    'owner_group_dacl': hexadecimal(
+                        cng_property(handle, 'Security Descr', 0x47)),
+                    'export_policy': hexadecimal(
+                        cng_property(handle, 'Export Policy'))}
+          if entry['algorithm'] != 'RSA':
+              result['rsa_identity'] = None
+              return result
+          export = native('ncrypt', 'NCryptExportKey', ctypes.c_int32,
+                          [POINTER, POINTER, ctypes.c_wchar_p, POINTER,
+                           POINTER, DWORD, POINTER, DWORD])
+          size = DWORD()
+          checked(export(handle, None, 'RSAPUBLICBLOB', None, None, 0,
+                         ctypes.byref(size), 0))
+          buffer = ctypes.create_string_buffer(size.value)
+          checked(export(handle, None, 'RSAPUBLICBLOB', None, buffer,
+                         size.value, ctypes.byref(size), 0))
+          data = buffer.raw[:size.value]
+          result.update(public=hexadecimal(data),
+                        rsa_identity=rsa_identity(data, 'cng'))
+          return result
+
+
+  def cng_catalogue():
+      if sys.getwindowsversion().major < 6:
+          return None
+      rows = {}
+      with cng_provider() as provider:
+          enum = native('ncrypt', 'NCryptEnumKeys', ctypes.c_int32,
+                        [POINTER, ctypes.c_wchar_p, POINTER, POINTER, DWORD])
+          free = native('ncrypt', 'NCryptFreeBuffer', ctypes.c_int32, [POINTER])
+          for scope in (0, 0x20):
+              state = POINTER()
+              try:
+                  while True:
+                      pointer = POINTER()
+                      code = enum(provider, None, ctypes.byref(pointer),
+                                  ctypes.byref(state), 0x40 | scope)
+                      if code & 0xffffffff == 0x8009002a:
+                          break
+                      checked(code)
+                      try:
+                          value = ctypes.cast(pointer,
+                              ctypes.POINTER(CngName)).contents
+                          entry = {'kind': 'cng', 'provider': KSP,
+                                   'container': value.name, 'scope': scope,
+                                   'algorithm': value.algorithm,
+                                   'specification': value.specification}
+                          identifier = json.dumps(entry, sort_keys=True)
+                          try:
+                              rows[identifier] = cng_record(entry)
+                          except OSError as error:
+                              rows[identifier] = {'identity': entry,
+                                                  'error': error.winerror}
+                      finally:
+                          checked(free(pointer))
+              finally:
+                  if state:
+                      checked(free(state))
+      return rows
+
+
+  def key_catalogue():
+      return {'capi': capi_catalogue(), 'cng': cng_catalogue()}
+
+
+  def key_identities(row):
+      if 'keys' in row:
+          return [key['rsa_identity'] for key in row['keys'].values()]
+      return [row.get('rsa_identity')]
+
+
+  def discover_keys(record, current):
+      owned = set(record['public_identities'])
+      # CAPI enumerates one container through several providers. Some aliases
+      # cannot open its key; accept them only when another readable alias proves
+      # this same user/machine container contains a journal-owned public key.
+      owned_capi_containers = {
+          (row['identity']['container'], row['identity']['scope'])
+          for row in (current['capi'] or {}).values()
+          if row.get('identity', {}).get('container') is not None and
+          owned & set(key_identities(row))}
+      for kind in ('capi', 'cng'):
+          baseline = record['before']['keys'][kind] or {}
+          for identifier, row in (current[kind] or {}).items():
+              if identifier in baseline:
+                  continue
+              entry = row.get('identity', {})
+              generated = any(
+                  kind == item['kind'] and
+                  entry.get('container') == item['container'] and
+                  entry.get('scope') == item['scope']
+                  for item in record['generated'].values())
+              readable_alias = kind == 'capi' and (
+                  entry.get('container'), entry.get('scope')
+              ) in owned_capi_containers
+              if not generated and not readable_alias and not (
+                      owned & set(key_identities(row))):
+                  raise ValueError('Unjournaled new key cannot be adopted: ' +
+                                   identifier)
+              record['imported_keys'][identifier] = row['identity']
+      save(record)
+
+
+  def service_exists(name):
+      manager = native('advapi32', 'OpenSCManagerW', POINTER,
+                       [ctypes.c_wchar_p, ctypes.c_wchar_p, DWORD])(
+                           None, None, 1)
+      require(manager)
+      close = native('advapi32', 'CloseServiceHandle', BOOL, [POINTER])
+      try:
+          handle = native('advapi32', 'OpenServiceW', POINTER,
+                          [POINTER, ctypes.c_wchar_p, DWORD])(manager, name, 4)
+          if not handle:
+              if ctypes.get_last_error() == 1060:
+                  return False
+              require(False)
+          require(close(handle))
+          return True
+      finally:
+          require(close(manager))
+
+
+  def service_change(record, deleting=False):
+      name = record['context']['service']
+      manager = native('advapi32', 'OpenSCManagerW', POINTER,
+                       [ctypes.c_wchar_p, ctypes.c_wchar_p, DWORD])(
+                           None, None, 3 if not deleting else 1)
+      require(manager)
+      close = native('advapi32', 'CloseServiceHandle', BOOL, [POINTER])
+      handle = None
+      try:
+          if deleting:
+              handle = native('advapi32', 'OpenServiceW', POINTER,
+                              [POINTER, ctypes.c_wchar_p, DWORD])(
+                                  manager, name, 0x10004)
+              require(handle)
+              status = (DWORD * 7)()
+              require(native('advapi32', 'QueryServiceStatus', BOOL,
+                             [POINTER, POINTER])(handle, status))
+              if status[1] != 1:
+                  raise ValueError('Owned certificate service was started')
+              require(native('advapi32', 'DeleteService', BOOL,
+                             [POINTER])(handle))
+          else:
+              create = native('advapi32', 'CreateServiceW', POINTER,
+                  [POINTER, ctypes.c_wchar_p, ctypes.c_wchar_p,
+                   DWORD, DWORD, DWORD, DWORD] +
+                  [ctypes.c_wchar_p, ctypes.c_wchar_p, POINTER,
+                   ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_wchar_p])
+              handle = create(manager, name, name, 0x10004, 0x10, 4, 1,
+                              os.environ['COMSPEC'] + ' /d /c exit 0',
+                              None, None, None, None, None)
+              require(handle)
+      finally:
+          if handle:
+              require(close(handle))
+          require(close(manager))
+
+
+  def original_state(record):
+      return {'registry': {
+          'user': registry_tree(winreg.HKEY_CURRENT_USER, CERTIFICATE_ROOT),
+          'machine': registry_tree(winreg.HKEY_LOCAL_MACHINE, CERTIFICATE_ROOT),
+          'service': registry_tree(winreg.HKEY_LOCAL_MACHINE,
+              SERVICE_ROOT + '\\' + record['context']['service']),
+          'service_root': registry_tree(winreg.HKEY_LOCAL_MACHINE,
+                                        SERVICE_ROOT)},
+          'keys': key_catalogue(),
+          'service_exists': service_exists(record['context']['service'])}
+
+
+  def register(name, scope):
+      require(native('crypt32', 'CertRegisterSystemStore', BOOL,
+                     [ctypes.c_wchar_p, DWORD, POINTER, POINTER])(
+                         name, scope, None, None))
+
+
+  def generate(record, role):
+      entry = record['generated'][role]
+      with capi(entry, create=True) as provider:
+          entry['created'] = True
+          save(record)
+          key = POINTER()
+          require(native('advapi32', 'CryptGenKey', BOOL,
+                         [POINTER, DWORD, DWORD, POINTER])(
+                             provider, 0xa400, (2048 << 16) | 1,
+                             ctypes.byref(key)))
+          try:
+              subject = 'CN=' + record['context']['prefix'] + '-' + role
+              encode = native('crypt32', 'CertStrToNameW', BOOL,
+                              [DWORD, ctypes.c_wchar_p, DWORD] + [POINTER] * 4)
+              size = DWORD()
+              require(encode(ENCODING, subject, 3, None, None,
+                             ctypes.byref(size), None))
+              data = ctypes.create_string_buffer(size.value)
+              require(encode(ENCODING, subject, 3, None, data,
+                             ctypes.byref(size), None))
+              blob = Blob(size.value, ctypes.cast(data, POINTER))
+              info = KeyInfo(entry['container'], PROVIDER, 1,
+                             entry['scope'], 0, None, 1)
+              create = native('crypt32', 'CertCreateSelfSignCertificate',
+                              POINTER,
+                              [POINTER, POINTER, DWORD] + [POINTER] * 5)
+              context = create(provider, ctypes.byref(blob), 0,
+                               ctypes.byref(info), None, None, None, None)
+              require(context)
+              try:
+                  certificate = cert_record(context)
+                  entry['certificate'] = certificate
+                  identity = capi_key(entry)['keys']['1']['rsa_identity']
+                  record['public_identities'].append(identity)
+                  record['context']['thumbprints'][role] = certificate[
+                      'thumbprint']
+                  save(record)
+                  write_inputs(record, role, context, certificate)
+              finally:
+                  require(native('crypt32', 'CertFreeCertificateContext', BOOL,
+                                 [POINTER])(context))
+          finally:
+              require(native('advapi32', 'CryptDestroyKey', BOOL,
+                             [POINTER])(key))
+
+
+  def memory_export(contexts, kind, password=None):
+      handle = native('crypt32', 'CertOpenStore', POINTER,
+                      [POINTER, DWORD, POINTER, DWORD, POINTER])(
+                          2, ENCODING, None, 0x2000, None)
+      require(handle)
+      try:
+          add = native('crypt32', 'CertAddCertificateContextToStore', BOOL,
+                       [POINTER, POINTER, DWORD, POINTER])
+          for context in contexts:
+              require(add(handle, context, 4, None))
+          blob = Blob()
+          if kind == 'pfx':
+              export = native('crypt32', 'PFXExportCertStoreEx', BOOL,
+                              [POINTER, POINTER, ctypes.c_wchar_p,
+                               POINTER, DWORD])
+              require(export(handle, ctypes.byref(blob), password, None, 6))
+              buffer = ctypes.create_string_buffer(blob.size)
+              blob = Blob(blob.size, ctypes.cast(buffer, POINTER))
+              require(export(handle, ctypes.byref(blob), password, None, 6))
+          else:
+              export = native('crypt32', 'CertSaveStore', BOOL,
+                              [POINTER, DWORD, DWORD, DWORD, POINTER, DWORD])
+              require(export(handle, ENCODING, 2, 2, ctypes.byref(blob), 0))
+              buffer = ctypes.create_string_buffer(blob.size)
+              blob = Blob(blob.size, ctypes.cast(buffer, POINTER))
+              require(export(handle, ENCODING, 2, 2, ctypes.byref(blob), 0))
+          return buffer.raw[:blob.size]
+      finally:
+          require(native('crypt32', 'CertCloseStore', BOOL,
+                         [POINTER, DWORD])(handle, 0))
+
+
+  def write_inputs(record, role, context, certificate):
+      files = record['context']['files']
+      der = binascii.unhexlify(certificate['der'])
+      text = base64.b64encode(der).decode('ascii')
+      pem = ('-----BEGIN CERTIFICATE-----\r\n' + '\r\n'.join(
+          text[index:index + 64] for index in range(0, len(text), 64)) +
+          '\r\n-----END CERTIFICATE-----\r\n').encode('ascii')
+      contents = {'der': der, 'pem': pem,
+                  'pfx': memory_export([context], 'pfx', record['password'])}
+      for kind, data in contents.items():
+          path = os.path.join(workspace, role + '.' + kind)
+          with open(path, 'wb') as stream:
+              stream.write(data)
+          files[role + '_' + kind] = path
+      save(record)
+
+
+  def setup():
+      if os.path.exists(journal):
+          raise ValueError('Certificate journal must not be overwritten')
+      prefix = 'LegacyCert' + uuid.uuid4().hex[:18]
+      context = {'prefix': prefix, 'service': prefix + 'Svc',
+                 'store': prefix + 'User', 'machine_store': prefix + 'Machine',
+                 'missing_store': prefix + 'Missing',
+                 'files': {}, 'thumbprints': {}, 'workspace': workspace,
+                 'modern': sys.getwindowsversion().major >= 6}
+      record = {'context': context, 'generated': {}, 'imported_keys': {},
+                'public_identities': [],
+                'password': 'OwnedCertificateFixture1!'}
+      for role in ('primary', 'secondary'):
+          record['generated'][role] = {'kind': 'capi', 'provider': PROVIDER,
+              'provider_type': 1, 'scope': 0, 'container': prefix + '-' + role,
+              'created': False}
+      before = original_state(record)
+      if before['service_exists'] or before['registry']['service'] is not None:
+          raise ValueError('Owned service must be initially absent')
+      for hive in (winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE):
+          for name in (context['store'], context['machine_store'],
+                       context['missing_store']):
+              path = CERTIFICATE_ROOT + '\\' + name
+              if registry_tree(hive, path) is not None:
+                  raise ValueError('Owned certificate store must be absent')
+      for entry in record['generated'].values():
+          if any(row.get('identity', {}).get('container') == entry['container']
+                 for row in before['keys']['capi'].values()):
+              raise ValueError('Owned key must be initially absent')
+      record['before'] = before
+      save(record)
+      for role in record['generated']:
+          generate(record, role)
+      create_context = native('crypt32', 'CertCreateCertificateContext',
+                              POINTER, [DWORD, POINTER, DWORD])
+      contexts = []
+      try:
+          for role in ('primary', 'secondary'):
+              data = binascii.unhexlify(
+                  record['generated'][role]['certificate']['der'])
+              buffer = ctypes.create_string_buffer(data)
+              pointer = create_context(ENCODING, buffer, len(data))
+              require(pointer)
+              contexts.append(pointer)
+          data = memory_export(contexts, 'p7b')
+          for kind, content in (
+                  ('p7b', data), ('p7b_pem', b'-----BEGIN PKCS7-----\r\n' +
+                   base64.b64encode(data) + b'\r\n-----END PKCS7-----\r\n')):
+              path = os.path.join(workspace, 'chain.' + kind)
+              with open(path, 'wb') as stream:
+                  stream.write(content)
+              context['files'][kind] = path
+      finally:
+          for pointer in contexts:
+              require(native('crypt32', 'CertFreeCertificateContext', BOOL,
+                             [POINTER])(pointer))
+      register(context['store'], 0x10000)
+      register(context['machine_store'], 0x20000)
+      service_change(record)
+      context['files'].update(
+          export_der=os.path.join(workspace, 'export.der'),
+          export_pem=os.path.join(workspace, 'export.pem'),
+          export_pfx=os.path.join(workspace, 'export.pfx'),
+          export_failure=os.path.join(workspace, 'failed-export.der'),
+          missing=os.path.join(workspace, 'missing.der'),
+          corrupt=os.path.join(workspace, 'corrupt.pfx'))
+      with open(context['files']['corrupt'], 'wb') as stream:
+          stream.write(b'not a certificate')
+      record['inputs'] = file_state(record)
+      record['fixture_keys'] = key_catalogue()
+      save(record)
+      return {'journaled': True, 'context': context, 'before': before}
+
+
+  def file_state(record):
+      result = {}
+      for name, path in record['context']['files'].items():
+          if not os.path.isfile(path):
+              result[name] = None
+              continue
+          with open(path, 'rb') as stream:
+              data = stream.read()
+          result[name] = {'size': len(data), 'sha256':
+                          hashlib.sha256(data).hexdigest(),
+                          'certificates': file_certificates(path, data,
+                              record['password'])}
+      return result
+
+
+  def file_certificates(path, data, password):
+      query = native('crypt32', 'CryptQueryObject', BOOL,
+                     [DWORD, POINTER, DWORD, DWORD, DWORD] + [POINTER] * 6)
+      kind, handle = DWORD(), POINTER()
+      close = native('crypt32', 'CertCloseStore', BOOL, [POINTER, DWORD])
+      if not query(1, ctypes.create_unicode_buffer(path),
+                   sum(1 << item for item in (1, 4, 5, 8, 9, 10, 12)),
+                   0xe, 0, None, ctypes.byref(kind), None,
+                   ctypes.byref(handle), None, None):
+          return {'error': ctypes.get_last_error() & 0xffffffff}
+      if kind.value == 12:
+          if handle:
+              require(close(handle, 0))
+              handle = POINTER()
+          buffer = ctypes.create_string_buffer(data)
+          blob = Blob(len(data), ctypes.cast(buffer, POINTER))
+          verify = native('crypt32', 'PFXVerifyPassword', BOOL,
+                          [POINTER, ctypes.c_wchar_p, DWORD])
+          if not verify(ctypes.byref(blob), password, 0):
+              return {'error': ctypes.get_last_error() & 0xffffffff}
+          if sys.getwindowsversion().major < 6:
+              # Legacy observation verifies the protected container, without
+              # importing a private key as a side effect of an independent read.
+              return {'pfx_password_valid': True, 'ephemeral_api': False}
+          handle = native('crypt32', 'PFXImportCertStore', POINTER,
+                          [POINTER, ctypes.c_wchar_p, DWORD])(
+                              ctypes.byref(blob), password, 0x8000)
+          require(handle)
+      require(handle)
+      try:
+          rows = certificates(handle)
+          return [{'thumbprint': row['thumbprint'],
+                   'has_private_key': row['has_private_key']} for row in rows]
+      finally:
+          require(close(handle, 0))
+
+
+  def observe():
+      record = load()
+      keys = key_catalogue()
+      discover_keys(record, keys)
+      result = {'keys': keys, 'files': file_state(record), 'stores': {},
+                'service_registry': registry_tree(winreg.HKEY_LOCAL_MACHINE,
+                    SERVICE_ROOT + '\\' + record['context']['service'])}
+      for location, scope, hive in (
+              ('user', 0x10000, winreg.HKEY_CURRENT_USER),
+              ('machine', 0x20000, winreg.HKEY_LOCAL_MACHINE)):
+          name = record['context'][
+              'store' if location == 'user' else 'machine_store']
+          with store(name, scope) as handle:
+              result['stores'][location] = certificates(handle)
+          result['stores'][location + '_registry'] = registry_tree(
+              hive, CERTIFICATE_ROOT + '\\' + name)
+      name = record['context']['service'] + '\\My'
+      for physical in (False, True):
+          label = 'service_physical' if physical else 'service'
+          try:
+              with store(name, 0x50000, physical=physical) as handle:
+                  result['stores'][label] = certificates(handle)
+          except OSError as error:
+              if error.winerror not in (2, 3):
+                  raise
+              result['stores'][label] = None
+      return result
+
+
+  def empty_owned_store(record, name, scope):
+      allowed = {entry['certificate']['thumbprint']: entry['certificate']['der']
+                 for entry in record['generated'].values()
+                 if 'certificate' in entry}
+      try:
+          # A service's logical view includes unrelated machine certificates.
+          # Cleanup opens only its direct physical registry store, never that
+          # inherited collection. The strict owned DER guard still applies.
+          with store(name, scope, physical=True) as handle:
+              rows = certificates(handle)
+              if any(row['thumbprint'] not in allowed or
+                     row['der'] != allowed[row['thumbprint']] for row in rows):
+                  raise ValueError('Store contains an unjournaled certificate')
+              enum = native('crypt32', 'CertEnumCertificatesInStore', POINTER,
+                            [POINTER, POINTER])
+              delete = native('crypt32', 'CertDeleteCertificateFromStore', BOOL,
+                              [POINTER])
+              for _row in rows:
+                  context = enum(handle, None)
+                  require(context)
+                  require(delete(context))
+      except OSError as error:
+          if error.winerror not in (2, 3):
+              raise
+
+
+  def delete_key(entry):
+      if entry['kind'] == 'capi':
+          handle = POINTER()
+          acquire = native('advapi32', 'CryptAcquireContextW', BOOL,
+                           [POINTER, ctypes.c_wchar_p, ctypes.c_wchar_p,
+                            DWORD, DWORD])
+          if not acquire(ctypes.byref(handle), entry['container'],
+                         entry['provider'], entry['provider_type'],
+                         0x50 | entry['scope']):
+              if ctypes.get_last_error() & 0xffffffff not in (0x80090016, 2):
+                  require(False)
+      else:
+          with cng_provider() as provider:
+              key = POINTER()
+              opened = native('ncrypt', 'NCryptOpenKey', ctypes.c_int32,
+                              [POINTER, POINTER, ctypes.c_wchar_p,
+                               DWORD, DWORD])
+              code = opened(provider, ctypes.byref(key), entry['container'],
+                            entry['specification'], 0x40 | entry['scope'])
+              if code & 0xffffffff in (0x80090016, 2):
+                  return
+              checked(code)
+              deleted = False
+              try:
+                  checked(native('ncrypt', 'NCryptDeleteKey', ctypes.c_int32,
+                                 [POINTER, DWORD])(key, 0x40))
+                  deleted = True
+              finally:
+                  if not deleted:
+                      checked(native('ncrypt', 'NCryptFreeObject',
+                                     ctypes.c_int32, [POINTER])(key))
+
+
+  def remove_public_state(record):
+      discover_keys(record, key_catalogue())
+      for scope, hive in ((0x10000, winreg.HKEY_CURRENT_USER),
+                          (0x20000, winreg.HKEY_LOCAL_MACHINE)):
+          name = record['context'][
+              'store' if scope == 0x10000 else 'machine_store']
+          empty_owned_store(record, name, scope)
+          delete_registry(hive, CERTIFICATE_ROOT + '\\' + name)
+      service = record['context']['service']
+      for name in STANDARD:
+          empty_owned_store(record, service + '\\' + name, 0x50000)
+      if service_exists(service):
+          service_change(record, deleting=True)
+      delete_registry(winreg.HKEY_LOCAL_MACHINE, SERVICE_ROOT + '\\' + service)
+
+
+  def reset(record):
+      remove_public_state(record)
+      generated = record['generated'].values()
+      for entry in list(record['imported_keys'].values()) + list(generated):
+          if entry.get('created', True):
+              delete_key(entry)
+      for path in record['context']['files'].values():
+          if os.path.isfile(path):
+              os.remove(path)
+      if record['before']['registry']['service_root'] is None:
+          tree = registry_tree(winreg.HKEY_LOCAL_MACHINE, SERVICE_ROOT)
+          if tree is not None and not tree['children'] and not tree['values']:
+              delete_registry(winreg.HKEY_LOCAL_MACHINE, SERVICE_ROOT)
+      for name, hive in (('user', winreg.HKEY_CURRENT_USER),
+                          ('machine', winreg.HKEY_LOCAL_MACHINE)):
+          if record['before']['registry'][name] is None:
+              tree = registry_tree(hive, CERTIFICATE_ROOT)
+              if (tree is not None and not tree['children'] and
+                      not tree['values']):
+                  delete_registry(hive, CERTIFICATE_ROOT)
+      after = original_state(record)
+      if after != record['before']:
+          raise ValueError('Recorded original certificate state differs')
+      return {'restored': True, 'before': record['before'], 'after': after}
+
+
+  def prepare_original():
+      record = load()
+      remove_public_state(record)
+      context = record['context']
+      generated = {(item['kind'], item['container'], item['scope'])
+                   for item in record['generated'].values()}
+      for entry in record['imported_keys'].values():
+          # A machine import can reuse a fixture's user-container name; it is
+          # still a distinct persisted key and must be removed before replay.
+          identity = (entry['kind'], entry['container'], entry['scope'])
+          if identity not in generated:
+              delete_key(entry)
+      if key_catalogue() != record['fixture_keys']:
+          raise ValueError('Fixture keys changed before original replay')
+      for name, path in context['files'].items():
+          if name not in record['inputs'] or record['inputs'][name] is None:
+              if os.path.isfile(path):
+                  os.remove(path)
+      register(context['store'], 0x10000)
+      register(context['machine_store'], 0x20000)
+      service_change(record)
+      save(record)
+      return context
+
+
+  def prepare_destination():
+      record = load()
+      path = record['context']['files']['export_failure']
+      # A valid DER destination has a different encoding from the requested PFX.
+      # Corrupt bytes would fail the source's preliminary import, before it ever
+      # deletes the destination or tries nonexportable-key serialization.
+      with open(record['context']['files']['secondary_der'], 'rb') as stream:
+          data = stream.read()
+      with open(path, 'wb') as stream:
+          stream.write(data)
+      return {'path': path, 'recorded': True}
+
+
+  def cleanup():
+      if not os.path.exists(journal):
+          return {'restored': True, 'journal_absent': True}
+      record = load()
+      return reset(record)
+
+
+  def main():
+      assert sys.version_info[:3] == (3, 4, 4)
+      result = {'setup': setup, 'observe': observe, 'cleanup': cleanup,
+                'prepare-original': prepare_original,
+                'prepare-destination': prepare_destination}[operation]()
+      print(json.dumps(result, sort_keys=True))
+
+
+  if __name__ == '__main__':
+      main()
+
+certificate_store_program: '{{ certificate_store_fixture }}'

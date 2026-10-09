@@ -1,0 +1,20 @@
+---
+- name: Exercise native and released implementations from the same
+    owned-zone state
+  ansible.builtin.include_tasks: win_dns_zone_run.yml
+  loop:
+    - native
+    - released
+  loop_control:
+    loop_var: dns_zone_implementation
+
+- name: Retain literal public comparison without dropping warnings or
+    array order
+  ansible.builtin.set_fact:
+    dns_zone_comparisons: >-
+      {{ dns_zone_comparisons + [{'case': dns_zone_case,
+      'native': dns_zone_case_results.native,
+      'released': dns_zone_case_results.released,
+      'equal': (dns_zone_case_results.native | to_json(sort_keys=true)) ==
+      (dns_zone_case_results.released | to_json(sort_keys=true))}]
+      }}

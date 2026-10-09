@@ -1,0 +1,307 @@
+---
+- name: Demonstrate native server feature management and complete recovery
+  hosts: legacy_windows
+  gather_facts: false
+  vars_files:
+    - vars/feature.yml
+    - vars/feature_fixture.yml
+  vars:
+    feature_available_cases: >-
+      {{ feature_cases if (feature_setup.stdout | from_json).supported
+         else feature_legacy_cases }}
+    feature_run_cases: >-
+      {{ feature_available_cases
+         if feature_case_names | default(none) is none
+         else feature_available_cases |
+              selectattr('name','in',feature_case_names) | list }}
+    feature_evidence: >-
+      {{ {'results': feature_results,
+          'workspace': feature_workspace | default(none),
+          'setup': feature_setup | default(none),
+          'restoration': feature_restoration | default(none),
+          'reboot_restoration': feature_reboot_restoration | default(none),
+          'original_service': feature_original_service | default(none),
+          'original_features': feature_original_features | default(none),
+          'setup_service': feature_setup_service | default(none),
+          'final_service': feature_final_service | default(none),
+          'final_features': feature_final_features | default(none),
+          'staging_before': feature_staging_before,
+          'staging_after': feature_staging_after | default(none),
+          'workspace_absent': feature_staging_after is defined,
+          'selected_cases': feature_case_names | default(none),
+          'read_only_service_scope':
+            'complete configuration and SSH runtime; raw TI State retained',
+          'component_comparison_scope':
+            'SubFeatures/OptionalCompanions order qualified only during
+             mutations; read-only and final recovery require literal equality',
+          'upstream': feature_use_upstream | default(false) | bool} }}
+  tasks:
+    - name: Parse the rendered target fixture as Python 3.4 before allocation
+      ansible.builtin.command:
+        argv: ['{{ ansible_playbook_python }}', -c,
+               'import ast,sys;
+                ast.parse(sys.stdin.read(),feature_version=(3,4))']
+        stdin: '{{ feature_program }}'
+      delegate_to: localhost
+      changed_when: false
+      vars: &feature_local
+        ansible_connection: local
+        ansible_shell_type: sh
+        ansible_python_interpreter: '{{ ansible_playbook_python }}'
+      tags: [feature-fixture-validate]
+
+    - name: Preflight the complete case templates before any guest allocation
+      ansible.builtin.assert:
+        that:
+          - feature_cases | to_json | from_json | length == 30
+          - feature_legacy_cases | to_json | from_json | length == 4
+          - >-
+            feature_case_names | default(none) is none or
+            feature_case_names | difference(
+            (feature_cases + feature_legacy_cases) | map(attribute='name') |
+            list) | length == 0
+      vars:
+        feature_workspace: {path: 'C:\LegacyWindowsFeatureTemplatePlaceholder'}
+      delegate_to: localhost
+      tags: [feature-fixture-validate]
+
+    - name: Require real Python 3.4.4 and read initial global staging
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import glob,json,os,sys,tempfile; assert sys.version_info[:3]==(3,4,4);
+        print(json.dumps(sorted(glob.glob(os.path.join(tempfile.gettempdir(),
+        'ansible-tmp-*')))))""
+      register: feature_staging_before
+      changed_when: false
+
+    - name: Allocate a private local evidence file
+      ansible.builtin.tempfile:
+        state: file
+        path: '{{ playbook_dir }}/../../tmp'
+        prefix: 'feature-{{ inventory_hostname }}-'
+        suffix: .json
+      register: feature_capture
+      delegate_to: localhost
+      changed_when: false
+      vars: *feature_local
+
+    - name: Initialize retained full public results
+      ansible.builtin.set_fact:
+        feature_results: []
+      no_log: true
+
+    - name: Exercise all requests under a durable owned-feature journal
+      block:
+        - name: Allocate a uniquely named recovery workspace
+          sustainablelobster.legacy_windows.win_tempfile:  # noqa: args[module]
+            state: directory
+            prefix: legacy-windows-feature-
+          register: feature_workspace
+
+        - name: Read normal service before provider  # noqa: args[module]
+          sustainablelobster.legacy_windows.win_service_info:
+            name: TrustedInstaller
+          register: feature_original_service
+
+        - name: Preserve pre-provider public state and workspace before setup
+          ansible.builtin.copy:
+            content: '{{ feature_evidence | to_nice_json }}'
+            dest: '{{ feature_capture.path }}'
+            mode: '0600'
+          delegate_to: localhost
+          changed_when: false
+          no_log: true
+          vars: *feature_local
+
+        - name: Journal raw components and independent protected state
+          sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+            argv: ['{{ ansible_python_interpreter }}', '-',
+                   '{{ feature_workspace.path }}', setup]
+            stdin: '{{ feature_program }}'
+          register: feature_setup
+          changed_when: false
+          no_log: true
+
+        - name: Read post-catalogue service state  # noqa: args[module]
+          sustainablelobster.legacy_windows.win_service_info:
+            name: TrustedInstaller
+          register: feature_setup_service
+
+        - name: Read full public feature catalogue  # noqa: args[module]
+          when: (feature_setup.stdout | from_json).supported
+          sustainablelobster.legacy_windows.win_feature_info:
+          register: feature_original_features
+          no_log: true
+
+        - name: Preserve complete setup before any requested servicing
+          ansible.builtin.copy:
+            content: '{{ feature_evidence | to_nice_json }}'
+            dest: '{{ feature_capture.path }}'
+            mode: '0600'
+          delegate_to: localhost
+          changed_when: false
+          no_log: true
+          vars: *feature_local
+
+        - name: Exercise the declared public interface cases
+          ansible.builtin.include_tasks: tasks/win_feature_case.yml
+          loop: '{{ feature_run_cases }}'
+          loop_control:
+            loop_var: feature_case
+            label: '{{ feature_case.name }}'
+      always:
+        - name: Preserve raw results and failed validations before recovery
+          ansible.builtin.copy:
+            content: '{{ feature_evidence | to_nice_json }}'
+            dest: '{{ feature_capture.path }}'
+            mode: '0600'
+          delegate_to: localhost
+          changed_when: false
+          no_log: true
+          vars: *feature_local
+
+        - name: Restore only the owned feature and captured state
+          when: feature_workspace.path is defined
+          sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+            argv: ['{{ ansible_python_interpreter }}', '-',
+                   '{{ feature_workspace.path }}', cleanup]
+            stdin: '{{ feature_program }}'
+          register: feature_restoration
+          changed_when: false
+          failed_when: false
+          no_log: true
+
+        - name: Preserve raw cleanup output before parsing its report
+          ansible.builtin.copy:
+            content: '{{ feature_evidence | to_nice_json }}'
+            dest: '{{ feature_capture.path }}'
+            mode: '0600'
+          delegate_to: localhost
+          changed_when: false
+          no_log: true
+          vars: *feature_local
+
+        - name: Require a successful cleanup command before parsing its report
+          when: feature_workspace.path is defined
+          ansible.builtin.assert:
+            that:
+              - feature_restoration.rc == 0
+              - feature_restoration.stdout | from_json is mapping
+          no_log: true
+
+        - name: Complete only a recovery-requested servicing restart
+          when: >-
+            (feature_restoration.stdout | from_json).requires_reboot
+            | default(false)
+          block:
+            - name: Restart leased guest for recovery  # noqa: args[module]
+              sustainablelobster.legacy_windows.win_command:
+                argv: [shutdown.exe, /r, /f, /t, '5']
+
+            - name: Observe its SSH listener stop
+              ansible.builtin.wait_for:
+                host: '{{ ansible_host }}'
+                port: '{{ ansible_port | default(22) }}'
+                state: stopped
+                timeout: 120
+              delegate_to: localhost
+              vars: *feature_local
+
+            - name: Wait for SSH to return on the leased guest
+              ansible.builtin.wait_for:
+                host: '{{ ansible_host }}'
+                port: '{{ ansible_port | default(22) }}'
+                state: started
+                delay: 10
+                timeout: 300
+              delegate_to: localhost
+              vars: *feature_local
+
+            - name: Verify post-restart recovery  # noqa: args[module]
+              sustainablelobster.legacy_windows.win_command:
+                argv: ['{{ ansible_python_interpreter }}', '-',
+                       '{{ feature_workspace.path }}', cleanup]
+                stdin: '{{ feature_program }}'
+              register: feature_reboot_restoration
+              changed_when: false
+              no_log: true
+
+        - name: Read restored public catalogue  # noqa: args[module]
+          when: (feature_setup.stdout | from_json).supported
+          sustainablelobster.legacy_windows.win_feature_info:
+          register: feature_final_features
+          no_log: true
+
+        - name: Read full service after recovery  # noqa: args[module]
+          sustainablelobster.legacy_windows.win_service_info:
+            name: TrustedInstaller
+          register: feature_final_service
+
+        - name: Preserve complete recovery before any restoration gate
+          ansible.builtin.copy:
+            content: '{{ feature_evidence | to_nice_json }}'
+            dest: '{{ feature_capture.path }}'
+            mode: '0600'
+          delegate_to: localhost
+          changed_when: false
+          no_log: true
+          vars: *feature_local
+
+        - name: Require complete restoration and public service equality
+          ansible.builtin.assert:
+            that:
+              - >-
+                (feature_reboot_restoration.stdout | from_json).restored
+                if feature_reboot_restoration.stdout is defined
+                else (feature_restoration.stdout | from_json).restored
+              - feature_original_service == feature_final_service
+              - >-
+                not (feature_setup.stdout | from_json).supported or
+                feature_original_features == feature_final_features
+          no_log: true
+
+        - name: Finalize only the separately verified recovery journal
+          sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+            argv: ['{{ ansible_python_interpreter }}', '-',
+                   '{{ feature_workspace.path }}', finalize]
+            stdin: '{{ feature_program }}'
+          changed_when: false
+          no_log: true
+
+        - name: Remove only the strictly verified owned workspace
+          sustainablelobster.legacy_windows.win_file:  # noqa: args[module]
+            path: '{{ feature_workspace.path }}'
+            state: absent
+
+        - name: Require workspace absence outside a staged payload
+          ansible.builtin.raw: >-
+            cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+            "import glob,json,os,sys,tempfile;
+            assert not os.path.exists(sys.argv[1]);
+            print(json.dumps(sorted(glob.glob(os.path.join(tempfile.gettempdir(),
+            'ansible-tmp-*')))))" "{{ feature_workspace.path }}""
+          register: feature_staging_after
+          changed_when: false
+
+        - name: Save final raw cleanup before staging and case-count assertions
+          ansible.builtin.copy:
+            content: '{{ feature_evidence | to_nice_json }}'
+            dest: '{{ feature_capture.path }}'
+            mode: '0600'
+          delegate_to: localhost
+          changed_when: false
+          no_log: true
+          vars: *feature_local
+
+        - name: Require every case validated and the original staging restored
+          ansible.builtin.assert:
+            that:
+              - >-
+                feature_staging_before.stdout | from_json ==
+                feature_staging_after.stdout | from_json
+              - >-
+                feature_results | length == feature_run_cases | length
+              - >-
+                feature_results | selectattr('validated','equalto',true) |
+                list | length ==
+                feature_results | length

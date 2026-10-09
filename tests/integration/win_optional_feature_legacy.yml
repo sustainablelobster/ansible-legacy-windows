@@ -1,0 +1,12 @@
+---
+- name: Select installed older optional-feature capabilities without modern
+    options
+  hosts: legacy_windows
+  gather_facts: false
+  tasks:
+    - name: Select native legacy cases without changing modern coverage
+      ansible.builtin.set_fact:
+        optional_feature_use_legacy_cases: true
+
+- name: Exercise native optional features with complete maintained recovery
+  ansible.builtin.import_playbook: win_optional_feature.yml

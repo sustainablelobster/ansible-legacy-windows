@@ -1,0 +1,622 @@
+---
+audit_rule_registry_inherited_rule:
+  user: Everyone
+  rights: ReadKey
+  audit_flags: Success
+  is_inherited: 'True'
+  inheritance_flags: ContainerInherit, ObjectInherit
+  propagation_flags: None
+audit_rule_registry_child_rules: >-
+  {{ {} if audit_rule_baseline.child_registry.control // 8192 % 2 else
+     audit_rule_registry_inherited_rule }}
+audit_rule_registry_child_aces: >-
+  {{ [] if audit_rule_baseline.child_registry.control // 8192 % 2 else
+     [[83, 131097, 'S-1-1-0']] }}
+audit_rule_selected_file_rule:
+  user: Everyone
+  rights: Read
+  audit_flags: Success
+  is_inherited: 'False'
+  inheritance_flags: None
+  propagation_flags: None
+audit_rule_selected_registry_rule:
+  user: Everyone
+  rights: ReadKey
+  audit_flags: Success
+  is_inherited: 'False'
+  inheritance_flags: None
+  propagation_flags: None
+audit_rule_cases:
+  - name: SID string unmatched add check mode reports unchanged stored rules
+    role: directory
+    user: S-1-1-0
+    rights: [Read]
+    check: true
+    changed: true
+    aces: []
+    public_rules: {}
+  - name: SID string unmatched add fails account-name translation
+    role: directory
+    user: S-1-1-0
+    rights: [Read]
+    changed: false
+    failed: true
+    message: >-
+      Failed to set the audit rule: Exception calling "AddAuditRule" with "1"
+      argument(s): "Some or all identity references could not be translated."
+    aces: []
+  - name: Directory add check mode reports the stored empty SACL
+    role: directory
+    rights: [Read]
+    check: true
+    changed: true
+    aces: []
+    public_rules: {}
+  - name: Directory inheritable read audit
+    role: directory
+    rights: [Read]
+    changed: true
+    aces: [[67, 131209, S-1-1-0]]
+  - name: Repeated directory rule is unchanged
+    role: directory
+    rights: [read]
+    changed: false
+    aces: [[67, 131209, S-1-1-0]]
+  - name: Existing rule can match SID text without account-name translation
+    role: directory
+    user: S-1-1-0
+    rights: [Read]
+    changed: false
+    aces: [[67, 131209, S-1-1-0]]
+  - name: Merge additional rights and audit outcomes
+    role: directory
+    rights: [Write]
+    audit_flags: [success, failure]
+    changed: true
+    aces: [[67, 131209, S-1-1-0], [195, 278, S-1-1-0]]
+  - name: Match displayed read tokens in a stored rule
+    role: directory
+    rights: [Read]
+    changed: false
+    aces: [[67, 131209, S-1-1-0], [195, 278, S-1-1-0]]
+  - name: Purge check mode retains all stored rules
+    role: directory
+    state: absent
+    check: true
+    changed: true
+    aces: [[67, 131209, S-1-1-0], [195, 278, S-1-1-0]]
+  - name: Purge removes all explicit principal rules
+    role: directory
+    state: absent
+    changed: true
+    aces: []
+    public_rules: {}
+  - name: Repeated purge is unchanged
+    role: directory
+    state: absent
+    changed: false
+    aces: []
+    public_rules: {}
+  - name: File inheritance fails before writing
+    role: file
+    rights: [Read]
+    changed: false
+    failed: true
+    message: >-
+      The target type is a file. inheritance_flags must be changed to 'none'
+    aces: []
+  - name: File invalid right precedes inheritance validation
+    role: file
+    rights: [invalid]
+    changed: false
+    failed: true
+    message: invalid does not seem to be a valid FILE SYSTEM right
+    aces: []
+  - name: File no-inheritance check mode
+    role: file
+    rights: [Read]
+    inheritance_flags: [None]
+    check: true
+    changed: true
+    aces: []
+    public_rules: {}
+  - name: File read mask does not add synchronize
+    role: file
+    rights: [Read]
+    inheritance_flags: [None]
+    changed: true
+    aces: [[64, 131209, S-1-1-0]]
+  - name: Repeated file rule is unchanged
+    role: file
+    rights: [Read]
+    inheritance_flags: [None]
+    changed: false
+    aces: [[64, 131209, S-1-1-0]]
+  - name: Merge file failure audit with the same rights
+    role: file
+    rights: [Read]
+    audit_flags: [failure]
+    inheritance_flags: [None]
+    changed: true
+    aces: [[192, 131209, S-1-1-0]]
+  - name: Add a different principal without changing existing rules
+    role: file
+    user: BUILTIN\Users
+    rights: [Write]
+    inheritance_flags: [None]
+    changed: true
+    aces: [[192, 131209, S-1-1-0], [64, 278, S-1-5-32-545]]
+  - name: Purge preserves the other principal
+    role: file
+    state: absent
+    changed: true
+    aces: [[64, 278, S-1-5-32-545]]
+  - name: Purge the remaining file principal
+    role: file
+    user: BUILTIN\Users
+    state: absent
+    changed: true
+    aces: []
+    public_rules: {}
+  - name: Registry read audit check mode
+    role: registry
+    rights: [ReadKey]
+    check: true
+    changed: true
+    aces: []
+    public_rules: {}
+  - name: Registry read audit
+    role: registry
+    rights: [ReadKey]
+    changed: true
+    aces: [[67, 131097, S-1-1-0]]
+  - name: Repeated registry rule is unchanged
+    role: registry
+    rights: [readkey]
+    changed: false
+    aces: [[67, 131097, S-1-1-0]]
+  - name: Check-mode purge respects registry child protection
+    role: child_registry
+    state: absent
+    check: true
+    changed: false
+    aces: '{{ audit_rule_registry_child_aces }}'
+    public_rules: '{{ audit_rule_registry_child_rules }}'
+  - name: Actual purge respects registry child protection
+    role: child_registry
+    state: absent
+    changed: false
+    aces: '{{ audit_rule_registry_child_aces }}'
+    public_rules: '{{ audit_rule_registry_child_rules }}'
+  - name: Registry rejects filesystem rights before writing
+    role: registry
+    rights: [Read]
+    changed: false
+    failed: true
+    message: Read does not seem to be a valid REGISTRY right
+    aces: [[67, 131097, S-1-1-0]]
+  - name: Purge registry audit rules
+    role: registry
+    state: absent
+    changed: true
+    aces: []
+    public_rules: {}
+    protected: true
+  - name: Registry repeated purge is unchanged
+    role: registry
+    state: absent
+    changed: false
+    aces: []
+    public_rules: {}
+    protected: true
+  - name: Full control filesystem audit
+    role: directory
+    rights: [FullControl]
+    inheritance_flags: [None]
+    changed: true
+    aces: [[64, 2032127, S-1-1-0]]
+  - name: Displayed rights matching is not bit containment
+    role: directory
+    rights: [Read]
+    inheritance_flags: [None]
+    changed: true
+    native_unchanged: true
+    aces: [[64, 2032127, S-1-1-0]]
+  - name: Repeated narrower request retains the upstream changed result
+    role: directory
+    rights: [Read]
+    inheritance_flags: [None]
+    changed: true
+    native_unchanged: true
+    aces: [[64, 2032127, S-1-1-0]]
+  - name: Remove full-control audit
+    role: directory
+    state: absent
+    changed: true
+    aces: []
+    public_rules: {}
+  - name: Store direct-child propagation flags on the protected directory
+    role: directory
+    rights: [Delete]
+    propagation_flags: NoPropagateInherit
+    audit_flags: [success, failure]
+    changed: true
+    aces: [[199, 65536, S-1-1-0]]
+  - name: Check-mode purge of the protected child stays unchanged
+    role: child_file
+    state: absent
+    check: true
+    changed: false
+    aces: []
+    public_rules: {}
+  - name: Remove direct-child propagation rule
+    role: directory
+    state: absent
+    changed: true
+    aces: []
+    public_rules: {}
+  - name: Empty rights retain the constructor enum diagnostic
+    role: directory
+    rights: []
+    check: true
+    changed: false
+    failed: true
+    wrapper_failure: true
+    aces: []
+    message: >-
+      Unhandled exception while executing module: Cannot convert value "" to
+      type "System.Security.AccessControl.FileSystemRights". Error: "The
+      identifier name  cannot be processed because it is either too similar
+      or identical to the following enumerator names: ListDirectory, ReadData,
+      WriteData, CreateFiles, CreateDirectories, AppendData,
+      ReadExtendedAttributes, WriteExtendedAttributes, Traverse, ExecuteFile,
+      DeleteSubdirectoriesAndFiles, ReadAttributes, WriteAttributes, Write,
+      Delete, ReadPermissions, Read, ReadAndExecute, Modify, ChangePermissions,
+      TakeOwnership, Synchronize, FullControl. Use a more specific identifier
+      name."
+  - name: Null rights retain the constructor overload diagnostic
+    role: directory
+    rights: null
+    check: true
+    changed: false
+    failed: true
+    wrapper_failure: true
+    aces: []
+    message: >-
+      Unhandled exception while executing module: Cannot find an overload for
+      "FileSystemAuditRule" and the argument count: "5".
+  - name: Empty audit flags retain the constructor enum diagnostic
+    role: directory
+    rights: [Read]
+    audit_flags: []
+    check: true
+    changed: false
+    failed: true
+    wrapper_failure: true
+    aces: []
+    message: >-
+      Unhandled exception while executing module: Cannot convert value "" to
+      type "System.Security.AccessControl.AuditFlags". Error: "The identifier
+      name  cannot be processed because it is either too similar or identical
+      to the following enumerator names: None, Success, Failure. Use a more
+      specific identifier name."
+  - name: Null file inheritance fails before the constructor
+    role: file
+    rights: [Read]
+    inheritance_flags: null
+    check: true
+    changed: false
+    failed: true
+    aces: []
+    message: >-
+      The target type is a file. inheritance_flags must be changed to 'none'
+  - name: Null propagation retains the constructor overload diagnostic
+    role: directory
+    rights: [Read]
+    propagation_flags: null
+    check: true
+    changed: false
+    failed: true
+    wrapper_failure: true
+    aces: []
+    message: >-
+      Unhandled exception while executing module: Cannot find an overload for
+      "FileSystemAuditRule" and the argument count: "5".
+  - name: Unknown identity fails before reading the SACL
+    role: directory
+    user: legacy_audit_rule_absent_7e6dfdc
+    rights: [Read]
+    check: true
+    changed: false
+    failed: true
+    wrapper_failure: true
+    aces: []
+    message: >-
+      Failed to lookup the identity (legacy_audit_rule_absent_7e6dfdc): The term
+      'Fail-Json' is not recognized as the name of a cmdlet, function, script
+      file, or operable program. Check the spelling of the name, or if a path
+      was included, verify that the path is correct and try again.
+  - name: No-match file check mode retains the null ACL binder failure
+    role: provider_empty_file
+    rights: [Read]
+    inheritance_flags: [None]
+    check: true
+    changed: false
+    failed: true
+    aces: []
+    public_rules: {}
+    message: >-
+      Failed to apply audit change: Cannot bind argument to parameter
+      'AclObject' because it is null.
+  - name: No-match file actual add retains the null method failure
+    role: provider_empty_file
+    rights: [Read]
+    inheritance_flags: [None]
+    changed: false
+    failed: true
+    aces: []
+    message: >-
+      Failed to set the audit rule: You cannot call a method on a null-valued
+      expression.
+  - name: No-match file purge retains the fresh wrapper result
+    role: provider_empty_file
+    state: absent
+    changed: false
+    failed: true
+    wrapper_failure: true
+    aces: []
+    message: >-
+      Unhandled exception while executing module: You cannot call a method on
+      a null-valued expression.
+  - name: No-match registry check mode retains the null ACL binder failure
+    role: provider_empty_registry
+    rights: [ReadKey]
+    check: true
+    changed: false
+    failed: true
+    aces: []
+    public_rules: {}
+    message: >-
+      Failed to apply audit change: Cannot bind argument to parameter
+      'AclObject' because it is null.
+  - name: No-match registry actual add retains the null method failure
+    role: provider_empty_registry
+    rights: [ReadKey]
+    changed: false
+    failed: true
+    aces: []
+    message: >-
+      Failed to set the audit rule: You cannot call a method on a null-valued
+      expression.
+  - name: No-match registry purge retains the fresh wrapper result
+    role: provider_empty_registry
+    state: absent
+    changed: false
+    failed: true
+    wrapper_failure: true
+    aces: []
+    message: >-
+      Unhandled exception while executing module: You cannot call a method on
+      a null-valued expression.
+  - name: Single file match check mode reads the selected sibling
+    role: provider_file
+    observe_role: file
+    rights: [Read]
+    inheritance_flags: [None]
+    check: true
+    changed: true
+    aces: []
+    public_rules: {}
+  - name: Single file match writes the sibling instead of the literal name
+    role: provider_file
+    observe_role: file
+    rights: [Read]
+    inheritance_flags: [None]
+    changed: true
+    aces: [[64, 131209, S-1-1-0]]
+    public_rules: '{{ audit_rule_selected_file_rule }}'
+  - name: Single file match purge removes the selected sibling rules
+    role: provider_file
+    observe_role: file
+    state: absent
+    changed: true
+    aces: []
+    public_rules: {}
+  - name: Single registry match check mode reads the selected sibling
+    role: provider_registry
+    observe_role: provider_registry_sibling
+    rights: [ReadKey]
+    inheritance_flags: [None]
+    check: true
+    changed: true
+    aces: []
+    public_rules: {}
+  - name: Single registry match writes only the selected sibling
+    role: provider_registry
+    observe_role: provider_registry_sibling
+    rights: [ReadKey]
+    inheritance_flags: [None]
+    changed: true
+    aces: [[64, 131097, S-1-1-0]]
+    public_rules: '{{ audit_rule_selected_registry_rule }}'
+  - name: Single registry match purge removes the selected sibling rules
+    role: provider_registry
+    observe_role: provider_registry_sibling
+    state: absent
+    changed: true
+    aces: []
+    public_rules: {}
+  - name: Single escaped file bracket retains the null ACL failure
+    role: provider_single_escape_file
+    rights: [Read]
+    inheritance_flags: [None]
+    check: true
+    changed: false
+    failed: true
+    aces: []
+    public_rules: {}
+    message: >-
+      Failed to apply audit change: Cannot bind argument to parameter
+      'AclObject' because it is null.
+  - name: Double escaped file bracket reads and writes different objects
+    role: provider_escaped_file
+    observe_role: file
+    read_role: provider_file
+    rights: [Read]
+    inheritance_flags: [None]
+    changed: true
+    aces: [[64, 131209, S-1-1-0]]
+    public_rules: {}
+  - name: Double escaped file repeat retains changed with no native write effect
+    role: provider_escaped_file
+    observe_role: file
+    read_role: provider_file
+    rights: [Read]
+    inheritance_flags: [None]
+    changed: true
+    native_unchanged: true
+    aces: [[64, 131209, S-1-1-0]]
+    public_rules: {}
+  - name: Single escaped registry bracket retains the null ACL failure
+    role: provider_single_escape_registry
+    rights: [ReadKey]
+    inheritance_flags: [None]
+    check: true
+    changed: false
+    failed: true
+    aces: []
+    public_rules: {}
+    message: >-
+      Failed to apply audit change: Cannot bind argument to parameter
+      'AclObject' because it is null.
+  - name: Double escaped registry bracket reads and writes different objects
+    role: provider_escaped_registry
+    observe_role: provider_registry_sibling
+    read_role: provider_registry
+    rights: [ReadKey]
+    inheritance_flags: [None]
+    changed: true
+    aces: [[64, 131097, S-1-1-0]]
+    public_rules: {}
+  - name: Double escaped registry repeat retains changed with no native effect
+    role: provider_escaped_registry
+    observe_role: provider_registry_sibling
+    read_role: provider_registry
+    rights: [ReadKey]
+    inheritance_flags: [None]
+    changed: true
+    native_unchanged: true
+    aces: [[64, 131097, S-1-1-0]]
+    public_rules: {}
+
+audit_rule_range_cases:
+  - name: Unicode file range check selects the division-sign sibling
+    role: provider_range_file
+    observe_role: provider_range_file_sibling
+    rights: [Read]
+    inheritance_flags: [None]
+    check: true
+    changed: true
+    aces: []
+    public_rules: {}
+  - name: Unicode file range writes only the division-sign sibling
+    role: provider_range_file
+    observe_role: provider_range_file_sibling
+    rights: [Read]
+    inheritance_flags: [None]
+    changed: true
+    aces: [[64, 131209, S-1-1-0]]
+    public_rules: '{{ audit_rule_selected_file_rule }}'
+  - name: Unicode file range repeats the selected sibling rule
+    role: provider_range_file
+    observe_role: provider_range_file_sibling
+    rights: [Read]
+    inheritance_flags: [None]
+    changed: false
+    aces: [[64, 131209, S-1-1-0]]
+    public_rules: '{{ audit_rule_selected_file_rule }}'
+  - name: Unicode file range removes only the selected sibling rule
+    role: provider_range_file
+    observe_role: provider_range_file_sibling
+    state: absent
+    changed: true
+    aces: []
+    public_rules: {}
+  - name: Malformed file range check fails before security writes
+    role: provider_invalid_range_file
+    rights: [Read]
+    inheritance_flags: [None]
+    check: true
+    changed: false
+    failed: true
+    aces: []
+    message: >-
+      Unable to retrieve the ACL on
+      {{ audit_rule_paths.provider_invalid_range_file }}:
+      parsing "[@-[]" - Unterminated [] set.
+  - name: Malformed file range actual fails before security writes
+    role: provider_invalid_range_file
+    rights: [Read]
+    inheritance_flags: [None]
+    changed: false
+    failed: true
+    aces: []
+    message: >-
+      Unable to retrieve the ACL on
+      {{ audit_rule_paths.provider_invalid_range_file }}:
+      parsing "[@-[]" - Unterminated [] set.
+  - name: Unicode registry range check selects the division-sign sibling
+    role: provider_range_registry
+    observe_role: provider_range_registry_sibling
+    rights: [ReadKey]
+    inheritance_flags: [None]
+    check: true
+    changed: true
+    aces: []
+    public_rules: {}
+  - name: Unicode registry range writes only the division-sign sibling
+    role: provider_range_registry
+    observe_role: provider_range_registry_sibling
+    rights: [ReadKey]
+    inheritance_flags: [None]
+    changed: true
+    aces: [[64, 131097, S-1-1-0]]
+    public_rules: '{{ audit_rule_selected_registry_rule }}'
+  - name: Unicode registry range repeats the selected sibling rule
+    role: provider_range_registry
+    observe_role: provider_range_registry_sibling
+    rights: [ReadKey]
+    inheritance_flags: [None]
+    changed: false
+    aces: [[64, 131097, S-1-1-0]]
+    public_rules: '{{ audit_rule_selected_registry_rule }}'
+  - name: Unicode registry range removes only the selected sibling rule
+    role: provider_range_registry
+    observe_role: provider_range_registry_sibling
+    state: absent
+    changed: true
+    aces: []
+    public_rules: {}
+  - name: Malformed registry range check fails before security writes
+    role: provider_invalid_range_registry
+    rights: [ReadKey]
+    inheritance_flags: [None]
+    check: true
+    changed: false
+    failed: true
+    aces: []
+    message: >-
+      Unable to retrieve the ACL on
+      {{ audit_rule_paths.provider_invalid_range_registry }}:
+      parsing "[@-[]" - Unterminated [] set.
+  - name: Malformed registry range actual fails before security writes
+    role: provider_invalid_range_registry
+    rights: [ReadKey]
+    inheritance_flags: [None]
+    changed: false
+    failed: true
+    aces: []
+    message: >-
+      Unable to retrieve the ACL on
+      {{ audit_rule_paths.provider_invalid_range_registry }}:
+      parsing "[@-[]" - Unterminated [] set.

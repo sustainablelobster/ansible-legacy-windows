@@ -1,0 +1,219 @@
+---
+- name: Verify restart coordination and owned staging cleanup
+  hosts: legacy_windows
+  gather_facts: false
+  vars:
+    reboot_parameters:
+      reboot_timeout: 180
+      msg: Legacy Windows local reboot verification
+    reboot_check_cases:
+      - {}
+      - {pre_reboot_delay_sec: 4, post_reboot_delay_sec: 2}
+      - {reboot_timeout: invalid-in-check-mode, unknown: true}
+    reboot_startup_observer: >-
+      import ctypes,json,sys;
+      version=sys.getwindowsversion();
+      legacy=version.major==5 and version.minor in (1,2);
+      kernel=ctypes.WinDLL('kernel32',use_last_error=True);
+      kernel.OpenEventW.argtypes=[ctypes.c_uint32,ctypes.c_int,ctypes.c_wchar_p];
+      kernel.OpenEventW.restype=ctypes.c_void_p;
+      kernel.WaitForSingleObject.argtypes=[ctypes.c_void_p,ctypes.c_uint32];
+      kernel.WaitForSingleObject.restype=ctypes.c_uint32;
+      kernel.CloseHandle.argtypes=[ctypes.c_void_p];
+      kernel.CloseHandle.restype=ctypes.c_int;
+      handle=kernel.OpenEventW(0x00100000,False,
+      'Global\\SC_AutoStartComplete') if legacy else None;
+      error=ctypes.get_last_error() if legacy and not handle else None;
+      wait=kernel.WaitForSingleObject(handle,0) if handle else None;
+      closed=bool(kernel.CloseHandle(handle)) if handle else None;
+      print(json.dumps({'python':list(sys.version_info[:3]),
+      'os':list(version[:3]),'legacy':legacy,'opened':bool(handle),
+      'open_error':error,'wait':wait,'closed':closed}))
+  tasks:
+    - name: Allocate a unique private controller evidence file
+      ansible.builtin.tempfile:
+        state: file
+        path: '{{ playbook_dir }}/../../tmp'
+        prefix: 'reboot-{{ inventory_hostname }}-'
+        suffix: .json
+      register: reboot_evidence
+      delegate_to: localhost
+      changed_when: false
+      vars:
+        ansible_connection: local
+        ansible_shell_type: sh
+        ansible_python_interpreter: '{{ ansible_playbook_python }}'
+
+    - name: Require Python 3.4.4 and record initial staging
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import glob,json,os,sys,tempfile;
+        assert sys.version_info[:3] == (3,4,4);
+        print(json.dumps(sorted(glob.glob(os.path.join(
+        tempfile.gettempdir(),'ansible-tmp-*')))))""
+      register: reboot_staging_before
+      changed_when: false
+
+    - name: Verify reboot behavior while retaining failed observations
+      block:
+        - name: Read independent boot and pending-reboot information
+          sustainablelobster.legacy_windows.win_reboot_info:
+          register: reboot_before
+
+        - name: Reject queued servicing before this bounded restart experiment
+          ansible.builtin.assert:
+            that: not reboot_before.reboot_required
+
+        - name: Independently record the boot-scoped legacy startup signal
+          ansible.builtin.raw: >-
+            cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+            "{{ reboot_startup_observer }}""
+          register: reboot_startup_before
+          changed_when: false
+
+        - name: Predict reboot without target writes or argument validation
+          sustainablelobster.legacy_windows.win_reboot:  # noqa: args[module]
+            '{{ item }}'
+          loop: '{{ reboot_check_cases }}'
+          check_mode: true
+          register: reboot_checks
+
+        - name: Require exact check-mode flags
+          ansible.builtin.assert:
+            that:
+              - item.changed
+              - item.rebooted
+              - item.elapsed == 0
+              - not item.failed | default(false)
+          loop: '{{ reboot_checks.results }}'
+          loop_control:
+            label: '{{ item.item }}'
+
+        - name: Predict the same requests with the unchanged source
+          when: reboot_compare | default(false) | bool
+          ansible.windows.win_reboot: '{{ item }}'
+          loop: '{{ reboot_check_cases }}'
+          check_mode: true
+          register: reboot_source_checks
+
+        - name: Compare complete check-mode dictionaries
+          when: reboot_compare | default(false) | bool
+          ansible.builtin.assert:
+            that: reboot_checks.results == reboot_source_checks.results
+
+        - name: Restart using native default boot and readiness operations
+          sustainablelobster.legacy_windows.win_reboot:  # noqa: args[module]
+            '{{ reboot_parameters }}'
+          register: reboot_native
+
+        - name: Independently verify changed boot and native reboot event
+          sustainablelobster.legacy_windows.win_reboot_info:
+          register: reboot_after
+
+        - name: Independently observe startup completion after restart
+          ansible.builtin.raw: >-
+            cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+            "{{ reboot_startup_observer }}""
+          register: reboot_startup_after
+          changed_when: false
+
+        - name: Require a signaled legacy event and closed observation handle
+          ansible.builtin.assert:
+            that:
+              - (reboot_startup_after.stdout | from_json).python == [3, 4, 4]
+              - >-
+                not (reboot_startup_after.stdout | from_json).legacy or
+                ((reboot_startup_after.stdout | from_json).opened and
+                (reboot_startup_after.stdout | from_json).wait == 0 and
+                (reboot_startup_after.stdout | from_json).closed)
+
+        - name: Require successful native flags and a genuine changed boot
+          ansible.builtin.assert:
+            that:
+              - reboot_native.changed and reboot_native.rebooted
+              - not reboot_native.failed
+              - not reboot_native.unreachable | default(false)
+              - reboot_native.elapsed >= 0 and reboot_native.elapsed < 360
+              - reboot_after.last_reboot.time_epoch >
+                reboot_before.last_reboot.time_epoch
+              - not reboot_after.reboot_required
+              - reboot_after.last_reboot.details.comment ==
+                reboot_parameters.msg
+
+        - name: Restart using the unchanged source on comparison targets
+          when: reboot_compare | default(false) | bool
+          ansible.windows.win_reboot: '{{ reboot_parameters }}'
+          register: reboot_source
+
+        - name: Independently verify the source restart
+          when: reboot_compare | default(false) | bool
+          sustainablelobster.legacy_windows.win_reboot_info:
+          register: reboot_source_after
+
+        - name: Require source flags and independently bounded elapsed time
+          when: reboot_compare | default(false) | bool
+          ansible.builtin.assert:
+            that:
+              - reboot_source.changed == reboot_native.changed
+              - reboot_source.rebooted == reboot_native.rebooted
+              - reboot_source.failed == reboot_native.failed
+              - reboot_source.get('unreachable', false) ==
+                reboot_native.get('unreachable', false)
+              - reboot_source.elapsed >= 0 and reboot_source.elapsed < 360
+              - reboot_source_after.last_reboot.time_epoch >
+                reboot_after.last_reboot.time_epoch
+              - not reboot_source_after.reboot_required
+              - reboot_source_after.last_reboot.details.comment ==
+                reboot_parameters.msg
+
+        - name: Compare complete results with elapsed independently checked
+          when: reboot_compare | default(false) | bool
+          tags: reboot_results
+          ansible.builtin.assert:
+            that:
+              - >-
+                (reboot_source | combine({'elapsed': 0})) ==
+                (reboot_native | combine({'elapsed': 0}))
+      always:
+        - name: Observe owned staging after success or failure
+          ansible.builtin.raw: >-
+            cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+            "import glob,json,os,tempfile;
+            print(json.dumps(sorted(glob.glob(os.path.join(
+            tempfile.gettempdir(),'ansible-tmp-*')))))""
+          register: reboot_staging_after
+          changed_when: false
+          ignore_errors: true
+          ignore_unreachable: true
+
+        - name: Retain complete requests and available public boot observations
+          ansible.builtin.copy:
+            content: >-
+              {{ {'parameters': reboot_parameters,
+                  'checks': reboot_checks | default(none),
+                  'source_checks': reboot_source_checks | default(none),
+                  'before': reboot_before | default(none),
+                  'native': reboot_native | default(none),
+                  'after': reboot_after | default(none),
+                  'startup_before': reboot_startup_before | default(none),
+                  'startup_after': reboot_startup_after | default(none),
+                  'source': reboot_source | default(none),
+                  'source_after': reboot_source_after | default(none),
+                  'staging_before': reboot_staging_before,
+                  'staging_after': reboot_staging_after} | to_nice_json }}
+            dest: '{{ reboot_evidence.path }}'
+            mode: '0600'
+          delegate_to: localhost
+          changed_when: false
+          vars:
+            ansible_connection: local
+            ansible_shell_type: sh
+            ansible_python_interpreter: '{{ ansible_playbook_python }}'
+
+        - name: Require exact global staging equality
+          ansible.builtin.assert:
+            that:
+              - not reboot_staging_after.failed | default(false)
+              - not reboot_staging_after.unreachable | default(false)
+              - reboot_staging_before.stdout | from_json ==
+                reboot_staging_after.stdout | from_json

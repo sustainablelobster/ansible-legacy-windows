@@ -1,0 +1,381 @@
+{
+  "provenance": {
+    "upstream": "ansible.windows 3.8.0 win_reboot_info.ps1",
+    "runtime": "Windows PowerShell 5.1.26100.7462",
+    "method": "Executed unchanged Format-ReasonCode and Get-LastRebootEvent function definitions. Get-WinEvent was replaced by a function returning synthetic objects with DateTime TimeCreated and ordered Value properties. Boot time was 2026-09-29T12:00:00Z. Function output was assigned to a details hashtable entry and serialized with ConvertTo-Json -InputObject, depth 8. The AnsibleModule was an uninitialized instance of the actual Ansible.Basic type, preserving its Warn method overloads. No StrictMode was enabled. Numeric output retains exact Int64 values.",
+    "privacy": "Synthetic values only; no host events, hostnames, or account names are included."
+  },
+  "reason_cases": [
+    {
+      "input": null,
+      "output": 0,
+      "type": "System.Int64"
+    },
+    {
+      "input": "",
+      "output": 0,
+      "type": "System.Int64"
+    },
+    {
+      "input": " ",
+      "output": " ",
+      "type": "System.String"
+    },
+    {
+      "input": "0",
+      "output": 0,
+      "type": "System.Int64"
+    },
+    {
+      "input": "123",
+      "output": 123,
+      "type": "System.Int64"
+    },
+    {
+      "input": "-1",
+      "output": -1,
+      "type": "System.Int64"
+    },
+    {
+      "input": "0x80040002",
+      "output": 2147745794,
+      "type": "System.Int64"
+    },
+    {
+      "input": "0xffffffff",
+      "output": 4294967295,
+      "type": "System.Int64"
+    },
+    {
+      "input": "0xffffffffffffffff",
+      "output": -1,
+      "type": "System.Int64"
+    },
+    {
+      "input": "0x10000000000000000",
+      "output": "0x10000000000000000",
+      "type": "System.String"
+    },
+    {
+      "input": "2147745794",
+      "output": 2147745794,
+      "type": "System.Int64"
+    },
+    {
+      "input": "9223372036854775807",
+      "output": 9223372036854775807,
+      "type": "System.Int64"
+    },
+    {
+      "input": "9223372036854775808",
+      "output": "9223372036854775808",
+      "type": "System.String"
+    },
+    {
+      "input": "-9223372036854775808",
+      "output": -9223372036854775808,
+      "type": "System.Int64"
+    },
+    {
+      "input": "-9223372036854775809",
+      "output": "-9223372036854775809",
+      "type": "System.String"
+    },
+    {
+      "input": "invalid",
+      "output": "invalid",
+      "type": "System.String"
+    },
+    {
+      "input": "1.5",
+      "output": 2,
+      "type": "System.Int64"
+    },
+    {
+      "input": "2.5",
+      "output": 2,
+      "type": "System.Int64"
+    },
+    {
+      "input": "-1.5",
+      "output": -2,
+      "type": "System.Int64"
+    },
+    {
+      "input": "1e3",
+      "output": 1000,
+      "type": "System.Int64"
+    },
+    {
+      "input": "1kb",
+      "output": "1kb",
+      "type": "System.String"
+    },
+    {
+      "input": " 0x80040002 ",
+      "output": 2147745794,
+      "type": "System.Int64"
+    },
+    {
+      "input": "+42",
+      "output": 42,
+      "type": "System.Int64"
+    },
+    {
+      "input": "#ff",
+      "output": 255,
+      "type": "System.Int64"
+    },
+    {
+      "input": "&hff",
+      "output": 255,
+      "type": "System.Int64"
+    },
+    {
+      "input": "+0xff",
+      "output": "+0xff",
+      "type": "System.String"
+    },
+    {
+      "input": "-0xff",
+      "output": "-0xff",
+      "type": "System.String"
+    },
+    {
+      "input": "0x+ff",
+      "output": 255,
+      "type": "System.Int64"
+    },
+    {
+      "input": "#+ff",
+      "output": 255,
+      "type": "System.Int64"
+    },
+    {
+      "input": "#ffffffffffffffff",
+      "output": -1,
+      "type": "System.Int64"
+    },
+    {
+      "input": "&h8000000000000000",
+      "output": -9223372036854775808,
+      "type": "System.Int64"
+    },
+    {
+      "input": "1,000",
+      "output": 1000,
+      "type": "System.Int64"
+    },
+    {
+      "input": "1_000",
+      "output": "1_000",
+      "type": "System.String"
+    },
+    {
+      "input": "NaN",
+      "output": "NaN",
+      "type": "System.String"
+    },
+    {
+      "input": "Infinity",
+      "output": "Infinity",
+      "type": "System.String"
+    }
+  ],
+  "events": [
+    {
+      "failed": false,
+      "id": "absent",
+      "raw_json": "{\"details\":{}}"
+    },
+    {
+      "failed": false,
+      "id": "older",
+      "raw_json": "{\"details\":{}}"
+    },
+    {
+      "failed": false,
+      "id": "threshold",
+      "raw_json": "{\"details\":{\"reason_code\":2147745794,\"comment\":\"\",\"initiated_by\":\"DOMAIN\\\\user\",\"type\":\"restart\",\"event_time\":\"2026-09-29T11:55:00Z\",\"reason\":\"synthetic reason\",\"process\":\"C:\\\\synthetic.exe\"}}"
+    },
+    {
+      "failed": false,
+      "id": "recent",
+      "raw_json": "{\"details\":{\"reason_code\":2147745794,\"comment\":\"\",\"initiated_by\":\"DOMAIN\\\\user\",\"type\":\"restart\",\"event_time\":\"2026-09-29T11:59:00Z\",\"reason\":\"synthetic reason\",\"process\":\"C:\\\\synthetic.exe\"}}"
+    },
+    {
+      "failed": false,
+      "id": "future",
+      "raw_json": "{\"details\":{\"reason_code\":2147745794,\"comment\":\"\",\"initiated_by\":\"DOMAIN\\\\user\",\"type\":\"restart\",\"event_time\":\"2026-09-29T12:01:00Z\",\"reason\":\"synthetic reason\",\"process\":\"C:\\\\synthetic.exe\"}}"
+    },
+    {
+      "failed": false,
+      "id": "zero_properties",
+      "raw_json": "{\"details\":{\"reason_code\":0,\"comment\":null,\"initiated_by\":null,\"type\":null,\"event_time\":\"2026-09-29T12:00:00Z\",\"reason\":null,\"process\":null}}"
+    },
+    {
+      "failed": false,
+      "id": "four_properties",
+      "raw_json": "{\"details\":{\"reason_code\":2147745794,\"comment\":null,\"initiated_by\":null,\"type\":null,\"event_time\":\"2026-09-29T12:00:00Z\",\"reason\":\"synthetic reason\",\"process\":\"C:\\\\synthetic.exe\"}}"
+    },
+    {
+      "failed": true,
+      "id": "null_time",
+      "message": "Cannot find an overload for \"Warn\" and the argument count: \"2\".",
+      "type": "System.Management.Automation.MethodException"
+    }
+  ],
+  "typed_provenance": "Synthetic typed objects assigned to every event property, then passed through unchanged Get-LastRebootEvent and Ansible.Basic.AnsibleModule.ToJson (ConvertTo-Json -InputObject, depth 99). Corrected capture used UInt64, error_action stop, and asserted 22 cases with zero script errors. DateTime input was UTC 2026-09-29T12:00:00.125Z; Guid input was 01234567-89ab-cdef-0123-456789abcdef; SID input was S-1-5-18. Types are named by case id. No actual host event data is included.",
+  "typed_cases": [
+    {
+      "failed": false,
+      "id": "null",
+      "raw_json": "{\"details\":{\"reason_code\":0,\"comment\":null,\"initiated_by\":null,\"type\":null,\"event_time\":\"2026-09-29T12:00:00Z\",\"reason\":null,\"process\":null}}"
+    },
+    {
+      "failed": false,
+      "id": "string",
+      "raw_json": "{\"details\":{\"reason_code\":\"Text 雪\",\"comment\":\"Text 雪\",\"initiated_by\":\"Text 雪\",\"type\":\"Text 雪\",\"event_time\":\"2026-09-29T12:00:00Z\",\"reason\":\"Text 雪\",\"process\":\"Text 雪\"}}"
+    },
+    {
+      "failed": false,
+      "id": "byte",
+      "raw_json": "{\"details\":{\"reason_code\":255,\"comment\":255,\"initiated_by\":255,\"type\":255,\"event_time\":\"2026-09-29T12:00:00Z\",\"reason\":255,\"process\":255}}"
+    },
+    {
+      "failed": false,
+      "id": "sbyte",
+      "raw_json": "{\"details\":{\"reason_code\":-1,\"comment\":-1,\"initiated_by\":-1,\"type\":-1,\"event_time\":\"2026-09-29T12:00:00Z\",\"reason\":-1,\"process\":-1}}"
+    },
+    {
+      "failed": false,
+      "id": "uint16",
+      "raw_json": "{\"details\":{\"reason_code\":65535,\"comment\":65535,\"initiated_by\":65535,\"type\":65535,\"event_time\":\"2026-09-29T12:00:00Z\",\"reason\":65535,\"process\":65535}}"
+    },
+    {
+      "failed": false,
+      "id": "int32",
+      "raw_json": "{\"details\":{\"reason_code\":-2147483648,\"comment\":-2147483648,\"initiated_by\":-2147483648,\"type\":-2147483648,\"event_time\":\"2026-09-29T12:00:00Z\",\"reason\":-2147483648,\"process\":-2147483648}}"
+    },
+    {
+      "failed": false,
+      "id": "uint64",
+      "raw_json": "{\"details\":{\"reason_code\":18446744073709551615,\"comment\":18446744073709551615,\"initiated_by\":18446744073709551615,\"type\":18446744073709551615,\"event_time\":\"2026-09-29T12:00:00Z\",\"reason\":18446744073709551615,\"process\":18446744073709551615}}"
+    },
+    {
+      "failed": false,
+      "id": "single",
+      "raw_json": "{\"details\":{\"reason_code\":1,\"comment\":1.25,\"initiated_by\":1.25,\"type\":1.25,\"event_time\":\"2026-09-29T12:00:00Z\",\"reason\":1.25,\"process\":1.25}}"
+    },
+    {
+      "failed": false,
+      "id": "double",
+      "raw_json": "{\"details\":{\"reason_code\":1,\"comment\":1.25,\"initiated_by\":1.25,\"type\":1.25,\"event_time\":\"2026-09-29T12:00:00Z\",\"reason\":1.25,\"process\":1.25}}"
+    },
+    {
+      "failed": false,
+      "id": "boolean",
+      "raw_json": "{\"details\":{\"reason_code\":1,\"comment\":true,\"initiated_by\":true,\"type\":true,\"event_time\":\"2026-09-29T12:00:00Z\",\"reason\":true,\"process\":true}}"
+    },
+    {
+      "failed": false,
+      "id": "binary",
+      "raw_json": "{\"details\":{\"reason_code\":[0,255],\"comment\":[0,255],\"initiated_by\":[0,255],\"type\":[0,255],\"event_time\":\"2026-09-29T12:00:00Z\",\"reason\":[0,255],\"process\":[0,255]}}"
+    },
+    {
+      "failed": false,
+      "id": "empty_binary",
+      "raw_json": "{\"details\":{\"reason_code\":{},\"comment\":[],\"initiated_by\":[],\"type\":[],\"event_time\":\"2026-09-29T12:00:00Z\",\"reason\":[],\"process\":[]}}"
+    },
+    {
+      "failed": false,
+      "id": "guid",
+      "raw_json": "{\"details\":{\"reason_code\":\"01234567-89ab-cdef-0123-456789abcdef\",\"comment\":\"01234567-89ab-cdef-0123-456789abcdef\",\"initiated_by\":\"01234567-89ab-cdef-0123-456789abcdef\",\"type\":\"01234567-89ab-cdef-0123-456789abcdef\",\"event_time\":\"2026-09-29T12:00:00Z\",\"reason\":\"01234567-89ab-cdef-0123-456789abcdef\",\"process\":\"01234567-89ab-cdef-0123-456789abcdef\"}}"
+    },
+    {
+      "failed": false,
+      "id": "size_t",
+      "raw_json": "{\"details\":{\"reason_code\":17,\"comment\":17,\"initiated_by\":17,\"type\":17,\"event_time\":\"2026-09-29T12:00:00Z\",\"reason\":17,\"process\":17}}"
+    },
+    {
+      "failed": false,
+      "id": "datetime",
+      "raw_json": "{\"details\":{\"reason_code\":\"\\/Date(1790683200125)\\/\",\"comment\":\"\\/Date(1790683200125)\\/\",\"initiated_by\":\"\\/Date(1790683200125)\\/\",\"type\":\"\\/Date(1790683200125)\\/\",\"event_time\":\"2026-09-29T12:00:00Z\",\"reason\":\"\\/Date(1790683200125)\\/\",\"process\":\"\\/Date(1790683200125)\\/\"}}"
+    },
+    {
+      "failed": false,
+      "id": "sid",
+      "raw_json": "{\"details\":{\"reason_code\":{\"BinaryLength\":12,\"AccountDomainSid\":null,\"Value\":\"S-1-5-18\"},\"comment\":{\"BinaryLength\":12,\"AccountDomainSid\":null,\"Value\":\"S-1-5-18\"},\"initiated_by\":{\"BinaryLength\":12,\"AccountDomainSid\":null,\"Value\":\"S-1-5-18\"},\"type\":{\"BinaryLength\":12,\"AccountDomainSid\":null,\"Value\":\"S-1-5-18\"},\"event_time\":\"2026-09-29T12:00:00Z\",\"reason\":{\"BinaryLength\":12,\"AccountDomainSid\":null,\"Value\":\"S-1-5-18\"},\"process\":{\"BinaryLength\":12,\"AccountDomainSid\":null,\"Value\":\"S-1-5-18\"}}}"
+    },
+    {
+      "failed": false,
+      "id": "string_array",
+      "raw_json": "{\"details\":{\"reason_code\":[\"a\",\"b\"],\"comment\":[\"a\",\"b\"],\"initiated_by\":[\"a\",\"b\"],\"type\":[\"a\",\"b\"],\"event_time\":\"2026-09-29T12:00:00Z\",\"reason\":[\"a\",\"b\"],\"process\":[\"a\",\"b\"]}}"
+    },
+    {
+      "failed": false,
+      "id": "int32_array",
+      "raw_json": "{\"details\":{\"reason_code\":[1,2],\"comment\":[1,2],\"initiated_by\":[1,2],\"type\":[1,2],\"event_time\":\"2026-09-29T12:00:00Z\",\"reason\":[1,2],\"process\":[1,2]}}"
+    },
+    {
+      "failed": false,
+      "id": "single_int32_array",
+      "raw_json": "{\"details\":{\"reason_code\":17,\"comment\":[17],\"initiated_by\":[17],\"type\":[17],\"event_time\":\"2026-09-29T12:00:00Z\",\"reason\":[17],\"process\":[17]}}"
+    },
+    {
+      "failed": false,
+      "id": "boolean_array",
+      "raw_json": "{\"details\":{\"reason_code\":[true,false],\"comment\":[true,false],\"initiated_by\":[true,false],\"type\":[true,false],\"event_time\":\"2026-09-29T12:00:00Z\",\"reason\":[true,false],\"process\":[true,false]}}"
+    },
+    {
+      "failed": false,
+      "id": "guid_array",
+      "raw_json": "{\"details\":{\"reason_code\":\"01234567-89ab-cdef-0123-456789abcdef\",\"comment\":[\"01234567-89ab-cdef-0123-456789abcdef\"],\"initiated_by\":[\"01234567-89ab-cdef-0123-456789abcdef\"],\"type\":[\"01234567-89ab-cdef-0123-456789abcdef\"],\"event_time\":\"2026-09-29T12:00:00Z\",\"reason\":[\"01234567-89ab-cdef-0123-456789abcdef\"],\"process\":[\"01234567-89ab-cdef-0123-456789abcdef\"]}}"
+    },
+    {
+      "failed": false,
+      "id": "datetime_array",
+      "raw_json": "{\"details\":{\"reason_code\":\"\\/Date(1790683200125)\\/\",\"comment\":[\"\\/Date(1790683200125)\\/\"],\"initiated_by\":[\"\\/Date(1790683200125)\\/\"],\"type\":[\"\\/Date(1790683200125)\\/\"],\"event_time\":\"2026-09-29T12:00:00Z\",\"reason\":[\"\\/Date(1790683200125)\\/\"],\"process\":[\"\\/Date(1790683200125)\\/\"]}}"
+    }
+  ],
+  "native_variant_provenance": "In-memory reflection on System.Core Microsoft.Win32.UnsafeNativeMethods.EvtVariant and the private NativeWrapper.ConvertToObject overload. Type/value cases are named by id; raw_json was produced by Ansible.Basic.ToJson. Account/domain SID values were synthetic and serialized at their module nesting depth (last_reboot.details.process and reason_code), using depth 99. Corrected capture asserted five scalar records, two SID records, and zero script errors. No native event was written.",
+  "native_variant_cases": {
+    "sids": [
+      {
+        "raw_json": "{\"last_reboot\":{\"details\":{\"process\":{\"BinaryLength\":28,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":\"S-1-5-21-1-2-3\",\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3-1000\"},\"reason_code\":{\"BinaryLength\":28,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":\"S-1-5-21-1-2-3\",\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3-1000\"}}}}",
+        "sid": "S-1-5-21-1-2-3-1000"
+      },
+      {
+        "raw_json": "{\"last_reboot\":{\"details\":{\"process\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":\"S-1-5-21-1-2-3\",\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"reason_code\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":{\"BinaryLength\":24,\"AccountDomainSid\":\"S-1-5-21-1-2-3\",\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"},\"Value\":\"S-1-5-21-1-2-3\"}}}}",
+        "sid": "S-1-5-21-1-2-3"
+      }
+    ],
+    "variants": [
+      {
+        "id": "sbyte_ff",
+        "raw_json": "{\"value\":255}",
+        "type": "System.Byte"
+      },
+      {
+        "id": "int16_ffff",
+        "raw_json": "{\"value\":255}",
+        "type": "System.Byte"
+      },
+      {
+        "id": "int16_0100",
+        "raw_json": "{\"value\":0}",
+        "type": "System.Byte"
+      },
+      {
+        "id": "hex32_ffffffff",
+        "raw_json": "{\"value\":-1}",
+        "type": "System.Int32"
+      },
+      {
+        "id": "size_t_17",
+        "raw_json": "{\"value\":17}",
+        "type": "System.IntPtr"
+      }
+    ]
+  }
+}

@@ -1,0 +1,582 @@
+---
+- name: Verify native command execution on Windows Python 3.4.4
+  hosts: legacy_windows
+  gather_facts: false
+  vars:
+    command_directory: "{{ command_workspace.stdout | from_json }}"
+    command_marker: '{{ command_directory }}\created.txt'
+    argument_values:
+      - ''
+      - two words
+      - 'a"b'
+      - 'trailing\'
+      - '& | < > ^ %PATH% !'
+      - 'Café 雪'
+    input_text: |-
+      Café 雪
+      second line
+    control_separator_cases:
+      - {character: "\u001c", ordinal: '28'}
+      - {character: "\u001d", ordinal: '29'}
+      - {character: "\u001e", ordinal: '30'}
+      - {character: "\u001f", ordinal: '31'}
+    numeric_cases:
+      - value: !!float 1.25
+        expected: '1.25'
+      - value: !!float 1.0
+        expected: '1.0'
+      - value: !!float -0.0
+        expected: '0.0'
+      - value: !!float 1.2345678901234567
+        expected: '1.2345678901234567'
+      - value: !!float 0.0001
+        expected: '0.0001'
+      - value: !!float 1e-05
+        expected: '1E-05'
+      - value: !!float 1000000000000000.0
+        expected: '1000000000000000.0'
+      - value: !!float 1e16
+        expected: '1E+16'
+      - value: !!float 1.2345678901234567e20
+        expected: '1.23456789012346E+20'
+      - value: !!float 1.000000000000025e16
+        expected: '1.00000000000003E+16'
+      - value: !!float -1.000000000000025e16
+        expected: '-1.00000000000003E+16'
+      - value: !!float 9.999999999999999e-05
+        expected: '0.0001'
+      - value: !!float 1.7976931348623157e308
+        expected: '1.79769313486232E+308'
+      - value: !!float 5e-324
+        expected: '4.94065645841247E-324'
+  tasks:
+    - name: Require the expected runtime and record task directories
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import glob, json, os, sys, tempfile;
+        assert sys.version_info[:3] == (3, 4, 4);
+        print(json.dumps(sorted(glob.glob(os.path.join(tempfile.gettempdir(),
+        'ansible-tmp-*')))))""
+      changed_when: false
+      check_mode: false
+      register: task_directories_before
+
+    - name: Allocate an isolated command-test workspace
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import json, tempfile;
+        print(json.dumps(tempfile.mkdtemp(prefix='legacy-windows-command-')))""
+      changed_when: true
+      check_mode: false
+      register: command_workspace
+
+    - name: Exercise commands using only the allocated workspace
+      block:
+        - name: Execute free-form input  # noqa: args[module]
+          # args[module] cannot inspect the WANT_JSON file protocol.
+          sustainablelobster.legacy_windows.win_command: >-
+            "{{ ansible_python_interpreter }}" -c "print(42)"
+          register: free_form_command
+
+        - name: Preserve trailing control separators in free-form arguments
+          # Preserve separators outside the upstream whitespace set.
+          sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+            _raw_params: >-
+              "{{ ansible_python_interpreter }}" -c
+              "print(ord(__import__('sys').argv[1][-1]))" A{{ item.character }}
+          loop: '{{ control_separator_cases }}'
+          register: free_form_separators
+
+        - name: Preserve control separators in comma-separated arguments
+          # Exercise list conversion before native argv quoting.
+          sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+            argv: >-
+              {{ ansible_python_interpreter }},-c,
+              print(ord(__import__('sys').argv[1][-1])), A{{ item.character }}
+          loop: '{{ control_separator_cases }}'
+          register: comma_separators
+
+        - name: Verify child arguments retained each control separator
+          ansible.builtin.assert:
+            that:
+              - item is changed
+              - item.rc == 0
+              - item.stdout | trim == item.item.ordinal
+          loop: '{{ free_form_separators.results + comma_separators.results }}'
+          loop_control:
+            label: '{{ item.item.ordinal }}'
+
+        - name: Verify returned commands leave control separators unquoted
+          ansible.builtin.assert:
+            that: item.cmd.endswith(' A' + item.item.character)
+          loop: '{{ comma_separators.results }}'
+          loop_control:
+            label: '{{ item.item.ordinal }}'
+
+        - name: Preserve output line endings with cmd input
+          # WANT_JSON arguments are validated by the runtime assertions below.
+          sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+            cmd: >-
+              "{{ ansible_python_interpreter }}" -c
+              "import sys; sys.stdout.buffer.write(b'first\r\nsecond\n')"
+          register: line_endings
+
+        - name: Inspect the console code pages inherited by a native child
+          # WANT_JSON arguments are validated by the runtime assertions below.
+          sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - >-
+                import ctypes, json;
+                kernel = ctypes.windll.kernel32;
+                print(json.dumps([kernel.GetConsoleCP(),
+                kernel.GetConsoleOutputCP()]))
+          register: console_code_pages
+
+        - name: Round-trip arguments and stdin without a shell
+          # WANT_JSON arguments are validated by the runtime assertions below.
+          sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+            argv: >-
+              {{ [ansible_python_interpreter, '-c', inspect_process]
+                 + argument_values }}
+            chdir: '{{ command_directory }}'
+            stdin: '{{ input_text }}'
+          vars:
+            inspect_process: >-
+              import json, os, sys;
+              print(json.dumps({'args': sys.argv[1:], 'cwd': os.getcwd(),
+              'stdin': sys.stdin.buffer.read().decode('utf-8')}))
+          register: argument_command
+
+        - name: Verify command results and process metadata
+          ansible.builtin.assert:
+            that:
+              - console_code_pages is changed
+              - console_code_pages.rc == 0
+              - (console_code_pages.stdout | from_json) == [65001, 65001]
+              - free_form_command is changed
+              - free_form_command.rc == 0
+              - free_form_command.stdout == "42\r\n"
+              - line_endings.stdout == "first\r\nsecond\n"
+              - line_endings.stdout_lines == ['first', 'second']
+              - (argument_command.stdout | from_json).args == argument_values
+              - (argument_command.stdout | from_json).stdin == input_text
+              - >-
+                ((argument_command.stdout | from_json).cwd | lower) ==
+                (command_directory | lower)
+              - argument_command.stderr == ''
+              - argument_command.rc == 0
+              - argument_command.start is match(timestamp_pattern)
+              - argument_command.end is match(timestamp_pattern)
+              - >-
+                argument_command.delta is
+                match('^[0-9]+:[0-9]{2}:[0-9]{2}[.][0-9]{6}$')
+          vars:
+            timestamp_pattern: >-
+              ^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}[.][0-9]{6}$
+
+        - name: Preserve the upstream final-newline quoting quirk
+          # The measured upstream behavior changes these literal backslashes.
+          sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - import json, sys; print(json.dumps(sys.argv[1:]))
+              - "value\\\n"
+              - "value\\\\\n"
+              - "value\\\r\n"
+              - "value\\\nnext"
+          register: final_newline_arguments
+
+        - name: Verify only backslashes before a final LF are doubled
+          ansible.builtin.assert:
+            that:
+              - final_newline_arguments is changed
+              - final_newline_arguments.rc == 0
+              - final_newline_arguments.stderr == ''
+              - >-
+                (final_newline_arguments.stdout | from_json) ==
+                expected_arguments
+          vars:
+            expected_arguments:
+              - "value\\\\\n"
+              - "value\\\\\\\\\n"
+              - "value\\\r\n"
+              - "value\\\nnext"
+
+        - name: Require float inputs for numeric conversion tests
+          ansible.builtin.assert:
+            that:
+              - item.value is float
+              - item.expected is string
+          loop: '{{ numeric_cases }}'
+          loop_control:
+            label: '{{ item.expected }}'
+
+        - name: Match numeric argv and stdin conversion in one child
+          # WANT_JSON arguments are checked by the runtime assertions below.
+          sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - >-
+                import json, sys;
+                print(json.dumps({'argv': sys.argv[1:],
+                'stdin': sys.stdin.buffer.read().decode('utf-8')}))
+              - '{{ item.value }}'
+            stdin: '{{ item.value }}'
+          loop: '{{ numeric_cases }}'
+          loop_control:
+            label: '{{ item.expected }}'
+          register: numeric_command
+
+        - name: Verify numeric values arrive as the measured upstream text
+          ansible.builtin.assert:
+            that:
+              - item is changed
+              - item.rc == 0
+              - item.stderr == ''
+              - (item.stdout | from_json).argv == [item.item.expected]
+              - (item.stdout | from_json).stdin == item.item.expected
+          loop: '{{ numeric_command.results }}'
+          loop_control:
+            label: '{{ item.item.expected }}'
+
+        - name: Create an owned marker only when it is absent
+          # WANT_JSON arguments are validated by the runtime assertions below.
+          sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - >-
+                import io, sys;
+                io.open(sys.argv[1], 'w', encoding='utf-8').write('owned');
+                print('created')
+              - '{{ command_marker }}'
+            creates: '{{ command_marker }}'
+          register: create_command
+
+        - name: Skip a repeated create command
+          # WANT_JSON arguments are validated by the runtime assertions below.
+          sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+            cmd: should-not-run.exe
+            creates: '{{ command_marker }}'
+            removes: '{{ command_directory }}\missing.txt'
+          register: create_again
+
+        - name: Apply a creates guard after trimming whitespace input
+          # WANT_JSON arguments are validated by the runtime assertions below.
+          sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+            _raw_params: '   '
+            creates: '{{ command_marker }}'
+          register: whitespace_guard
+
+        - name: Remove the owned marker only while it exists
+          # WANT_JSON arguments are validated by the runtime assertions below.
+          sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - 'import os, sys; os.remove(sys.argv[1]); print("removed")'
+              - '{{ command_marker }}'
+            removes: '{{ command_marker }}'
+          register: remove_command
+
+        - name: Skip a repeated remove command
+          # WANT_JSON arguments are validated by the runtime assertions below.
+          sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+            cmd: should-not-run.exe
+            removes: '{{ command_marker }}'
+          register: remove_again
+
+        - name: Skip an otherwise executable command in check mode
+          # WANT_JSON arguments are validated by the runtime assertions below.
+          sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - 'import sys; open(sys.argv[1], "w").close()'
+              - '{{ command_directory }}\check-mode-must-not-exist'
+          check_mode: true
+          register: check_command
+
+        - name: Verify guard ordering, idempotence, and check-mode skipping
+          ansible.builtin.assert:
+            that:
+              - create_command is changed
+              - create_command.stdout == "created\r\n"
+              - create_again is skipped
+              - create_again is not changed
+              - create_again.rc == 0
+              - whitespace_guard is skipped
+              - whitespace_guard is not changed
+              - whitespace_guard.cmd == ''
+              - whitespace_guard.rc == 0
+              - >-
+                create_again.msg ==
+                'skipped, since ' + command_marker + ' exists'
+              - remove_command is changed
+              - remove_command.stdout == "removed\r\n"
+              - remove_again is skipped
+              - remove_again is not changed
+              - remove_again.rc == 0
+              - check_command is skipped
+              - check_command is not changed
+
+        - name: Verify a nonzero child exit
+          block:
+            - name: Fail after writing both streams  # noqa: args[module]
+              # WANT_JSON arguments are checked by the failure assertions below.
+              sustainablelobster.legacy_windows.win_command:
+                argv:
+                  - '{{ ansible_python_interpreter }}'
+                  - -c
+                  - >-
+                    import sys; open(sys.argv[1], 'w').write('partial');
+                    sys.stdout.write('out\n');
+                    sys.stderr.write('err\n'); sys.exit(7)
+                  - '{{ command_directory }}\partial.txt'
+              register: failed_command
+
+            - name: Reject unexpected command success
+              ansible.builtin.fail:
+                msg: A child exit code of seven unexpectedly succeeded
+          rescue:
+            - name: Verify the failed child result
+              ansible.builtin.assert:
+                that:
+                  - failed_command is failed
+                  - failed_command is changed
+                  - failed_command.rc == 7
+                  - failed_command.stdout == "out\r\n"
+                  - failed_command.stderr == "err\r\n"
+                  - failed_command.msg == 'non-zero return code'
+
+        - name: Recognize the side effect of a failed child
+          # WANT_JSON arguments are validated by the runtime assertions below.
+          sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+            cmd: should-not-run.exe
+            creates: '{{ command_directory }}\partial.txt'
+          register: partial_guard
+
+        - name: Recover the file created by the failed child
+          # WANT_JSON arguments are validated by the runtime assertions below.
+          sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - 'import os, sys; os.remove(sys.argv[1]); print("recovered")'
+              - '{{ command_directory }}\partial.txt'
+            removes: '{{ command_directory }}\partial.txt'
+          register: recovery_command
+
+        - name: Verify recovery after a partially successful child
+          ansible.builtin.assert:
+            that:
+              - partial_guard is skipped
+              - partial_guard is not changed
+              - recovery_command is changed
+              - recovery_command.stdout == "recovered\r\n"
+
+        - name: Verify a process launch failure
+          block:
+            - name: Fail to launch a missing file  # noqa: args[module]
+              # WANT_JSON arguments are checked by the failure assertions below.
+              sustainablelobster.legacy_windows.win_command:
+                argv:
+                  - '{{ command_directory }}\not-present.exe'
+              register: missing_command
+
+            - name: Reject unexpected execution of a missing file
+              ansible.builtin.fail:
+                msg: A missing executable unexpectedly succeeded
+          rescue:
+            - name: Verify the launch error is distinct from a child failure
+              ansible.builtin.assert:
+                that:
+                  - missing_command is failed
+                  - missing_command is not changed
+                  - missing_command.rc == 2
+                  - "'Failed to run:' in missing_command.msg"
+
+        - name: Verify null arguments fail before process execution
+          block:
+            - name: Reject a null argument  # noqa: args[module]
+              # This deliberately invalid argument must reach the payload.
+              sustainablelobster.legacy_windows.win_command:
+                argv:
+                  - '{{ ansible_python_interpreter }}'
+                  - -c
+                  - 'import sys; open(sys.argv[1], "w").close()'
+                  - '{{ command_directory }}\null-argument-must-not-exist'
+                  - null
+              register: null_argument
+
+            - name: Reject unexpected acceptance of null
+              ansible.builtin.fail:
+                msg: A null argv entry unexpectedly started a child
+          rescue:
+            - name: Verify null was rejected without a change
+              ansible.builtin.assert:
+                that:
+                  - null_argument is failed
+                  - null_argument is not changed
+                  - >-
+                    null_argument.msg ==
+                    'Unhandled exception while executing module: Exception
+                    calling "Create" with "2" argument(s): "Object reference
+                    not set to an instance of an object."'
+
+        - name: Verify decoder validation precedes process execution
+          block:
+            - name: Reject a non-text decoder  # noqa: args[module]
+              # This deliberately invalid codec must reach the payload.
+              sustainablelobster.legacy_windows.win_command:
+                argv:
+                  - '{{ ansible_python_interpreter }}'
+                  - -c
+                  - 'import sys; open(sys.argv[1], "w").close(); print("ran")'
+                  - '{{ command_directory }}\invalid-codec-must-not-exist'
+                output_encoding_override: '{{ item }}'
+              loop:
+                - idna
+                - zlib
+              register: invalid_codec
+
+            - name: Reject unexpected decoder acceptance
+              ansible.builtin.fail:
+                msg: An unsupported decoder unexpectedly started a child
+          rescue:
+            - name: Verify decoder rejection reports no execution
+              ansible.builtin.assert:
+                that:
+                  - item is failed
+                  - item is not changed
+                  - item.rc == 2
+                  - >-
+                    'Unsupported output_encoding_override' in item.msg
+              loop: '{{ invalid_codec.results }}'
+              loop_control:
+                label: '{{ item.item }}'
+
+        - name: Decode Shift-JIS output
+          # WANT_JSON arguments are validated by the runtime assertions below.
+          sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - >-
+                import sys; sys.stdout.buffer.write(b'\x82\xa0\x81\x60\xfa\x40')
+            output_encoding_override: shift_jis
+          register: shift_jis_command
+
+        - name: Use ASCII replacement characters
+          # WANT_JSON arguments are validated by the runtime assertions below.
+          sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - 'import sys; sys.stdout.buffer.write(b"\x80\xff")'
+            output_encoding_override: ascii
+          register: ascii_command
+
+        - name: Let a byte-order mark override the requested encoding
+          # WANT_JSON arguments are validated by the runtime assertions below.
+          sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - 'import sys; sys.stdout.buffer.write(b"\xef\xbb\xbf\xc3\xa9")'
+            output_encoding_override: ascii
+          register: bom_command
+
+        - name: Preserve undefined Windows-1252 control bytes
+          # WANT_JSON arguments are validated by the runtime assertions below.
+          sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - 'import sys; sys.stdout.buffer.write(b"\x81\x8d\x8f\x90\x9d")'
+            output_encoding_override: windows-1252
+          register: windows1252_command
+
+        - name: Decode the upstream Unicode alias without a byte-order mark
+          # WANT_JSON arguments are validated by the runtime assertions below.
+          sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - 'import sys; sys.stdout.buffer.write(b"A\x00\xea\x96")'
+            output_encoding_override: unicode
+          register: unicode_command
+
+        - name: Match upstream replacement grouping for invalid UTF-8
+          # WANT_JSON arguments are validated by the runtime assertions below.
+          sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - >-
+                import sys;
+                sys.stdout.buffer.write(b'\xed\xa0\x80|\xf4\x90\x80\x80')
+          register: malformed_utf8_command
+
+        - name: Drain substantial interleaved stdout and stderr
+          # WANT_JSON arguments are validated by the runtime assertions below.
+          sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - >-
+                import sys;
+                [(sys.stdout.buffer.write(b'o' * 2048), sys.stdout.flush(),
+                sys.stderr.buffer.write(b'e' * 2048), sys.stderr.flush())
+                for unused in range(64)]
+          timeout: 60
+          register: large_command
+
+        - name: Verify decoding and concurrent pipe handling
+          ansible.builtin.assert:
+            that:
+              - shift_jis_command.stdout == 'あ～ⅰ'
+              - ascii_command.stdout == '??'
+              - bom_command.stdout == 'é'
+              - windows1252_command.stdout == "\u0081\u008d\u008f\u0090\u009d"
+              - unicode_command.stdout == 'A雪'
+              - >-
+                malformed_utf8_command.stdout ==
+                "\ufffd\ufffd|\ufffd\ufffd\ufffd"
+              - large_command.stdout == 'o' * 131072
+              - large_command.stderr == 'e' * 131072
+
+      always:
+        - name: Remove only the allocated command-test workspace
+          ansible.builtin.raw: >-
+            cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+            "import base64, json, os, shutil;
+            path = json.loads(base64.b64decode(
+            '{{ command_workspace.stdout | b64encode }}').decode('utf-8'));
+            absent = all(not os.path.exists(os.path.join(path, name))
+            for name in ['check-mode-must-not-exist',
+            'null-argument-must-not-exist', 'invalid-codec-must-not-exist']);
+            shutil.rmtree(path); assert absent""
+          changed_when: true
+          check_mode: false
+
+    - name: Record remaining task directories
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import glob, json, os, tempfile;
+        print(json.dumps(sorted(glob.glob(os.path.join(tempfile.gettempdir(),
+        'ansible-tmp-*')))))""
+      changed_when: false
+      check_mode: false
+      register: task_directories_after
+
+    - name: Verify command and helper task files were removed
+      ansible.builtin.assert:
+        that:
+          - >-
+            (task_directories_before.stdout | from_json) ==
+            (task_directories_after.stdout | from_json)

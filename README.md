@@ -1,72 +1,94 @@
 # sustainablelobster.legacy_windows
 
-An Ansible collection for managing legacy Windows machines with Python 3.4.4.
-
-Check [module availability and tested combinations](docs/status.md) before
-installation or use.
+Manage Windows with Ansible and Python, including systems too old to run
+modern PowerShell. The collection provides familiar `ansible.windows` module
+names with Python 3.4.4-compatible payloads and native Windows APIs.
 
 ## Requirements
 
-| System             | Requirement                                                                                                                        |
-| ------------------ | ---------------------------------------------------------------------------------------------------------------------------------- |
-| Ansible controller | An `ansible-core` version meeting the [collection's minimum requirement](meta/runtime.yml), with Python supported by that release. |
-| Windows target     | Python **3.4.4**, with a Windows version and connection method verified in the [tested combinations](docs/status.md).              |
-
-Install the collection on the Ansible controller. A collection installation
-does not provision Python on Windows or configure a connection to a target.
-Check the tested combinations for the complete controller and target setup.
+- Ansible controller: `ansible-core` 2.21 or newer, with the Python version
+  required by that release.
+- Windows target: Python 3.4.4 or newer and the Windows features needed by
+  your tasks.
+- Connection: an Ansible connection plugin that can execute the configured
+  Python interpreter and transfer files. The collection supplies a Command
+  Prompt shell plugin; it does not configure a connection service.
 
 ## Install
 
-Install from Ansible Galaxy on your Ansible controller:
+Install the collection archive on your Ansible controller:
 
 ```console
-ansible-galaxy collection install sustainablelobster.legacy_windows
+ansible-galaxy collection install ./sustainablelobster-legacy_windows-1.0.0.tar.gz --offline --no-deps
 ```
 
-Alternatively, download the
-`sustainablelobster-legacy_windows-<version>.tar.gz` release asset from
-[GitHub Releases](https://github.com/sustainablelobster/ansible-legacy-windows/releases)
-to your controller. Replace `<version>` with the archive's version and adjust
-the path to its location:
+To build an archive from this checkout, see [Development](docs/development.md).
+
+## Connect and run a task
+
+This SSH example assumes an existing server that executes commands through
+`cmd.exe` and supports SFTP. Replace the address and account with your own.
+Install Python on Windows before connecting.
+
+```yaml
+# inventory.yml
+all:
+  children:
+    windows:
+      hosts:
+        workstation:
+          ansible_host: 192.0.2.10
+      vars:
+        ansible_user: your_windows_account
+        ansible_connection: ssh
+        ansible_shell_type: sustainablelobster.legacy_windows.cmd
+        ansible_python_interpreter: 'C:\Python34\python.exe'
+        ansible_ssh_transfer_method: sftp
+```
+
+Keep credentials in your private inventory or Ansible Vault. Use your normal
+SSH authentication and host-key verification.
 
 ```console
-ansible-galaxy collection install './sustainablelobster-legacy_windows-<version>.tar.gz'
+ansible -i inventory.yml windows -m sustainablelobster.legacy_windows.win_ping
 ```
 
-After either installation method, verify the installed version and location:
+Use fully qualified module names in playbooks:
 
-```console
-ansible-galaxy collection list sustainablelobster.legacy_windows
+```yaml
+- name: Manage Windows
+  hosts: windows
+  gather_facts: false
+  tasks:
+    - name: Create an application directory
+      sustainablelobster.legacy_windows.win_file:
+        path: C:\Application
+        state: directory
 ```
 
-## Find module documentation
+Run it with `ansible-playbook -i inventory.yml playbook.yml`.
 
-List the modules available in your installed version:
+[Usage](docs/usage.md) covers facts, privilege escalation, background jobs,
+and known issues.
+
+## Module reference
 
 ```console
 ansible-doc --list sustainablelobster.legacy_windows
+ansible-doc sustainablelobster.legacy_windows.win_file
+ansible-doc -t filter sustainablelobster.legacy_windows.quote
 ```
 
-Use fully qualified names in playbooks:
-`sustainablelobster.legacy_windows.<module_name>`. Replace `<module_name>` with
-a name from the module list. To read its arguments, examples, and return values:
-
-```console
-ansible-doc 'sustainablelobster.legacy_windows.<module_name>'
-```
-
-Use the collection's documentation and tested combinations when adapting an
-`ansible.windows` playbook. Matching a module name alone does not establish
-that a Windows version or connection method supports the same behavior.
+The interfaces follow `ansible.windows` where practical. They do not reproduce
+every PowerShell or .NET behavior; see each module's arguments and prerequisites.
 
 ## License
 
-Licensed under the [Apache License 2.0](LICENSE).
-
-## Trademarks
+The collection and original contributions are licensed under
+[GNU GPL version 3 or later](LICENSE), matching the `ansible.windows` baseline.
+The [upstream license](LICENSES/ansible-windows-GPL-3.0-or-later.txt) is included.
+Upstream attribution, incorporated MIT-licensed code, and Unicode data retain
+their notices and licenses in [NOTICE](NOTICE) and [LICENSES](LICENSES).
 
 Microsoft and Windows are trademarks of the Microsoft group of companies.
 This project is not affiliated with or endorsed by Microsoft.
-
-[Developer documentation](docs/development.md)

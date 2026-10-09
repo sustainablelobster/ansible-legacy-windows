@@ -1,0 +1,197 @@
+---
+# SPDX-License-Identifier: GPL-3.0-or-later
+- name: Verify public DSC3 automatic polling and exact portable-engine recovery
+  hosts: legacy_windows
+  gather_facts: false
+  vars_files:
+    - vars/dsc3_fixture.yml
+    - vars/dsc3_poll.yml
+  tasks:
+    - name: Require the explicit shipped automatic-poll action path
+      ansible.builtin.assert:
+        that:
+          - >-
+            '_native_async_polling' in
+            lookup('ansible.builtin.env', 'ANSIBLE_ACTION_PLUGINS')
+          - dsc3_poll_cases | length == 4
+
+    - name: Guard actual guest MAC Python and global staging before allocation
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import glob,json,os,subprocess,sys,tempfile;
+        assert sys.version_info[:3]==(3,4,4);
+        mac=subprocess.check_output(['getmac','/fo','csv','/nh']).decode('ascii');
+        assert '{{ dsc3_poll_expected_mac }}' in mac.upper();
+        print(json.dumps({'python':list(sys.version_info[:3]),'mac':mac,
+        'staging':sorted(glob.glob(os.path.join(tempfile.gettempdir(),
+        'ansible-tmp-*')))}))""
+      register: dsc3_poll_guard
+      changed_when: false
+
+    - name: Record the connected account independently of file ownership
+      sustainablelobster.legacy_windows.win_whoami:
+      register: dsc3_poll_identity
+      no_log: true
+
+    - name: Allocate private controller result capture
+      ansible.builtin.tempfile:
+        path: '{{ playbook_dir }}/../../tmp'
+        prefix: 'dsc3-poll-{{ inventory_hostname }}-'
+        suffix: .json
+      delegate_to: localhost
+      vars: &controller
+        ansible_connection: local
+        ansible_shell_type: sh
+        ansible_python_interpreter: '{{ ansible_playbook_python }}'
+      register: dsc3_poll_capture
+      changed_when: false
+
+    - name: Allocate the exclusively owned portable-engine workspace
+      sustainablelobster.legacy_windows.win_tempfile:
+        state: directory
+        prefix: legacy-windows-dsc-
+      register: dsc3_workspace
+
+    - name: Exercise only four new public automatic-poll outcomes
+      block:
+        - name: Stage the accepted official portable engine archive
+          sustainablelobster.legacy_windows.win_copy:
+            src: '{{ dsc3_archive }}'
+            dest: '{{ dsc3_workspace.path }}\dsc.zip'
+
+        - name: Verify engine archive and journal original registry siblings
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}', '-',
+                   '{{ dsc3_workspace.path }}', setup]
+            stdin: '{{ dsc3_fixture }}'
+          register: dsc3_setup
+          no_log: true
+
+        - name: Select only this process's portable engine PATH
+          ansible.builtin.set_fact:
+            dsc3_engine: '{{ (dsc3_setup.stdout | from_json).engine }}'
+            dsc3_path_env: '{{ (dsc3_setup.stdout | from_json).path_env }}'
+          no_log: true
+
+        - name: Start the birth-journaled read-only cache observer
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}', '-',
+                   '{{ dsc3_workspace.path }}', setup]
+            stdin: '{{ dsc3_poll_program }}'
+          register: dsc3_poll_setup
+          no_log: true
+
+        - name: Run the native and untouched source request for each case
+          ansible.builtin.include_tasks: tasks/dsc3_poll_case.yml
+          loop: '{{ dsc3_poll_cases | product(["native", "original"]) | list }}'
+          loop_control:
+            loop_var: dsc3_poll_case_phase
+            label: >-
+              {{ dsc3_poll_case_phase[0].name }} /
+              {{ dsc3_poll_case_phase[1] }}
+          vars:
+            dsc3_poll_case: '{{ dsc3_poll_case_phase[0] }}'
+            dsc3_poll_phase: '{{ dsc3_poll_case_phase[1] }}'
+      always:
+        - name: Close the exact observer and await owned process exit
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}', '-',
+                   '{{ dsc3_workspace.path }}', cleanup]
+            stdin: '{{ dsc3_poll_program }}'
+          register: dsc3_poll_recovery
+          failed_when: false
+          changed_when: false
+          no_log: true
+
+        - name: Restore only the journaled registry key and verify engine bytes
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}', '-',
+                   '{{ dsc3_workspace.path }}', cleanup]
+            stdin: '{{ dsc3_fixture }}'
+          register: dsc3_recovery
+          failed_when: false
+          changed_when: false
+          no_log: true
+
+        - name: Preserve raw failures and recoveries before closure assertions
+          ansible.builtin.copy:
+            dest: '{{ dsc3_poll_capture.path }}'
+            mode: '0600'
+            content: >-
+              {{ {'workspace': dsc3_workspace.path, 'guard': dsc3_poll_guard,
+                'identity': dsc3_poll_identity,
+                'setup': dsc3_setup | default(none),
+                'poll_setup': dsc3_poll_setup | default(none),
+                'records': dsc3_poll_records | default([]),
+                'interrupted_result': dsc3_poll_result | default(none),
+                'interrupted_observation':
+                  dsc3_poll_observation | default(none),
+                'poll_recovery': dsc3_poll_recovery, 'recovery': dsc3_recovery,
+                'workspace_removed': false} | to_nice_json }}
+          delegate_to: localhost
+          vars: *controller
+          changed_when: false
+          no_log: true
+
+        - name: Require natural process and protected registry cache recovery
+          ansible.builtin.assert:
+            that:
+              - dsc3_poll_recovery.rc == 0
+              - (dsc3_poll_recovery.stdout | from_json).recovery.restored
+              - >-
+                (dsc3_poll_recovery.stdout | from_json).
+                  recovery.cache_after == []
+              - (dsc3_poll_recovery.stdout | from_json).recovery.staging == []
+              - >-
+                (dsc3_poll_recovery.stdout | from_json).
+                  recovery.engine_processes == []
+              - dsc3_recovery.rc == 0
+              - (dsc3_recovery.stdout | from_json).restored
+          no_log: true
+
+        - name: Delete only the verified portable-engine workspace
+          sustainablelobster.legacy_windows.win_file:
+            path: '{{ dsc3_workspace.path }}'
+            state: absent
+
+        - name: Verify literal global staging and exact workspace absence
+          ansible.builtin.raw: >-
+            cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+            "import glob,json,os,sys,tempfile;
+            assert not os.path.exists(sys.argv[1]);
+            print(json.dumps(sorted(glob.glob(os.path.join(
+            tempfile.gettempdir(),'ansible-tmp-*')))))"
+            "{{ dsc3_workspace.path }}""
+          register: dsc3_poll_staging_after
+          changed_when: false
+          failed_when: >-
+            dsc3_poll_staging_after.rc != 0 or
+            (dsc3_poll_guard.stdout | from_json).staging !=
+            (dsc3_poll_staging_after.stdout | from_json)
+
+        - name: Preserve final literal recovery and staging observations
+          ansible.builtin.copy:
+            dest: '{{ dsc3_poll_capture.path }}'
+            mode: '0600'
+            content: >-
+              {{ (lookup('ansible.builtin.file', dsc3_poll_capture.path) |
+                  from_json) |
+                 combine({'workspace_removed': true,
+                          'staging_after': dsc3_poll_staging_after}) |
+                          to_nice_json }}
+          delegate_to: localhost
+          vars: *controller
+          changed_when: false
+          no_log: true
+
+        - name: Reset only this owner's private SSH connection
+          ansible.builtin.meta: reset_connection
+
+    - name: Compare complete public responses with independently bounded clocks
+      ansible.builtin.command:
+        argv: ['{{ ansible_playbook_python }}',
+               '{{ playbook_dir }}/../../scripts/verify_dsc3_poll_capture.py',
+               '{{ dsc3_poll_capture.path }}']
+      delegate_to: localhost
+      vars: *controller
+      changed_when: false

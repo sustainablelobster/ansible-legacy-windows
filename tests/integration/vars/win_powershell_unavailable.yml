@@ -1,0 +1,29 @@
+---
+powershell_absence_modes: [false, true]
+powershell_absence_program: |
+  import json,os,sys,types
+  assert sys.version_info[:3] == (3,4,4)
+  system_root = os.environ.get('SystemRoot',r'C:\Windows')
+  engines = {name:os.path.isfile(os.path.join(system_root,name,
+      'WindowsPowerShell','v1.0','powershell.exe'))
+      for name in ('Sysnative','System32')}
+  assert not any(engines.values()), engines
+  helper = types.ModuleType('powershell_absence_wmi')
+  exec({{ lookup('file',
+      (powershell_source_root | default(playbook_dir + '/../..')) +
+      '/plugins/module_utils/legacy_windows_wmi.py') | to_json }},
+      helper.__dict__)
+  with helper.WmiConnection() as connection:
+      services = connection.query('SELECT * FROM Win32_Service',
+          ['Name','DisplayName','StartMode','PathName','StartName',
+           'ServiceType','ErrorControl','DesktopInteract'])
+      network = connection.query(
+          'SELECT * FROM Win32_NetworkAdapterConfiguration',
+          ['Index','DHCPEnabled','IPAddress','IPSubnet','DefaultIPGateway',
+           'DNSServerSearchOrder','DNSDomain','DNSDomainSuffixSearchOrder'])
+      identity = connection.query('SELECT * FROM Win32_OperatingSystem',
+          ['Version','BuildNumber','LastBootUpTime'])
+  print(json.dumps({'engines':engines,'services':
+      {row['Name']:row for row in services},'network':
+      {row['Index']:row for row in network},'identity':identity,
+      'python':sys.version},sort_keys=True))

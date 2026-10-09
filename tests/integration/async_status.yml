@@ -1,0 +1,198 @@
+---
+- name: Verify job status cleanup and complete upstream result parity
+  hosts: legacy_windows
+  gather_facts: false
+  vars_files:
+    - vars/async_status.yml
+    - vars/async_status_fixture.yml
+  vars:
+    async_status_capture:
+      observation_scope: >-
+        Complete owned cache tree names, file bytes and Windows attributes;
+        protected sibling bytes/attributes and global staging entries.
+        Filesystem timestamps and security descriptors are not observed.
+        Existing job files are tested; asynchronous launch is not exercised.
+      workspace: '{{ async_status_workspace.path | default(none) }}'
+      setup: '{{ async_status_setup | default({}) }}'
+      results: '{{ async_status_results | default([]) }}'
+      cleanup: '{{ async_status_cleanup | default({}) }}'
+      staging_before: '{{ async_status_staging_before.stdout | default("") }}'
+      staging_after: '{{ async_status_staging_after.stdout | default("") }}'
+  tasks:
+    - name: Allocate private controller evidence
+      ansible.builtin.tempfile:
+        state: file
+        path: '{{ playbook_dir }}/../../tmp'
+        prefix: async-status-{{ inventory_hostname }}-
+        suffix: .json
+      delegate_to: localhost
+      vars: &local
+        ansible_connection: local
+        ansible_shell_type: sh
+        ansible_python_interpreter: '{{ ansible_playbook_python }}'
+      register: async_status_capture_file
+      changed_when: false
+      check_mode: false
+
+    - name: Report retained evidence path
+      ansible.builtin.debug:
+        msg: 'Async status evidence: {{ async_status_capture_file.path }}'
+
+    - name: Require actual Python 3.4.4 and observe existing staging entries
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import glob,json,os,sys,tempfile;
+        assert sys.version_info[:3] == (3,4,4);
+        print(json.dumps(sorted(glob.glob(os.path.join(tempfile.gettempdir(),
+        'ansible-tmp-*')) + glob.glob(os.path.join(tempfile.gettempdir(),
+        'legacy-windows-async-status-*')))))""
+      register: async_status_staging_before
+      changed_when: false
+
+    - name: Initialize independent job status results
+      ansible.builtin.set_fact:
+        async_status_results: []
+
+    - name: Exercise initially absent journal-owned cache resources
+      block:
+        - name: Create owned job cache recovery workspace
+          sustainablelobster.legacy_windows.win_tempfile: # noqa: args[module]
+            state: directory
+            prefix: legacy-windows-async-status-
+          register: async_status_workspace
+          check_mode: false
+
+        - name: Journal cache ownership before public calls
+          sustainablelobster.legacy_windows.win_command: # noqa: args[module]
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - '-'
+              - '{{ async_status_workspace.path }}'
+              - setup
+            stdin: '{{ async_status_program }}'
+          register: async_status_setup
+          check_mode: false
+
+        - name: Retain journaled context
+          ansible.builtin.set_fact:
+            async_status_context: '{{ async_status_setup.stdout | from_json }}'
+
+        - name: Require actual runtime and durable journal
+          ansible.builtin.assert:
+            that:
+              - async_status_context.journaled
+              - async_status_context.python == [3, 4, 4]
+
+        - name: Demonstrate native existing job status and cleanup
+          ansible.builtin.include_tasks: tasks/async_status_case.yml
+          loop: '{{ async_status_cases }}'
+          loop_control:
+            loop_var: async_status_case
+            label: '{{ async_status_case.name }}'
+          vars:
+            async_status_engine: native
+
+        - name: Demonstrate upstream status on the identical cache paths
+          ansible.builtin.include_tasks: tasks/async_status_case.yml
+          loop: '{{ async_status_cases }}'
+          loop_control:
+            loop_var: async_status_case
+            label: '{{ async_status_case.name }}'
+          vars:
+            async_status_engine: original
+          when: async_status_context.original_available
+
+        - name: Require all declared cases and validations
+          vars:
+            expected: '{{ async_status_expected_count | default(35) | int }}'
+            native: >-
+              {{ async_status_results | selectattr('engine', 'equalto',
+              'native') | list }}
+            original: >-
+              {{ async_status_results | selectattr('engine', 'equalto',
+              'original') | list }}
+          ansible.builtin.assert:
+            that:
+              - native | length == expected
+              - native | selectattr('validated') | list | length == expected
+              - >-
+                not async_status_context.original_available or
+                original | length == expected
+              - >-
+                not async_status_context.original_available or
+                original | selectattr('validated') | list | length == expected
+
+        - name: Compare every request public result and complete recorded state
+          vars:
+            original: >-
+              {{ async_status_results | selectattr('engine', 'equalto',
+              'original') | list }}
+          ansible.builtin.assert:
+            that:
+              - >-
+                (async_status_results | selectattr('engine', 'equalto',
+                'native') | map(attribute='result') | list) ==
+                (original | map(attribute='result') | list)
+              - >-
+                (async_status_results | selectattr('engine', 'equalto',
+                'native') | map(attribute='before') | list) ==
+                (original | map(attribute='before') | list)
+              - >-
+                (async_status_results | selectattr('engine', 'equalto',
+                'native') | map(attribute='after') | list) ==
+                (original | map(attribute='after') | list)
+          when: async_status_context.original_available
+      always:
+        - name: Restore exact journaled cache state and protected sibling
+          sustainablelobster.legacy_windows.win_command: # noqa: args[module]
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - '-'
+              - '{{ async_status_workspace.path }}'
+              - cleanup
+            stdin: '{{ async_status_program }}'
+          register: async_status_cleanup
+          when: async_status_workspace.path is defined
+          check_mode: false
+
+        - name: Require independently confirmed recovery
+          ansible.builtin.assert:
+            that: [(async_status_cleanup.stdout | from_json).restored]
+          when: async_status_workspace.path is defined
+
+        - name: Remove only the verified empty workspace
+          sustainablelobster.legacy_windows.win_file: # noqa: args[module]
+            path: '{{ async_status_workspace.path }}'
+            state: absent
+          when: async_status_workspace.path is defined
+          check_mode: false
+
+        - name: Independently verify workspace absence and staging
+          ansible.builtin.raw: >-
+            cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+            "import glob,json,os,sys,tempfile;
+            assert not os.path.exists(sys.argv[1]);
+            print(json.dumps(sorted(glob.glob(os.path.join(tempfile.gettempdir(),
+            'ansible-tmp-*')) + glob.glob(os.path.join(tempfile.gettempdir(),
+            'legacy-windows-async-status-*')))))"
+            "{{ async_status_workspace.path }}""
+          register: async_status_staging_after
+          changed_when: false
+          when: async_status_workspace.path is defined
+
+        - name: Require original staging equality
+          ansible.builtin.assert:
+            that:
+              - async_status_staging_before.stdout | from_json ==
+                async_status_staging_after.stdout | from_json
+          when: async_status_workspace.path is defined
+
+        - name: Retain final public results and recovery even on failure
+          ansible.builtin.copy:
+            content: '{{ async_status_capture | to_nice_json }}'
+            dest: '{{ async_status_capture_file.path }}'
+            mode: '0600'
+          delegate_to: localhost
+          vars:
+            <<: *local
+          changed_when: false

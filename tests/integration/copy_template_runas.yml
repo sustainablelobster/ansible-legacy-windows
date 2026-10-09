@@ -1,0 +1,199 @@
+---
+# SPDX-License-Identifier: GPL-3.0-or-later
+- name: Compare synchronous multi-payload Copy and Template Runas workflows
+  hosts: legacy_windows
+  gather_facts: false
+  vars_files:
+    - vars/copy_template_runas.yml
+  vars:
+    copy_template_runas_results: []
+    copy_template_runas_staging_program: >-
+      import glob,json,os,sys,tempfile;
+      assert sys.version_info[:3]==(3,4,4);
+      roots={tempfile.gettempdir(),os.path.join(os.environ['WINDIR'],'Temp')};
+      print(json.dumps(sorted(p for r in roots for p in
+      glob.glob(os.path.join(r,'ansible-tmp-*')))))
+  tasks:
+    - name: Verify actual interpreter and record literal original global staging
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "{{ copy_template_runas_staging_program }}""
+      register: copy_template_runas_staging_before
+      changed_when: false
+
+    - name: Record the connected account before any Runas workflow
+      sustainablelobster.legacy_windows.win_whoami:
+      register: copy_template_runas_identity
+
+    - name: Allocate exact owner-private raw capture
+      ansible.builtin.tempfile:
+        state: file
+        path: '{{ playbook_dir }}/../../tmp'
+        prefix: 'copy-template-runas-{{ inventory_hostname }}-'
+        suffix: .json
+      register: copy_template_runas_capture
+      delegate_to: localhost
+      vars: &controller
+        ansible_connection: local
+        ansible_shell_type: sh
+        ansible_python_interpreter: '{{ ansible_playbook_python }}'
+      changed_when: false
+
+    - name: Exercise only owned workspaces with mandatory cleanup
+      block:
+        - name: Allocate the owned target transfer workspace
+          sustainablelobster.legacy_windows.win_tempfile:
+            state: directory
+            prefix: legacy-windows-copy-template-runas-
+          register: copy_template_runas_workspace
+
+        - name: Allocate owned controller binary and archive sources
+          ansible.builtin.tempfile:
+            state: directory
+            prefix: legacy-windows-copy-template-runas-
+          register: copy_template_runas_controller
+          delegate_to: localhost
+          vars: *controller
+
+        - name: Generate the maintained binary and Unicode source shapes
+          ansible.builtin.command:
+            argv:
+              - '{{ ansible_playbook_python }}'
+              - '{{ playbook_dir }}/fixtures/copy_template_runas.py'
+              - controller
+              - '{{ copy_template_runas_controller.path }}'
+          delegate_to: localhost
+          vars: *controller
+          changed_when: true
+
+        - name: Journal protected files owners and existing profile state
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}', '-',
+                   '{{ copy_template_runas_workspace.path }}', setup]
+            stdin: '{{ copy_template_runas_program }}'
+          register: copy_template_runas_setup
+          changed_when: false
+          no_log: true
+
+        - name: Observe protected controller sources before all transfers
+          ansible.builtin.command:
+            argv:
+              - '{{ ansible_playbook_python }}'
+              - '{{ playbook_dir }}/fixtures/copy_template_runas.py'
+              - controller_observe
+              - '{{ copy_template_runas_controller.path }}'
+          delegate_to: localhost
+          vars: *controller
+          changed_when: false
+          register: copy_template_runas_controller_before
+
+        - name: Run every explicit identity workflow and change-mode pair
+          ansible.builtin.include_tasks: tasks/copy_template_runas_case.yml
+          loop: >-
+            {{ copy_template_runas_case_indices |
+               map('extract', copy_template_runas_cases) | list }}
+          loop_control:
+            loop_var: copy_template_runas_case
+            label: '{{ copy_template_runas_case | join(" ") }}'
+      always:
+        - name: Observe protected controller sources after all transfers
+          ansible.builtin.command:
+            argv:
+              - '{{ ansible_playbook_python }}'
+              - '{{ playbook_dir }}/fixtures/copy_template_runas.py'
+              - controller_observe
+              - '{{ copy_template_runas_controller.path }}'
+          delegate_to: localhost
+          vars: *controller
+          changed_when: false
+          register: copy_template_runas_controller_after
+          when: copy_template_runas_controller.path is defined
+
+        - name: Verify protected state and remove the owned target workspace
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}', '-',
+                   '{{ copy_template_runas_workspace.path }}', cleanup]
+            stdin: '{{ copy_template_runas_program }}'
+          register: copy_template_runas_recovery
+          changed_when: false
+          failed_when: false
+          no_log: true
+          when: copy_template_runas_workspace.path is defined
+
+        - name: Observe exact original account after all workflows
+          sustainablelobster.legacy_windows.win_whoami:
+          register: copy_template_runas_final_identity
+
+        - name: Record literal global staging after all owned calls finish
+          ansible.builtin.raw: >-
+            cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+            "{{ copy_template_runas_staging_program }}""
+          register: copy_template_runas_staging_after
+          changed_when: false
+
+        - name: Save all raw results and recovery before enforcing any gate
+          ansible.builtin.copy:
+            content: >-
+              {{ {'results': copy_template_runas_results,
+                  'case_indices': copy_template_runas_case_indices,
+                  'setup': copy_template_runas_setup | default(none),
+                  'recovery': copy_template_runas_recovery | default(none),
+                  'identity': copy_template_runas_identity,
+                  'final_identity': copy_template_runas_final_identity,
+                  'staging_before': copy_template_runas_staging_before,
+                  'staging_after': copy_template_runas_staging_after,
+                  'workspace': copy_template_runas_workspace | default(none),
+                  'controller_workspace': copy_template_runas_controller |
+                    default(none),
+                  'controller_before': copy_template_runas_controller_before |
+                    default(none),
+                  'controller_after': copy_template_runas_controller_after |
+                    default(none),
+                  'latest_case': copy_template_runas_case | default(none),
+                  'latest_native_observer_start':
+                    copy_template_runas_native_observer_start | default(none),
+                  'latest_native_observer_stop':
+                    copy_template_runas_native_observer_stop | default(none),
+                  'latest_original_observer_start':
+                    copy_template_runas_original_observer_start | default(none),
+                  'latest_original_observer_stop':
+                    copy_template_runas_original_observer_stop | default(none),
+                  'latest_native_copy': copy_template_runas_native_copy |
+                    default(none),
+                  'latest_original_copy': copy_template_runas_original_copy |
+                    default(none),
+                  'latest_native_template':
+                    copy_template_runas_native_template | default(none),
+                  'latest_original_template':
+                    copy_template_runas_original_template | default(none),
+                  'controller_temp_root': lookup('ansible.builtin.env',
+                     'ANSIBLE_LOCAL_TEMP')} | to_nice_json }}
+            dest: '{{ copy_template_runas_capture.path }}'
+            mode: '0600'
+          delegate_to: localhost
+          vars: *controller
+          changed_when: false
+          no_log: true
+
+        - name: Remove only the allocated controller source workspace
+          ansible.builtin.file:
+            path: '{{ copy_template_runas_controller.path }}'
+            state: absent
+          delegate_to: localhost
+          vars: *controller
+          when: copy_template_runas_controller.path is defined
+
+        - name: Close owner-private SSH even on comparison failure
+          ansible.builtin.meta: reset_connection
+
+        - name: Require all retained public content ownership and recovery pairs
+          ansible.builtin.command:
+            argv: >-
+              {{ [ansible_playbook_python,
+                  playbook_dir + '/../../scripts/' +
+                  'verify_copy_template_runas_capture.py',
+                  copy_template_runas_capture.path, '--case-indices'] +
+                 (copy_template_runas_case_indices | map('string') | list) }}
+          delegate_to: localhost
+          vars: *controller
+          changed_when: false

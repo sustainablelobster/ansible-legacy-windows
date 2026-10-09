@@ -1,0 +1,106 @@
+---
+- name: Verify actual Python DNS provider absence without configuration
+    changes
+  hosts: legacy_windows
+  gather_facts: false
+  vars_files:
+    - vars/dns_zone_unavailable.yml
+  tasks:
+    - name: Require actual Python 3.4.4 and record original staging
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import glob,json,os,sys,tempfile;
+        assert sys.version_info[:3] == (3,4,4);
+        print(json.dumps(sorted(glob.glob(os.path.join(tempfile.gettempdir(),
+        'ansible-tmp-*')))))""
+      register: dns_zone_boundary_staging_before
+      changed_when: false
+
+    - name: Allocate unique private boundary evidence before target
+        operations
+      ansible.builtin.tempfile:
+        state: file
+        path: "{{ playbook_dir }}/../../tmp"
+        prefix: >-
+          {{ dns_zone_boundary_capture_prefix | default('dns-zone-boundary-')
+          }}{{ inventory_hostname }}-
+        suffix: .json
+      register: dns_zone_boundary_capture
+      delegate_to: localhost
+      vars: &local
+        ansible_connection: local
+        ansible_shell_type: sh
+        ansible_python_interpreter: "{{ ansible_playbook_python }}"
+
+    - name: Capture literal original service network identity and provider
+        state
+      sustainablelobster.legacy_windows.win_command: # noqa: args[module]
+        argv:
+          - "{{ ansible_python_interpreter }}"
+          - '-'
+        stdin: "{{ dns_zone_boundary_program }}"
+      register: dns_zone_boundary_before
+      changed_when: false
+      no_log: true
+
+    - name: Exercise public normal and check mode with retained recovery
+        evidence
+      block:
+        - name: Exercise each bounded unavailable-provider request
+          ansible.builtin.include_tasks:
+            "{{ dns_zone_boundary_case_tasks |
+            default('tasks/win_dns_zone_unavailable_case.yml') }}"
+          loop: "{{ dns_zone_boundary_cases }}"
+          loop_control:
+            loop_var: dns_zone_boundary_case
+            label: "{{ dns_zone_boundary_case.state }} / check={{\
+              \ dns_zone_boundary_case.check }}"
+      always:
+        - name: Capture literal final service network identity and
+            provider state
+          sustainablelobster.legacy_windows.win_command: # noqa: args[module]
+            argv:
+              - "{{ ansible_python_interpreter }}"
+              - '-'
+            stdin: "{{ dns_zone_boundary_program }}"
+          register: dns_zone_boundary_after
+          changed_when: false
+          no_log: true
+
+        - name: Retain full raw results and literal recovery
+          ansible.builtin.copy:
+            content: >-
+              {{ {'before': dns_zone_boundary_before,
+                  'after': dns_zone_boundary_after,
+                  'results': dns_zone_boundary_results | default([])} |
+              to_nice_json
+              }}
+            dest: "{{ dns_zone_boundary_capture.path }}"
+            mode: '0600'
+          delegate_to: localhost
+          vars: *local
+          no_log: true
+
+        - name: Require literal configuration and identity nonmutation
+          ansible.builtin.assert:
+            that:
+              - dns_zone_boundary_before.rc == 0
+              - dns_zone_boundary_after.rc == 0
+              - >-
+                (dns_zone_boundary_before.stdout | from_json) ==
+                (dns_zone_boundary_after.stdout | from_json)
+
+        - name: Record final global staging
+          ansible.builtin.raw: >-
+            cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+            "import glob,json,os,tempfile;
+            print(json.dumps(sorted(glob.glob(os.path.join(tempfile.gettempdir(),
+            'ansible-tmp-*')))))""
+          register: dns_zone_boundary_staging_after
+          changed_when: false
+
+        - name: Require exact original global staging
+          ansible.builtin.assert:
+            that:
+              - dns_zone_boundary_staging_before.stdout ==
+                dns_zone_boundary_staging_after.stdout

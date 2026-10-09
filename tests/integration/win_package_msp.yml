@@ -1,0 +1,169 @@
+---
+- name: Verify actual owned MSP lifecycle and strict protected recovery
+  hosts: legacy_windows
+  gather_facts: false
+  vars_files:
+    - vars/package_msp.yml
+    - vars/package_msp_fixture.yml
+  tasks:
+    - name: Require actual Python 3.4.4 and record original staging
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import glob,json,os,sys,tempfile;assert sys.version_info[:3]==(3,4,4);
+        print(json.dumps({pattern:sorted(glob.glob(os.path.join(tempfile.gettempdir(),pattern)))
+        for pattern in ['ansible-tmp-*','win_package-*.msp']}))""
+      register: package_msp_staging_before
+      changed_when: false
+
+    - name: Allocate private raw evidence
+      ansible.builtin.tempfile:
+        state: file
+        path: '{{ playbook_dir }}/../../tmp'
+        prefix: 'package-msp-{{ inventory_hostname }}-'
+        suffix: .json
+      register: package_msp_capture
+      delegate_to: localhost
+      vars: &controller
+        ansible_connection: local
+        ansible_shell_type: sh
+        ansible_python_interpreter: '{{ ansible_playbook_python }}'
+      changed_when: false
+
+    - name: Initialize patch observations
+      ansible.builtin.set_fact:
+        package_msp_results: []
+
+    - name: Exercise owned official sample fixtures with mandatory cleanup
+      block:
+        - name: Allocate owned patch workspace  # noqa: args[module]
+          sustainablelobster.legacy_windows.win_tempfile:
+            state: directory
+            prefix: legacy-windows-package-msp-
+          register: package_msp_workspace
+
+        - name: Journal absent product and protected state before transfer
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}', '-',
+                   '{{ package_msp_workspace.path }}', journal]
+            stdin: '{{ package_msp_program }}'
+          register: package_msp_journal
+          changed_when: false
+          no_log: true
+
+        - name: Transfer pinned official MSI and MSP bytes  # noqa: args[module]
+          sustainablelobster.legacy_windows.win_copy:
+            src: '{{ package_msp_controller_source }}/package-patch.{{ item }}'
+            dest: '{{ package_msp_workspace.path }}\patch.{{ item }}'
+          loop: [msi, msp]
+
+        - name: Transfer the requested literal patch name  # noqa: args[module]
+          when: package_msp_patch_filename | default('patch.msp') != 'patch.msp'
+          sustainablelobster.legacy_windows.win_copy:
+            src: '{{ package_msp_controller_source }}/package-patch.msp'
+            dest: '{{ package_msp_patch_path }}'
+
+        - name: Verify fixture hashes and native identities before servicing
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}', '-',
+                   '{{ package_msp_workspace.path }}', setup]
+            stdin: '{{ package_msp_program }}'
+          register: package_msp_setup
+          changed_when: false
+          no_log: true
+
+        - name: Exercise maintained patch cases
+          ansible.builtin.include_tasks: tasks/win_package_msp_case.yml
+          loop: '{{ package_msp_selected_cases }}'
+          loop_control:
+            loop_var: package_msp_case
+            label: '{{ package_msp_case.name }}'
+      always:
+        - name: Retain complete current raw state before cleanup
+          ansible.builtin.copy:
+            content: >-
+              {{ {'results': package_msp_results,
+              'journal': package_msp_journal | default(none),
+              'setup': package_msp_setup | default(none),
+              'latest_native': package_msp_native | default(none),
+              'latest_original': package_msp_original | default(none)} |
+              to_nice_json }}
+            dest: '{{ package_msp_capture.path }}'
+            mode: '0600'
+          delegate_to: localhost
+          vars: *controller
+          changed_when: false
+          no_log: true
+
+        - name: Remove only owned product and recover protected state
+          when: package_msp_workspace.path is defined
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}', '-',
+                   '{{ package_msp_workspace.path }}', cleanup]
+            stdin: '{{ package_msp_program }}'
+          register: package_msp_recovery
+          changed_when: false
+          no_log: true
+
+        - name: Require literal recovery before any resource deletion
+          ansible.builtin.assert:
+            that: [(package_msp_recovery.stdout | from_json).restored]
+
+        - name: Re-observe recovery before removing the verified journal
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}', '-',
+                   '{{ package_msp_workspace.path }}', finalize]
+            stdin: '{{ package_msp_program }}'
+          changed_when: false
+          no_log: true
+
+        - name: Remove verified owned workspace  # noqa: args[module]
+          sustainablelobster.legacy_windows.win_file:
+            path: '{{ package_msp_workspace.path }}'
+            state: absent
+
+        - name: Independently verify workspace absence and exact staging
+          ansible.builtin.raw: >-
+            cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+            "import glob,json,os,sys,tempfile;
+            assert not os.path.exists(sys.argv[1]);
+            print(json.dumps({pattern:sorted(glob.glob(os.path.join(tempfile.gettempdir(),pattern)))
+            for pattern in ['ansible-tmp-*','win_package-*.msp']}))"
+            "{{ package_msp_workspace.path }}""
+          register: package_msp_staging_after
+          changed_when: false
+
+        - name: Require original staging literally
+          ansible.builtin.assert:
+            that:
+              - >-
+                (package_msp_staging_before.stdout | from_json) ==
+                (package_msp_staging_after.stdout | from_json)
+
+        - name: Retain full results and recovery evidence
+          ansible.builtin.copy:
+            content: >-
+              {{ {'results': package_msp_results,
+              'journal': package_msp_journal | default(none),
+              'setup': package_msp_setup | default(none),
+              'latest_native': package_msp_native | default(none),
+              'latest_original': package_msp_original | default(none),
+              'recovery': package_msp_recovery,
+              'workspace_absent': true,
+              'staging_before': package_msp_staging_before,
+              'staging_after': package_msp_staging_after} | to_nice_json }}
+            dest: '{{ package_msp_capture.path }}'
+            mode: '0600'
+          delegate_to: localhost
+          vars: *controller
+          changed_when: false
+          no_log: true
+
+        - name: Require every selected observation validated
+          ansible.builtin.assert:
+            that:
+              - >-
+                package_msp_results | length ==
+                package_msp_selected_cases | length
+              - >-
+                package_msp_results | selectattr('validated', 'equalto', true) |
+                list | length == package_msp_results | length

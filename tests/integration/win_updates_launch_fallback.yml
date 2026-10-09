@@ -1,0 +1,350 @@
+---
+# SPDX-License-Identifier: GPL-3.0-or-later
+- name: Verify Updates startup fallback with an exclusively owned interpreter
+  hosts: legacy_windows
+  gather_facts: false
+  vars_files:
+    - vars/win_updates_runas.yml
+  vars:
+    updates_launch_system_available: true
+    updates_launch_module_utils: '{{ playbook_dir }}/../../plugins/module_utils'
+    updates_launch_cases:
+      - {state: searched, check: false}
+      - {state: installed, check: true}
+    updates_launch_site_program: |
+      import sys
+      sys.path.insert(0, sys.argv[1])
+      import sitecustomize
+      sitecustomize.main()
+  tasks:
+    - name: Record original staging and Updates workspace candidates
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "{{ updates_runas_global_program }}""
+      register: updates_launch_global_before
+      changed_when: false
+    - name: Record caller SID without changing any accounts or user rights
+      sustainablelobster.legacy_windows.win_whoami:
+      register: updates_launch_identity
+    - name: Retain actual caller SID and empty result cohorts
+      ansible.builtin.set_fact:
+        updates_launch_sid: '{{ updates_launch_identity.account.sid }}'
+        updates_launch_results: {}
+    - name: Read exact interpreter and actually loaded Python DLL paths
+      sustainablelobster.legacy_windows.win_command:
+        argv: ['{{ ansible_python_interpreter }}', '-']
+        stdin: |
+          import ctypes, json, sys
+          assert sys.version_info[:3] == (3, 4, 4)
+          kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+          kernel.GetModuleFileNameW.argtypes = [ctypes.c_void_p,
+              ctypes.c_wchar_p, ctypes.c_uint32]
+          kernel.GetModuleFileNameW.restype = ctypes.c_uint32
+          dll = ctypes.create_unicode_buffer(32768)
+          assert kernel.GetModuleFileNameW(
+              ctypes.pythonapi._handle, dll, len(dll))
+          print(json.dumps({'python': sys.executable, 'prefix': sys.prefix,
+              'dll': dll.value, 'version': list(sys.version_info[:3])}))
+      register: updates_launch_runtime
+      changed_when: false
+    - name: Retain exact runtime paths
+      ansible.builtin.set_fact:
+        updates_launch_original: >-
+          {{ updates_launch_runtime.stdout | from_json }}
+    - name: Allocate exclusive copied interpreter and observer workspace
+      sustainablelobster.legacy_windows.win_tempfile:
+        state: directory
+        prefix: legacy-windows-updates-runas-
+      register: updates_launch_workspace
+    - name: Exercise real denial with mandatory owned-file recovery
+      block:
+        - name: Copy only the existing interpreter and its loaded DLL
+          sustainablelobster.legacy_windows.win_copy:
+            src: '{{ item.source }}'
+            dest: '{{ updates_launch_workspace.path }}\{{ item.name }}'
+            remote_src: true
+          loop:
+            - source: '{{ updates_launch_original.python }}'
+              name: python.exe
+            - {source: '{{ updates_launch_original.dll }}', name: python34.dll}
+        - name: Protect only the new copied image DACL for exact restoration
+          sustainablelobster.legacy_windows.win_acl_inheritance:
+            path: '{{ updates_launch_workspace.path }}\python.exe'
+            state: absent
+            reorganize: true
+        - name: Permit SYSTEM access only to the owned runtime workspace
+          sustainablelobster.legacy_windows.win_acl:
+            path: '{{ updates_launch_workspace.path }}'
+            user: S-1-5-18
+            rights: FullControl
+            type: allow
+            state: present
+        - name: Stage the isolated Python startup gate
+          sustainablelobster.legacy_windows.win_copy:
+            src: '{{ playbook_dir }}/fixtures/win_updates_launch_site.py'
+            dest: '{{ updates_launch_workspace.path }}\sitecustomize.py'
+        - name: Stage exact shipping helpers and finite lifecycle fixture
+          sustainablelobster.legacy_windows.win_copy:
+            src: '{{ item }}'
+            dest: '{{ updates_launch_workspace.path }}\{{ item | basename }}'
+          loop:
+            - '{{ playbook_dir }}/fixtures/win_updates_launch_lifecycle.py'
+            - '{{ updates_launch_module_utils }}/legacy_windows_module.py'
+            - '{{ updates_launch_module_utils }}/legacy_windows_wmi.py'
+            - '{{ updates_launch_module_utils }}/legacy_windows_account.py'
+            - '{{ updates_launch_module_utils }}/legacy_windows_s4u.py'
+            - >-
+              {{ updates_launch_module_utils }}/legacy_windows_runas_token.py
+            - '{{ updates_launch_module_utils }}/legacy_windows_boot.py'
+            - '{{ updates_launch_module_utils }}/legacy_windows_text.py'
+            - '{{ updates_launch_module_utils }}/legacy_windows_process.py'
+            - >-
+              {{ updates_launch_module_utils }}/legacy_windows_reboot_request.py
+            - '{{ updates_launch_module_utils }}/legacy_windows_regex.py'
+            - >-
+              {{ updates_launch_module_utils
+              }}/legacy_windows_regex_categories.py
+            - >-
+              {{ updates_launch_module_utils }}/legacy_windows_updates_native.py
+            - '{{ updates_launch_module_utils }}/legacy_windows_updates.py'
+            - >-
+              {{ updates_launch_module_utils }}/legacy_windows_updates_worker.py
+        - name: Journal image hashes and prove strict native ACL roundtrips
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}', '-',
+                   '{{ updates_launch_workspace.path }}', setup]
+            stdin: '{{ updates_launch_site_program }}'
+          register: updates_launch_setup
+          changed_when: false
+        - name: Retain isolated runtime settings
+          ansible.builtin.set_fact:
+            updates_launch_interpreter: >-
+              {{ updates_launch_workspace.path }}\python.exe
+            updates_launch_environment:
+              PYTHONHOME: '{{ updates_launch_original.prefix }}'
+              PYTHONPATH: '{{ updates_launch_workspace.path }}'
+        - name: Start independent birth-identified worker observer
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}', '-',
+                   '{{ updates_launch_workspace.path }}', start]
+            stdin: '{{ updates_runas_program }}'
+          become: true
+          become_method: ansible.builtin.runas
+          become_user: 'NT AUTHORITY\SYSTEM'
+          vars:
+            ansible_become_password: null
+          register: updates_launch_monitor
+          when: updates_launch_system_available | bool
+        - name: Exercise unchanged public search and check-mode cohorts
+          ansible.builtin.include_tasks: tasks/win_updates_launch_case.yml
+          loop: [normal, fallback]
+          loop_control:
+            loop_var: updates_launch_phase
+        - name: Exercise automatic polling with a SYSTEM fallback worker
+          sustainablelobster.legacy_windows.win_updates:
+            state: searched
+            server_selection: managed_server
+            category_names: ['*']
+            accept_list: ['.*\Z']
+            reject_list: ['.*']
+          environment: '{{ updates_launch_environment }}'
+          vars:
+            ansible_python_interpreter: '{{ updates_launch_interpreter }}'
+            ansible_async_dir: '{{ updates_launch_workspace.path }}\cache'
+          async: 60
+          poll: 1
+          register: updates_launch_async
+          failed_when: false
+          when: updates_launch_system_available | bool
+        - name: Require automatic removal of the owned completed async cache
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}', '-',
+                   '{{ updates_launch_workspace.path }}']
+            stdin: |
+              import json, os, sys
+              path = os.path.join(sys.argv[1], 'cache')
+              files = sorted(os.listdir(path)) if os.path.isdir(path) else []
+              print(json.dumps(files))
+              assert files == []
+          register: updates_launch_async_cache_after
+          changed_when: false
+          when: updates_launch_system_available | bool
+        - name: Verify actual worker cancellation and uncertain single creation
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ updates_launch_interpreter }}'
+              - '-B'
+              - >-
+                {{ updates_launch_workspace.path
+                }}\win_updates_launch_lifecycle.py
+              - '{{ updates_launch_workspace.path }}'
+              - '{{ item }}'
+          environment: '{{ updates_launch_environment }}'
+          loop: [cancel, uncertain]
+          register: updates_launch_lifecycle
+          changed_when: false
+          failed_when: false
+          when: updates_launch_system_available | bool
+      always:
+        - name: Retain partial provider results before recovery
+          ansible.builtin.copy:
+            content: >-
+              {{ {'sid': updates_launch_sid,
+              'workspace': updates_launch_workspace,
+              'setup': updates_launch_setup | default(none),
+              'cohorts': updates_launch_results,
+              'async': updates_launch_async | default(none),
+              'lifecycle': updates_launch_lifecycle | default(none)}
+              | to_nice_json }}
+            dest: >-
+              {{ playbook_dir }}/../../tmp/codex/evidence/updates-launch-{{
+              inventory_hostname }}.partial.json
+            mode: '0600'
+          delegate_to: localhost
+          vars:
+            ansible_connection: local
+            ansible_shell_type: sh
+            ansible_python_interpreter: '{{ ansible_playbook_python }}'
+          changed_when: false
+        - name: Observe only the owned copied-image journal
+          sustainablelobster.legacy_windows.win_stat:
+            path: >-
+              {{ updates_launch_workspace.path }}\copied-image-security.json
+          register: updates_launch_file_journal
+        - name: Disable gate and restore only the exact owned image DACL
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}', '-',
+                   '{{ updates_launch_workspace.path }}', restore]
+            stdin: '{{ updates_launch_site_program }}'
+          register: updates_launch_restored
+          when: updates_launch_file_journal.stat.exists
+        - name: Close only the birth-identified observer and worker cohort
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}', '-',
+                   '{{ updates_launch_workspace.path }}', stop]
+            stdin: '{{ updates_runas_program }}'
+          become: true
+          become_method: ansible.builtin.runas
+          become_user: 'NT AUTHORITY\SYSTEM'
+          vars:
+            ansible_become_password: null
+          register: updates_launch_closed
+          when: updates_launch_monitor.rc is defined
+        - name: Preserve public results native identities and exact recovery
+          ansible.builtin.copy:
+            content: >-
+              {{ {'sid': updates_launch_sid,
+              'workspace': updates_launch_workspace,
+              'runtime': updates_launch_original,
+              'setup': updates_launch_setup | default(none),
+              'cohorts': updates_launch_results,
+              'observer': updates_launch_closed | default(none),
+              'async': updates_launch_async | default(none),
+              'async_cache_after':
+              updates_launch_async_cache_after | default(none),
+              'lifecycle': updates_launch_lifecycle | default(none),
+              'image_restored': updates_launch_restored | default(none)}
+              | to_nice_json }}
+            dest: >-
+              {{ playbook_dir }}/../../tmp/codex/evidence/updates-launch-{{
+              inventory_hostname }}.json
+            mode: '0600'
+          delegate_to: localhost
+          vars:
+            ansible_connection: local
+            ansible_shell_type: sh
+            ansible_python_interpreter: '{{ ansible_playbook_python }}'
+          changed_when: false
+        - name: Delete only the closed observer and copied runtime workspace
+          sustainablelobster.legacy_windows.win_file:
+            path: '{{ updates_launch_workspace.path }}'
+            state: absent
+        - name: Require original staging and Updates workspace candidates
+          ansible.builtin.raw: >-
+            cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+            "{{ updates_runas_global_program }}""
+          register: updates_launch_global_after
+          changed_when: false
+        - name: Require exact global staging and workspace closure
+          ansible.builtin.assert:
+            that: >-
+              updates_launch_global_before.stdout | from_json ==
+              updates_launch_global_after.stdout | from_json
+        - name: Close only the owned connection
+          ansible.builtin.meta: reset_connection
+    - name: Require exact image recovery and paired deny and restore events
+      vars:
+        restored: '{{ updates_launch_restored.stdout | from_json }}'
+      ansible.builtin.assert:
+        that:
+          - restored.original_dacl
+          - restored.image_hash_unchanged
+          - restored.dll_hash_unchanged
+          - restored.gate_disabled
+          - >-
+            restored.events | selectattr('event', 'equalto', 'denied') |
+            list | length >= 2
+          - >-
+            restored.events | selectattr('event', 'equalto', 'denied') |
+            map(attribute='pid') | list ==
+            restored.events | selectattr('event', 'equalto', 'restored') |
+            map(attribute='pid') | list
+    - name: Require exact caller and SYSTEM identities without extra workers
+      vars:
+        observation: '{{ updates_launch_closed.stdout | from_json }}'
+      ansible.builtin.assert:
+        that:
+          - observation.records | length == 6
+          - >-
+            observation.records[:2] | map(attribute='sid') | unique |
+            list == [updates_launch_sid]
+          - >-
+            observation.records[2:] | map(attribute='sid') | unique |
+            list == ['S-1-5-18']
+          - updates_launch_async.updates is defined
+          - updates_launch_async.ansible_job_id is defined
+      when: updates_launch_system_available | bool
+    - name: Require differing-SID cancellation and uncertain no-retry behavior
+      ansible.builtin.assert:
+        that:
+          - item.rc == 0
+          - (item.stdout | from_json).creator_sid == updates_launch_sid
+          - (item.stdout | from_json).caller_identity_restored
+          - (item.stdout | from_json).native_creations | length == 1
+          - (item.stdout | from_json).launch_calls == [false, true]
+      loop: '{{ updates_launch_lifecycle.results }}'
+      when: updates_launch_system_available | bool
+    - name: Require identical real operation results without servicing retries
+      ansible.builtin.assert:
+        that:
+          - item.0.updates is defined
+          - item.1.updates is defined
+          - (item.0.msg is defined) == (item.1.msg is defined)
+          - item.0.msg | default(none) == item.1.msg | default(none)
+          - (item.0.hresult is defined) == (item.1.hresult is defined)
+          - item.0.hresult | default(none) == item.1.hresult | default(none)
+          - item.0.updates == item.1.updates
+          - item.0.filtered_updates == item.1.filtered_updates
+          - item.0.found_update_count == item.1.found_update_count
+          - item.0.failed_update_count == item.1.failed_update_count
+          - item.0.installed_update_count == item.1.installed_update_count
+          - item.0.reboot_required == item.1.reboot_required
+          - item.0.rebooted == item.1.rebooted
+          - item.0.changed == item.1.changed
+      loop: >-
+        {{ updates_launch_results.normal.results |
+        zip(updates_launch_results.fallback.results) }}
+      when: updates_launch_system_available | bool
+    - name: Require unavailable SYSTEM before work and private workspace closure
+      ansible.builtin.assert:
+        that:
+          - item.updates == {}
+          - item.filtered_updates == {}
+          - item.found_update_count == 0
+          - item.failed_update_count == 0
+          - item.installed_update_count == 0
+          - not item.changed
+          - "'SYSTEM worker launch failed before dispatch' in item.msg"
+          - "'its owned workspace was removed' in item.msg"
+      loop: '{{ updates_launch_results.fallback.results }}'
+      when: not updates_launch_system_available | bool

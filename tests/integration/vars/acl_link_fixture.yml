@@ -1,0 +1,291 @@
+---
+acl_link_fixture: |
+  # Copyright 2026 Joe Lustri
+  # SPDX-License-Identifier: GPL-3.0-or-later
+  """Inspect junction permissions independently with Python 3.4.4."""
+
+  import ctypes
+  import json
+  import os
+  import struct
+  import sys
+
+  assert sys.version_info[:3] == (3, 4, 4)
+  WORKSPACE, OPERATION = sys.argv[1:3]
+  STATE = os.path.join(WORKSPACE, "acl-links.json")
+  PATHS = {
+      "link": os.path.join(WORKSPACE, "acl-junction"),
+      "target": os.path.join(WORKSPACE, "acl-junction-target"),
+  }
+  PATHS["file"] = os.path.join(PATHS["target"], "unchanged.bin")
+  CONTENT = b"Junction ACL fixture\x00\xff\r\n" * 17
+  GUEST = "S-1-5-32-546"
+  SECURITY = ctypes.WinDLL("advapi32", use_last_error=True)
+  KERNEL = ctypes.WinDLL("kernel32", use_last_error=True)
+  POINTER, DWORD = ctypes.c_void_p, ctypes.c_uint32
+
+
+  def bind(library, name, result, arguments):
+      function = getattr(library, name)
+      function.restype, function.argtypes = result, arguments
+      return function
+
+
+  create_file = bind(
+      KERNEL, "CreateFileW", POINTER,
+      [ctypes.c_wchar_p, DWORD, DWORD, POINTER, DWORD, DWORD, POINTER],
+  )
+  close_handle = bind(KERNEL, "CloseHandle", ctypes.c_int, [POINTER])
+  local_free = bind(KERNEL, "LocalFree", POINTER, [POINTER])
+  attributes = bind(KERNEL, "GetFileAttributesW", DWORD, [ctypes.c_wchar_p])
+  ioctl = bind(
+      KERNEL, "DeviceIoControl", ctypes.c_int,
+      [POINTER, DWORD, POINTER, DWORD, POINTER, DWORD, POINTER, POINTER],
+  )
+  get_security = bind(
+      SECURITY, "GetSecurityInfo", DWORD,
+      [POINTER, ctypes.c_int, DWORD] + [POINTER] * 5,
+  )
+  set_security = bind(
+      SECURITY, "SetSecurityInfo", DWORD,
+      [POINTER, ctypes.c_int, DWORD] + [POINTER] * 4,
+  )
+  from_sddl = bind(
+      SECURITY, "ConvertStringSecurityDescriptorToSecurityDescriptorW",
+      ctypes.c_int, [ctypes.c_wchar_p, DWORD, POINTER, POINTER],
+  )
+  get_control = bind(
+      SECURITY, "GetSecurityDescriptorControl", ctypes.c_int,
+      [POINTER, POINTER, POINTER],
+  )
+  get_dacl = bind(
+      SECURITY, "GetSecurityDescriptorDacl", ctypes.c_int,
+      [POINTER, POINTER, POINTER, POINTER],
+  )
+  get_ace = bind(SECURITY, "GetAce", ctypes.c_int, [POINTER, DWORD, POINTER])
+  sid_to_string = bind(
+      SECURITY, "ConvertSidToStringSidW", ctypes.c_int, [POINTER, POINTER],
+  )
+  open_token = bind(
+      SECURITY, "OpenProcessToken", ctypes.c_int, [POINTER, DWORD, POINTER],
+  )
+  read_token = bind(
+      SECURITY, "GetTokenInformation", ctypes.c_int,
+      [POINTER, DWORD, POINTER, DWORD, POINTER],
+  )
+
+
+  def require(result):
+      if not result:
+          raise ctypes.WinError(ctypes.get_last_error())
+
+
+  def check_error(error):
+      if error:
+          raise ctypes.WinError(error)
+
+
+  def open_object(path, access):
+      # OPEN_REPARSE_POINT is essential: the link and target have distinct ACLs.
+      handle = create_file(path, access, 7, None, 3, 0x02200000, None)
+      if handle == POINTER(-1).value:
+          raise ctypes.WinError(ctypes.get_last_error())
+      return handle
+
+
+  def sid_text(sid):
+      text = POINTER()
+      require(sid_to_string(sid, ctypes.byref(text)))
+      try:
+          return ctypes.wstring_at(text)
+      finally:
+          local_free(text)
+
+
+  def current_user():
+      token = POINTER()
+      require(open_token(POINTER(-1), 8, ctypes.byref(token)))
+      try:
+          needed = DWORD()
+          assert not read_token(token, 1, None, 0, ctypes.byref(needed))
+          assert ctypes.get_last_error() == 122
+          data = ctypes.create_string_buffer(needed.value)
+          require(read_token(token, 1, data, len(data), ctypes.byref(needed)))
+          return sid_text(POINTER.from_buffer(data).value)
+      finally:
+          require(close_handle(token))
+
+
+  def descriptor(path):
+      handle = open_object(path, 0x20000)
+      security, owner, group, dacl = [POINTER() for unused in range(4)]
+      try:
+          check_error(get_security(
+              handle, 1, 7, ctypes.byref(owner), ctypes.byref(group),
+              ctypes.byref(dacl), None, ctypes.byref(security),
+          ))
+          control, revision = ctypes.c_uint16(), DWORD()
+          require(get_control(
+              security, ctypes.byref(control), ctypes.byref(revision),
+          ))
+          assert dacl.value, "Fixture must have a non-null DACL"
+          entries = []
+          count = ctypes.c_uint16.from_address(dacl.value + 4).value
+          for index in range(count):
+              ace = POINTER()
+              require(get_ace(dacl, index, ctypes.byref(ace)))
+              size = ctypes.c_uint16.from_address(ace.value + 2).value
+              raw = ctypes.string_at(ace, size)
+              ace_type, flags = struct.unpack_from("BB", raw)
+              assert ace_type in (0, 1), "Unexpected fixture ACE type"
+              entries.append({
+                  "type": ace_type, "flags": flags,
+                  "mask": struct.unpack_from("<I", raw, 4)[0],
+                  "sid": sid_text(ace.value + 8),
+              })
+          return {
+              "owner": sid_text(owner), "group": sid_text(group),
+              "protected": bool(control.value & 0x1000),
+              "aces": entries, "attributes": attributes(path),
+          }
+      finally:
+          if security:
+              local_free(security)
+          require(close_handle(handle))
+
+
+  def sid_order(sid):
+      parts = [int(part) for part in sid.split("-")[1:]]
+      return parts[1], len(parts) - 2, tuple(parts[2:])
+
+
+  def protect(path, user, inheritable=False):
+      descriptor_pointer = POINTER()
+      identities = sorted(
+          set(("S-1-5-18", "S-1-5-32-544", user)),
+          key=sid_order,
+      )
+      flags = "OICI" if inheritable else ""
+      sddl = "D:P" + "".join(
+          "(A;{0};FA;;;{1})".format(flags, sid) for sid in identities
+      )
+      require(from_sddl(sddl, 1, ctypes.byref(descriptor_pointer), None))
+      try:
+          present, defaulted, dacl = ctypes.c_int(), ctypes.c_int(), POINTER()
+          require(get_dacl(
+              descriptor_pointer, ctypes.byref(present), ctypes.byref(dacl),
+              ctypes.byref(defaulted),
+          ))
+          handle = open_object(path, 0x60000)
+          try:
+              check_error(set_security(
+                  handle, 1, 0x80000004, None, None, dacl, None,
+              ))
+          finally:
+              require(close_handle(handle))
+      finally:
+          local_free(descriptor_pointer)
+
+
+  def snapshot():
+      with open(PATHS["file"], "rb") as stream:
+          assert stream.read() == CONTENT, "Fixture file contents changed"
+      return {name: descriptor(path) for name, path in PATHS.items()}
+
+
+  def setup():
+      assert not os.path.exists(STATE), STATE
+      assert not any(os.path.lexists(path) for path in PATHS.values())
+      # Record ownership first so partial setup remains recoverable.
+      with open(STATE, "w") as stream:
+          json.dump({"paths": PATHS}, stream)
+      os.mkdir(PATHS["target"])
+      os.mkdir(PATHS["link"])
+      with open(PATHS["file"], "wb") as stream:
+          stream.write(CONTENT)
+      user = current_user()
+      # Protect the child before changing its parent's inheritable entries.
+      protect(PATHS["file"], user)
+      protect(PATHS["target"], user)
+      protect(PATHS["link"], user)
+      handle = open_object(PATHS["link"], 0x40000000)
+      try:
+          substitute = ("\\??\\" + PATHS["target"]).encode("utf-16-le")
+          printable = PATHS["target"].encode("utf-16-le")
+          names = substitute + b"\x00\x00" + printable + b"\x00\x00"
+          data = struct.pack(
+              "<IHHHHHH", 0xA0000003, 8 + len(names), 0, 0,
+              len(substitute), len(substitute) + 2, len(printable),
+          ) + names
+          buffer, received = ctypes.create_string_buffer(data), DWORD()
+          require(ioctl(handle, 0x900A4, buffer, len(data), None, 0,
+                        ctypes.byref(received), None))
+      finally:
+          require(close_handle(handle))
+      initial = snapshot()
+      assert initial["link"]["attributes"] & 0x400
+      assert not initial["target"]["attributes"] & 0x400
+      assert not any(entry["sid"] == GUEST for info in initial.values()
+                     for entry in info["aces"])
+      with open(STATE, "w") as stream:
+          json.dump({"paths": PATHS, "snapshot": initial}, stream)
+      return {"paths": PATHS, "snapshot": initial}
+
+
+  def verify(expected):
+      with open(STATE) as stream:
+          baseline = json.load(stream)
+      assert baseline["paths"] == PATHS
+      current = snapshot()
+      for name, info in current.items():
+          original = baseline["snapshot"][name]
+          entries = [entry for entry in info["aces"] if entry["sid"] == GUEST]
+          wanted = [{"type": 0, "flags": 0, "mask": 1048854, "sid": GUEST}]
+          assert entries == (wanted if name in expected.split(",") else []), (
+              name, entries, expected,
+          )
+          retained = dict(info)
+          retained["aces"] = [entry for entry in info["aces"]
+                              if entry["sid"] != GUEST]
+          assert retained == original, (name, retained, original)
+      return current
+
+
+  def exists(path):
+      if attributes(path) != 0xFFFFFFFF:
+          return True
+      error = ctypes.get_last_error()
+      if error not in (2, 3):
+          raise ctypes.WinError(error)
+      return False
+
+
+  def cleanup():
+      if not os.path.exists(STATE):
+          return {"cleaned": False}
+      with open(STATE) as stream:
+          assert json.load(stream)["paths"] == PATHS
+      # Remove the junction itself before touching its separately owned target.
+      if exists(PATHS["link"]):
+          os.rmdir(PATHS["link"])
+      # Recover a child stripped of inherited access during partial setup.
+      # The owned parent remains accessible and can propagate replacement ACEs.
+      if exists(PATHS["target"]):
+          protect(PATHS["target"], current_user(), inheritable=True)
+      if exists(PATHS["file"]):
+          os.remove(PATHS["file"])
+      if exists(PATHS["target"]):
+          os.rmdir(PATHS["target"])
+      os.remove(STATE)
+      return {"cleaned": True}
+
+
+  if OPERATION == "setup":
+      RESULT = setup()
+  elif OPERATION == "verify":
+      RESULT = verify(sys.argv[3])
+  elif OPERATION == "cleanup":
+      RESULT = cleanup()
+  else:
+      raise ValueError("Unknown fixture operation: " + OPERATION)
+  print(json.dumps(RESULT))

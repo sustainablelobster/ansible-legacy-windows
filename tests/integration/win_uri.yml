@@ -1,0 +1,199 @@
+---
+- name: Verify native Windows URI responses, source parity and owned cleanup
+  hosts: legacy_windows
+  gather_facts: false
+  vars_files:
+    - vars/get_url_fixture.yml
+    - vars/uri_fixture.yml
+    - vars/uri.yml
+  vars:
+    uri_selected_cases: >-
+      {{ uri_cases[uri_case_start | default(0) | int:
+                   uri_case_end | default(uri_cases | length) | int] }}
+  tasks:
+    - name: Require actual Python 3.4.4 and record original staging
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import glob,json,os,sys,tempfile;
+        assert sys.version_info[:3] == (3,4,4);
+        print(json.dumps(sorted(glob.glob(os.path.join(
+        tempfile.gettempdir(),'ansible-tmp-*')))))""
+      register: uri_staging_before
+      changed_when: false
+
+    - name: Allocate private controller evidence
+      ansible.builtin.tempfile:
+        state: file
+        path: '{{ playbook_dir }}/../../tmp'
+        prefix: 'win-uri-{{ inventory_hostname }}-'
+        suffix: .json
+      register: uri_capture
+      delegate_to: localhost
+      vars: &local
+        ansible_connection: local
+        ansible_shell_type: sh
+        ansible_python_interpreter: '{{ ansible_playbook_python }}'
+      changed_when: false
+
+    - name: Initialize complete case evidence
+      ansible.builtin.set_fact:
+        uri_results: []
+
+    - name: Load explicitly supplied untouched-source reference
+      when: uri_reference_capture is defined
+      ansible.builtin.set_fact:
+        uri_reference: >-
+          {{ lookup('ansible.builtin.file', uri_reference_capture,
+                    rstrip=false) | from_json }}
+        uri_reference_sha256: >-
+          {{ lookup('ansible.builtin.file', uri_reference_capture,
+                    rstrip=false) | hash('sha256') }}
+      no_log: true
+
+    - name: Require uniquely named validated source records
+      when: uri_reference_capture is defined
+      ansible.builtin.assert:
+        that:
+          - not uri_compare | default(false) | bool
+          - uri_reference.results | length > 0
+          - >-
+            uri_reference.results | map(attribute='name') | unique |
+            length == uri_reference.results | length
+          - >-
+            uri_reference.results | rejectattr('validated', 'equalto', true) |
+            list | length == 0
+
+    - name: Exercise URI requests inside one owned disposable workspace
+      block:
+        - name: Allocate owned workspace  # noqa: args[module]
+          sustainablelobster.legacy_windows.win_tempfile:
+            state: directory
+            prefix: legacy-windows-get-url-uri-
+          register: get_url_workspace
+
+        - name: Start owned HTTP fixture  # noqa: args[module]
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}', '-',
+                   '{{ get_url_workspace.path }}', setup]
+            stdin: '{{ get_url_program }}'
+          register: get_url_setup
+          changed_when: false
+          no_log: true
+
+        - name: Bind independent fixture metadata
+          ansible.builtin.set_fact:
+            get_url_setup_data: '{{ get_url_setup.stdout | from_json }}'
+
+        - name: Exercise the complete declared public matrix
+          ansible.builtin.include_tasks: tasks/win_uri_case.yml
+          loop: '{{ uri_selected_cases }}'
+          loop_control:
+            loop_var: uri_case
+            label: '{{ uri_case.name }}'
+      always:
+        - name: Retain complete raw evidence before cleanup
+          ansible.builtin.copy:
+            content: >-
+              {{ {'results': uri_results,
+                  'setup': get_url_setup | default(none),
+                  'reference_sha256': uri_reference_sha256 | default(none),
+                  'workspace': get_url_workspace | default(none),
+                  'staging_before': uri_staging_before} | to_nice_json }}
+            dest: '{{ uri_capture.path }}'
+            mode: '0600'
+          delegate_to: localhost
+          vars: *local
+          changed_when: false
+          no_log: true
+
+        - name: Verify owned fixture recovery  # noqa: args[module]
+          when: get_url_workspace.path is defined
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}', '-',
+                   '{{ get_url_workspace.path }}', cleanup]
+            stdin: '{{ get_url_program }}'
+          register: uri_recovery
+          changed_when: false
+          no_log: true
+
+        - name: Persist literal raw cleanup before its recovery gate
+          ansible.builtin.copy:
+            content: >-
+              {{ {'results': uri_results,
+                  'setup': get_url_setup | default(none),
+                  'reference_sha256': uri_reference_sha256 | default(none),
+                  'workspace': get_url_workspace | default(none),
+                  'recovery': uri_recovery | default(none),
+                  'staging_before': uri_staging_before} | to_nice_json }}
+            dest: '{{ uri_capture.path }}'
+            mode: '0600'
+          delegate_to: localhost
+          vars: *local
+          changed_when: false
+          no_log: true
+
+        - name: Require exact observed recovery and process termination
+          ansible.builtin.assert:
+            that:
+              - (uri_recovery.stdout | from_json).restored
+              - (uri_recovery.stdout | from_json).server_stopped
+
+        - name: Finalize verified journal  # noqa: args[module]
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}', '-',
+                   '{{ get_url_workspace.path }}', finalize]
+            stdin: '{{ get_url_program }}'
+          changed_when: false
+          no_log: true
+
+        - name: Remove verified owned workspace  # noqa: args[module]
+          sustainablelobster.legacy_windows.win_file:
+            path: '{{ get_url_workspace.path }}'
+            state: absent
+
+        - name: Independently verify owned absence and original staging
+          ansible.builtin.raw: >-
+            cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+            "import glob,json,os,sys,tempfile;
+            assert not os.path.exists(sys.argv[1]);
+            print(json.dumps(sorted(glob.glob(os.path.join(
+            tempfile.gettempdir(),'ansible-tmp-*')))))"
+            "{{ get_url_workspace.path }}""
+          register: uri_staging_after
+          changed_when: false
+
+        - name: Require unchanged global staging
+          ansible.builtin.assert:
+            that:
+              - >-
+                uri_staging_before.stdout | from_json ==
+                uri_staging_after.stdout | from_json
+
+        - name: Retain final raw public, wire, file and cleanup evidence
+          ansible.builtin.copy:
+            content: >-
+              {{ {'results': uri_results,
+                  'setup': get_url_setup | default(none),
+                  'reference_sha256': uri_reference_sha256 | default(none),
+                  'workspace': get_url_workspace,
+                  'recovery': uri_recovery,
+                  'staging_before': uri_staging_before,
+                  'staging_after': uri_staging_after,
+                  'workspace_absent': true} | to_nice_json }}
+            dest: '{{ uri_capture.path }}'
+            mode: '0600'
+          delegate_to: localhost
+          vars: *local
+          changed_when: false
+          no_log: true
+
+        - name: Require complete declared validated evidence
+          ansible.builtin.assert:
+            that:
+              - uri_results | length == uri_selected_cases | length
+              - >-
+                uri_results | map(attribute='name') | sort ==
+                uri_selected_cases | map(attribute='name') | sort
+              - >-
+                uri_results | rejectattr('validated', 'equalto', true) |
+                list | length == 0

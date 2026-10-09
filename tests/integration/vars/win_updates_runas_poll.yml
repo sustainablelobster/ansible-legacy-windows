@@ -1,0 +1,14 @@
+---
+updates_runas_capture: >-
+  {{ playbook_dir }}/../../tmp/codex/evidence/win-updates-runas-poll-result.json
+updates_runas_poll_retained_source: >-
+  {{ (lookup('ansible.builtin.file', updates_runas_poll_retained_source_path)
+      | from_json) if updates_runas_poll_retained_source_path is defined
+     else none }}
+updates_runas_sources: |
+  POLL_ASYNC_CACHE = True
+  WMI_SOURCE = {{ lookup('ansible.builtin.file',
+    playbook_dir + '/../../plugins/module_utils/legacy_windows_wmi.py')
+    | to_json }}
+  BASE_SOURCE = {{ lookup('ansible.builtin.file',
+    playbook_dir + '/fixtures/native_async.py') | to_json }}

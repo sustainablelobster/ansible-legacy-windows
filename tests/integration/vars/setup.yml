@@ -1,0 +1,101 @@
+---
+setup_compare: false
+setup_script_facts: '{{ setup_compare }}'
+setup_fixture: >-
+  {{ lookup('ansible.builtin.file', playbook_dir + '/fixtures/setup.py',
+            rstrip=false) }}
+setup_cases:
+  - name: Explicit empty selection
+    params: {gather_subset: ['!all', '!min']}
+  - name: Check-mode empty selection
+    params: {gather_subset: ['!all', '!min']}
+    check: true
+  - name: Accepted DNS subset has no collector
+    params: {gather_subset: ['!all', '!min', dns]}
+  - name: Invalid positive subset warns without inventing facts
+    params: {gather_subset: ['!all', '!min', invented]}
+  - name: Unknown exclusions are ignored
+    params: {gather_subset: ['!all', '!min', '!invented']}
+  - name: Case-sensitive named subset warns
+    params: {gather_subset: ['!all', '!min', DISTRIBUTION]}
+  - name: Case-insensitive group selection
+    params:
+      gather_subset: ['!ALL', '!MIN', NETWORK]
+  - name: Network facts retain literal address and interface arrays
+    params:
+      gather_subset: ['!all', '!min', network]
+  - name: Combined IPv4 selector returns the complete address list
+    params: {gather_subset: ['!all', '!min', all_ipv4_addresses]}
+  - name: Combined IPv6 selector returns the complete address list
+    params: {gather_subset: ['!all', '!min', all_ipv6_addresses]}
+  - name: Interfaces retain every released property and scalar-array shape
+    params: {gather_subset: ['!all', '!min', interfaces]}
+  - name: Installed PowerShell version does not execute PowerShell
+    params: {gather_subset: ['!all', '!min', powershell_version]}
+  - name: Local WSMan listener enumeration without configuring listeners
+    params: {gather_subset: ['!all', '!min', winrm]}
+  - name: Domain membership and role
+    params: {gather_subset: ['!all', '!min', windows_domain]}
+  - name: Distribution version and installed OS metadata
+    params: {gather_subset: ['!all', '!min', distribution]}
+  - name: Firmware BIOS and product metadata
+    params: {gather_subset: ['!all', '!min', bios]}
+  - name: Platform machine identity and pending-reboot facts
+    params: {gather_subset: ['!all', '!min', platform]}
+  - name: Processor arrays and integral JSON ratios
+    params: {gather_subset: ['!all', '!min', processor]}
+  - name: Process user identity
+    params: {gather_subset: ['!all', '!min', user]}
+  - name: Virtualization model and role
+    params: {gather_subset: ['!all', '!min', virtual]}
+  - name: External facts retain installed Facter availability
+    params: {gather_subset: ['!all', '!min', external]}
+  - name: Minimum group with explicitly excluded process and clock fields
+    params:
+      gather_subset: ['!all', '!date_time', '!env', '!local']
+  - name: Hardware exclusions retain BIOS processor and virtual facts
+    params:
+      gather_subset: ['!min', '!network', '!external', '!memory', '!uptime']
+  - name: Inclusion wins over exclusion regardless of request order
+    params:
+      gather_subset: ['!all', '!min', '!distribution', distribution]
+  - name: Additional gather-facts options are accepted and ignored
+    params:
+      gather_subset: ['!all', '!min']
+      filter: 'ignored*'
+      future_option: {retained: true}
+  - name: String subset list follows the released binding
+    params: {gather_subset: '!all,!min,distribution'}
+  - name: Null timeout with no selected collector
+    params: {gather_subset: ['!all', '!min'], gather_timeout: null}
+  - name: Zero timeout with no selected collector
+    params: {gather_subset: ['!all', '!min'], gather_timeout: 0}
+  - name: Named collector durations remain independently bounded
+    params:
+      gather_subset: ['!all', '!min', distribution, powershell_version]
+      _measure_subset: true
+    measure: true
+  - name: JSON custom facts preserve null boolean number object and arrays
+    params: {gather_subset: ['!all', '!min', local]}
+    fact_directory: json-facts
+  - name: Check mode still reads JSON custom facts
+    params: {gather_subset: ['!all', '!min', local]}
+    fact_directory: json-facts
+    check: true
+  - name: Missing custom-fact directory produces the released warning
+    params: {gather_subset: ['!all', '!min', local]}
+    fact_directory: missing-facts
+  - name: Explicit script facts retain their PowerShell prerequisite
+    params: {gather_subset: ['!all', '!min', local]}
+    fact_directory: script-facts
+    script: true
+  - name: Check mode still executes explicitly supplied script facts
+    params: {gather_subset: ['!all', '!min', local]}
+    fact_directory: script-facts
+    script: true
+    check: true
+  - name: Local script timeout returns a warning and no late facts
+    params: {gather_subset: ['!all', '!min', local], gather_timeout: 2}
+    fact_directory: timeout-facts
+    script: true
+    timeout: true

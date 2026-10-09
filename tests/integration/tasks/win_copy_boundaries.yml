@@ -1,0 +1,183 @@
+---
+- name: Prepare test-owned files with explicit native attributes
+  # The fixture uses only Python 3.4.4 and native Windows APIs.
+  sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+    argv:
+      - '{{ ansible_python_interpreter }}'
+      - -c
+      - |
+        import ctypes, os, sys
+        root = sys.argv[1]
+        os.makedirs(os.path.join(root, 'empty'))
+        os.makedirs(os.path.join(root, 'named-source', 'nested'))
+        values = {
+            'source.txt': b'source bytes',
+            'existing.txt': b'existing bytes',
+            'protected.txt': b'protected bytes',
+            'marked-source.txt': b'marked source bytes',
+            'named-source/data.txt': b'named directory bytes',
+        }
+        kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+        kernel.SetFileAttributesW.argtypes = [ctypes.c_wchar_p, ctypes.c_uint32]
+        kernel.SetFileAttributesW.restype = ctypes.c_int
+        for name, content in values.items():
+            path = os.path.join(root, name)
+            with open(path, 'wb') as stream:
+                stream.write(content)
+            attributes = 7 if name in ('protected.txt',
+                                      'marked-source.txt') else 32
+            if not kernel.SetFileAttributesW(path, attributes):
+                raise ctypes.WinError(ctypes.get_last_error())
+      - '{{ boundary_root }}'
+
+- name: Observe the upstream check-mode directory-creation behavior
+  sustainablelobster.legacy_windows.win_copy:  # noqa: args[module]
+    src: '{{ boundary_root }}\source.txt'
+    dest: '{{ boundary_root }}\check-parent\'
+    remote_src: true
+  check_mode: true
+  register: missing_parent_boundary
+
+- name: Predict a remote backup without creating one
+  sustainablelobster.legacy_windows.win_copy:  # noqa: args[module]
+    src: '{{ boundary_root }}\source.txt'
+    dest: '{{ boundary_root }}\existing.txt'
+    remote_src: true
+    backup: true
+  check_mode: true
+  register: backup_boundary
+
+- name: Verify failure for empty directory contents and an absent destination
+  block:
+    - name: Attempt the empty target-local directory copy
+      sustainablelobster.legacy_windows.win_copy:  # noqa: args[module]
+        src: '{{ boundary_root }}\empty\'
+        dest: '{{ boundary_root }}\empty-destination'
+        remote_src: true
+      register: empty_boundary
+
+    - name: Reject unexpected empty-directory success
+      ansible.builtin.fail:
+        msg: Empty directory contents unexpectedly created a destination
+  rescue:
+    - name: Require the measured failure without partial fields
+      ansible.builtin.assert:
+        that:
+          - empty_boundary is failed
+          - empty_boundary is not changed
+          - empty_boundary.operation is not defined
+          - >-
+            empty_boundary.msg.startswith(
+            'Unhandled exception while executing module:')
+          - empty_boundary.msg.endswith("because it does not exist.")
+
+- name: Replace a readonly hidden system file
+  sustainablelobster.legacy_windows.win_copy:  # noqa: args[module]
+    src: '{{ boundary_root }}\source.txt'
+    dest: '{{ boundary_root }}\protected.txt'
+    remote_src: true
+  register: protected_boundary
+
+- name: Retain source attributes when copying to a new file
+  sustainablelobster.legacy_windows.win_copy:  # noqa: args[module]
+    src: '{{ boundary_root }}\marked-source.txt'
+    dest: '{{ boundary_root }}\marked-copy.txt'
+    remote_src: true
+  register: marked_boundary
+
+- name: Require the reference-observed return fields
+  ansible.builtin.assert:
+    that:
+      - missing_parent_boundary is changed
+      - missing_parent_boundary.size == None
+      - backup_boundary is changed
+      - >-
+        backup_boundary.backup_file.startswith(
+        boundary_root + '\\existing.txt.')
+      - backup_boundary.backup_file.endswith('.bak')
+      - backup_boundary.size == 14
+      - protected_boundary is changed
+      - protected_boundary.size == 12
+      - marked_boundary is changed
+      - marked_boundary.size == 19
+
+- name: Retain directory names when the source ends with dot components
+  sustainablelobster.legacy_windows.win_copy:  # noqa: args[module]
+    src: '{{ boundary_root }}\named-source\{{ item.source }}'
+    dest: '{{ boundary_root }}\{{ item.destination }}'
+    remote_src: true
+  loop:
+    - {source: '.', destination: dot-copy}
+    - {source: 'nested\..', destination: parent-copy}
+  register: resolved_directory_copies
+
+- name: Require unchanged resolved directories in normal and check mode
+  sustainablelobster.legacy_windows.win_copy:  # noqa: args[module]
+    src: '{{ boundary_root }}\named-source\{{ item.source }}'
+    dest: '{{ boundary_root }}\{{ item.destination }}'
+    remote_src: true
+  check_mode: '{{ item.check }}'
+  loop:
+    - {source: '.', destination: dot-copy, check: false}
+    - {source: 'nested\..', destination: parent-copy, check: false}
+    - {source: '.', destination: dot-copy, check: true}
+    - {source: 'nested\..', destination: parent-copy, check: true}
+  register: repeated_directory_copies
+
+- name: Require resolved directory layout and idempotence
+  ansible.builtin.assert:
+    that:
+      - resolved_directory_copies is changed
+      - repeated_directory_copies is not changed
+      - >-
+        resolved_directory_copies.results[0].dest ==
+        boundary_root + '\\dot-copy\\named-source'
+      - >-
+        resolved_directory_copies.results[1].dest ==
+        boundary_root + '\\parent-copy\\named-source'
+      - resolved_directory_copies.results[0].size == 21
+      - resolved_directory_copies.results[1].size == 21
+
+- name: Independently verify boundary contents attributes and check-mode effects
+  # Exact bytes and native attributes are independent of collection helpers.
+  sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+    argv:
+      - '{{ ansible_python_interpreter }}'
+      - -c
+      - |
+        import ctypes, glob, os, sys
+        root = sys.argv[1]
+        kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+        kernel.GetFileAttributesW.argtypes = [ctypes.c_wchar_p]
+        kernel.GetFileAttributesW.restype = ctypes.c_uint32
+        expected = {
+            'source.txt': (b'source bytes', 32),
+            'existing.txt': (b'existing bytes', 32),
+            'protected.txt': (b'source bytes', 32),
+            'marked-source.txt': (b'marked source bytes', 7),
+            'marked-copy.txt': (b'marked source bytes', 39),
+        }
+        for name, (content, attributes) in expected.items():
+            path = os.path.join(root, name)
+            with open(path, 'rb') as stream:
+                assert stream.read() == content, name
+            assert kernel.GetFileAttributesW(path) == attributes, name
+        for copied, source in (('protected.txt', 'source.txt'),
+                               ('marked-copy.txt', 'marked-source.txt')):
+            assert os.stat(os.path.join(root, copied)).st_mtime == (
+                os.stat(os.path.join(root, source)).st_mtime), copied
+        assert os.path.isdir(os.path.join(root, 'check-parent'))
+        assert not os.path.exists(os.path.join(root, 'check-parent/source.txt'))
+        assert not os.path.exists(os.path.join(root, 'empty-destination'))
+        assert not glob.glob(os.path.join(root, '*.bak'))
+        for destination in ('dot-copy', 'parent-copy'):
+            directory = os.path.join(root, destination)
+            assert os.listdir(directory) == ['named-source'], directory
+            copied = os.path.join(directory, 'named-source')
+            assert os.path.isdir(os.path.join(copied, 'nested')), copied
+            with open(os.path.join(copied, 'data.txt'), 'rb') as stream:
+                assert stream.read() == b'named directory bytes', copied
+        print('attributes, timestamps, check-mode effects and failures'
+              ' verified')
+      - '{{ boundary_root }}'
+  changed_when: false

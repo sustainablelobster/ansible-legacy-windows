@@ -1,0 +1,177 @@
+---
+share_fixture: |
+  # Copyright 2026 Joe Lustri
+  # SPDX-License-Identifier: GPL-3.0-or-later
+  """Observe one uniquely owned share and retain durable removal recovery."""
+
+  import base64
+  import ctypes
+  import json
+  import os
+  import re
+  import struct
+  import sys
+  import uuid
+
+  assert sys.version_info[:3] == (3, 4, 4)
+  WORKSPACE, OPERATION = sys.argv[1:3]
+  JOURNAL = os.path.join(WORKSPACE, 'share-recovery.json')
+  DWORD, POINTER, WIDE = ctypes.c_uint32, ctypes.c_void_p, ctypes.c_wchar_p
+
+
+  class ShareInfo(ctypes.Structure):
+      _fields_ = [('name', WIDE), ('kind', DWORD), ('description', WIDE),
+                  ('permissions', DWORD), ('max_uses', DWORD),
+                  ('current_uses', DWORD), ('path', WIDE), ('password', WIDE),
+                  ('reserved', DWORD), ('security', POINTER)]
+
+
+  class ShareFlags(ctypes.Structure):
+      _fields_ = [('flags', DWORD)]
+
+
+  NET = ctypes.WinDLL('netapi32')
+  SECURITY = ctypes.WinDLL('advapi32', use_last_error=True)
+  KERNEL = ctypes.WinDLL('kernel32', use_last_error=True)
+
+
+  def bind(library, name, result, arguments):
+      function = getattr(library, name)
+      function.argtypes, function.restype = arguments, result
+      return function
+
+
+  get = bind(NET, 'NetShareGetInfo', DWORD,
+             [WIDE, WIDE, DWORD, ctypes.POINTER(POINTER)])
+  delete = bind(NET, 'NetShareDel', DWORD, [WIDE, WIDE, DWORD])
+  free = bind(NET, 'NetApiBufferFree', DWORD, [POINTER])
+  sd_length = bind(SECURITY, 'GetSecurityDescriptorLength', DWORD, [POINTER])
+  get_dacl = bind(SECURITY, 'GetSecurityDescriptorDacl', ctypes.c_int,
+                  [POINTER, ctypes.POINTER(ctypes.c_int),
+                   ctypes.POINTER(POINTER), ctypes.POINTER(ctypes.c_int)])
+  sid_text = bind(SECURITY, 'ConvertSidToStringSidW', ctypes.c_int,
+                  [POINTER, ctypes.POINTER(WIDE)])
+  local_free = bind(KERNEL, 'LocalFree', POINTER, [POINTER])
+
+
+  def require(value):
+      if not value:
+          raise ctypes.WinError(ctypes.get_last_error())
+
+
+  def text_sid(pointer):
+      text = WIDE()
+      try:
+          require(sid_text(pointer, ctypes.byref(text)))
+          return text.value
+      finally:
+          if text:
+              local_free(ctypes.cast(text, POINTER))
+
+
+  def access(pointer):
+      present, defaulted, dacl = ctypes.c_int(), ctypes.c_int(), POINTER()
+      require(get_dacl(pointer, ctypes.byref(present), ctypes.byref(dacl),
+                       ctypes.byref(defaulted)))
+      if not present.value or not dacl:
+          return None
+      size, count = struct.unpack('<HH', ctypes.string_at(dacl.value + 2, 4))
+      offset, entries = 8, []
+      for unused in range(count):
+          kind, flags, length, mask = struct.unpack(
+              '<BBHL', ctypes.string_at(dacl.value + offset, 8))
+          assert offset + length <= size
+          entries.append({'type': kind, 'flags': flags, 'mask': mask,
+                          'sid': text_sid(dacl.value + offset + 8)})
+          offset += length
+      return entries
+
+
+  def observe(name):
+      pointer = POINTER()
+      try:
+          status = get(None, name, 502, ctypes.byref(pointer))
+          if status == 2310:
+              return None
+          if status:
+              raise ctypes.WinError(status)
+          value = ctypes.cast(pointer, ctypes.POINTER(ShareInfo)).contents
+          # Decode access and retain raw bytes from one immutable native copy.
+          descriptor = ctypes.string_at(value.security,
+                                        sd_length(value.security))
+          copied_descriptor = ctypes.create_string_buffer(descriptor)
+          result = {'name': value.name, 'path': value.path,
+                    'description': value.description or '', 'type': value.kind,
+                    'access': access(copied_descriptor),
+                    'security': base64.b64encode(descriptor).decode('ascii')}
+      finally:
+          if pointer:
+              free(pointer)
+      pointer = POINTER()
+      try:
+          status = get(None, name, 1005, ctypes.byref(pointer))
+          if status:
+              raise ctypes.WinError(status)
+          flags = ctypes.cast(
+              pointer, ctypes.POINTER(ShareFlags)).contents.flags
+          result.update(flags=flags, list=not bool(flags & 0x800),
+                        encrypt=bool(flags & 0x8000),
+                        caching_mode={0: 'Manual', 0x10: 'Documents',
+                                      0x20: 'Programs', 0x30: 'None',
+                                      0x2000: 'BranchCache'}.get(
+                                          flags & 0x2030))
+          return result
+      finally:
+          if pointer:
+              free(pointer)
+
+
+  def read_journal():
+      with open(JOURNAL, 'r', encoding='utf-8') as source:
+          journal = json.load(source)
+      assert re.match(r'^LW_SHARE_[a-f0-9]{32}$', journal['name'])
+      assert journal['initial'] is None
+      assert journal['path'] == os.path.join(WORKSPACE, 'primary')
+      assert journal['other_path'] == os.path.join(WORKSPACE, 'alternative')
+      return journal
+
+
+  def setup():
+      assert not os.path.exists(JOURNAL)
+      name = 'LW_SHARE_' + uuid.uuid4().hex
+      assert observe(name) is None
+      journal = {'name': name, 'initial': None,
+                 'path': os.path.join(WORKSPACE, 'primary'),
+                 'other_path': os.path.join(WORKSPACE, 'alternative')}
+      with open(JOURNAL, 'x', encoding='utf-8') as target:
+          json.dump(journal, target)
+          target.flush()
+          os.fsync(target.fileno())
+      os.mkdir(journal['path'])
+      os.mkdir(journal['other_path'])
+      journal['supports_encryption'] = sys.getwindowsversion()[:2] >= (6, 2)
+      return journal
+
+
+  def cleanup():
+      if not os.path.exists(JOURNAL):
+          return {'restored': True, 'initial': None, 'restored_state': None}
+      journal = read_journal()
+      status = delete(None, journal['name'], 0)
+      if status not in (0, 2310):
+          raise ctypes.WinError(status)
+      assert observe(journal['name']) == journal['initial']
+      return {'restored': True, 'name': journal['name'],
+              'initial': None, 'restored_state': None,
+              'directories': [os.path.isdir(journal['path']),
+                              os.path.isdir(journal['other_path'])]}
+
+
+  if OPERATION == 'setup':
+      print(json.dumps(setup()))
+  elif OPERATION == 'observe':
+      journal = read_journal()
+      print(json.dumps(observe(journal['name'])))
+  else:
+      assert OPERATION == 'cleanup'
+      print(json.dumps(cleanup()))

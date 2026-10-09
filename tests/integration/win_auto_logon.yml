@@ -1,0 +1,106 @@
+---
+- name: Verify automatic logon and restore original registry and LSA secrets
+  hosts: legacy_windows
+  gather_facts: false
+  vars_files:
+    - vars/auto_logon.yml
+    - vars/auto_logon_fixture.yml
+  tasks:
+    - name: Read the translator used to identify the fixture account
+      ansible.builtin.set_fact:
+        auto_logon_account_source: >-
+          {{ lookup('ansible.builtin.file', playbook_dir ~
+          '/../../plugins/module_utils/legacy_windows_account.py') }}
+
+    - name: Require Python 3.4.4 and record existing task directories
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import glob, json, os, sys, tempfile;
+        assert sys.version_info[:3] == (3, 4, 4);
+        print(json.dumps(sorted(glob.glob(os.path.join(tempfile.gettempdir(),
+        'ansible-tmp-*')))))""
+      register: task_directories_before
+      changed_when: false
+
+    - name: Exercise automatic logon without rebooting or authenticating
+      block:
+        - name: Allocate the encrypted recovery workspace
+          sustainablelobster.legacy_windows.win_tempfile:  # noqa: args[module]
+            state: directory
+            prefix: legacy-windows-auto-logon-
+          register: auto_logon_workspace
+          check_mode: false
+
+        - name: Encrypt and verify secrets before preparing the baseline
+          sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - '-'
+              - '{{ auto_logon_workspace.path }}'
+              - setup
+            stdin: '{{ auto_logon_fixture }}'
+          register: auto_logon_setup
+          changed_when: true
+          check_mode: false
+
+        - name: Retain canonical account and nonsecret initial observation
+          ansible.builtin.set_fact:
+            auto_logon_account: >-
+              {{ (auto_logon_setup.stdout | from_json).account }}
+            auto_logon_previous: >-
+              {{ auto_logon_setup.stdout | from_json |
+              dict2items | rejectattr('key', 'equalto', 'account') |
+              items2dict }}
+
+        - name: Exercise changes repeats check mode and failures
+          ansible.builtin.include_tasks: tasks/win_auto_logon_case.yml
+          loop: '{{ auto_logon_cases }}'
+          loop_control:
+            loop_var: auto_logon_case
+            label: '{{ auto_logon_case.name }}'
+      always:
+        - name: Restore secrets before removing encrypted recovery data
+          when: auto_logon_workspace.path is defined
+          block:
+            - name: Restore and verify original secrets  # noqa: args[module]
+              sustainablelobster.legacy_windows.win_command:
+                argv:
+                  - '{{ ansible_python_interpreter }}'
+                  - '-'
+                  - '{{ auto_logon_workspace.path }}'
+                  - cleanup
+                stdin: '{{ auto_logon_fixture }}'
+              register: auto_logon_restoration
+              changed_when: true
+              check_mode: false
+
+            - name: Require exact restoration before removing the journal
+              ansible.builtin.assert:
+                that:
+                  - (auto_logon_restoration.stdout | from_json).restored
+
+            - name: Remove only the verified recovery workspace
+              sustainablelobster.legacy_windows.win_file:  # noqa: args[module]
+                path: '{{ auto_logon_workspace.path }}'
+                state: absent
+              check_mode: false
+
+        - name: Verify recovery workspace and staging cleanup
+          ansible.builtin.raw: >-
+            cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+            "import glob, json, os, sys, tempfile;
+            assert not os.path.exists(sys.argv[1]);
+            print(json.dumps(sorted(glob.glob(os.path.join(tempfile.gettempdir(),
+            'ansible-tmp-*')))))" "{{ auto_logon_workspace.path }}""
+          when: auto_logon_workspace.path is defined
+          register: task_directories_after
+          changed_when: false
+          check_mode: false
+
+        - name: Require task-directory cleanup
+          ansible.builtin.assert:
+            that:
+              - >-
+                (task_directories_before.stdout | from_json) ==
+                (task_directories_after.stdout | from_json)
+          when: auto_logon_workspace.path is defined

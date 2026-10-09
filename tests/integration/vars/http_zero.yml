@@ -1,0 +1,58 @@
+---
+http_zero_mode: paired
+http_zero_selected_cases: >-
+  {{ http_zero_case_indices | default(range(http_zero_cases | length) | list) |
+     map('extract', http_zero_cases) | list }}
+http_zero_cases:
+  - {name: URI immediate GET zero, module: uri, path: /payload.bin}
+  - {name: URI immediate GET zero repeated, module: uri, path: /payload.bin}
+  - {name: URI delayed GET zero, module: uri, path: /delay/0.75}
+  - {name: URI delayed GET zero repeated, module: uri, path: /delay/0.75}
+  - {name: URI immediate redirect zero, module: uri, path: /redirect/0}
+  - {name: URI delayed redirect zero, module: uri, path: /redirect/0.75}
+  - {name: URI delayed HEAD zero, module: uri, path: /delay/0.75,
+     params: {method: HEAD}}
+  - {name: URI bodyless POST zero, module: uri, path: /delay/0.75,
+     params: {method: POST}}
+  - {name: URI uploaded POST zero, module: uri, path: /delay/0.75,
+     params: {method: POST, body: fixture}}
+  - {name: URI uploaded empty POST zero, module: uri, path: /delay/0.75,
+     params: {method: POST, body: ''}}
+  - {name: URI delayed credentialed zero, module: uri, path: /delay/0.75,
+     params: {url_username: fixture, url_password: secret,
+              force_basic_auth: true}}
+  - {name: URI delayed check zero, module: uri, path: /delay/0.75, check: true}
+  - {name: GetURL immediate zero, module: get_url, path: /payload.bin}
+  - {name: GetURL delayed zero, module: get_url, path: /delay/0.75}
+  - {name: GetURL delayed redirect zero, module: get_url, path: /redirect/0.75}
+  - {name: GetURL delayed existing destination zero, module: get_url,
+     path: /delay/0.75, fixture_payload: true, params: {force: false}}
+  - {name: GetURL delayed preview zero, module: get_url, path: /delay/0.75,
+     check: true}
+  - {name: Package delayed metadata preview zero, module: package,
+     path: /delay/0.75, check: true}
+  - {name: Package immediate metadata preview zero, module: package,
+     path: /payload.bin, check: true}
+  - {name: Package delayed credentialed preview zero, module: package,
+     path: /delay/0.75, check: true,
+     params: {url_username: fixture, url_password: secret,
+              force_basic_auth: true}}
+  - {name: URI immediate positive retention, module: uri, path: /payload.bin,
+     params: {url_timeout: 2}}
+  - {name: URI delayed positive retention, module: uri, path: /delay/0.1,
+     params: {url_timeout: 2}}
+  - {name: URI redirect positive retention, module: uri, path: /redirect/0.1,
+     params: {url_timeout: 2}}
+  - {name: URI uploaded positive retention, module: uri, path: /echo,
+     params: {url_timeout: 2, method: POST, body: fixture}}
+  - {name: URI empty upload positive retention, module: uri, path: /echo,
+     params: {url_timeout: 2, method: POST, body: ''}}
+  - {name: GetURL immediate positive retention, module: get_url,
+     path: /payload.bin, params: {url_timeout: 2}}
+  - {name: GetURL preview positive retention, module: get_url,
+     path: /delay/0.1, check: true, params: {url_timeout: 2}}
+  - {name: GetURL file positive retention, module: get_url, file: true,
+     params: {url_timeout: 2}}
+  - {name: GetURL idempotent positive retention, module: get_url,
+     path: /payload.bin, fixture_payload: true,
+     params: {url_timeout: 2, force: false}}

@@ -1,0 +1,54 @@
+---
+# Use the already owned pinned MSI/MSP fixture's literal recovery gates.
+package_msp_cases:
+  - name: Child-wait MSI installation preview
+    params:
+      path: '{{ package_msp_workspace.path }}\patch.msi'
+      wait_for_children: true
+    initial: absent
+    check: true
+    changed: true
+    expected: absent
+  - name: Child-wait MSI installation
+    params:
+      path: '{{ package_msp_workspace.path }}\patch.msi'
+      wait_for_children: true
+    initial: absent
+    changed: true
+    expected: base
+  - name: Child-wait installed MSI idempotence
+    params:
+      path: '{{ package_msp_workspace.path }}\patch.msi'
+      wait_for_children: true
+    initial: base
+    expected: base
+  - name: Child-wait MSI removal by product identity
+    params:
+      product_id: '{{ package_msp_product }}'
+      state: absent
+      wait_for_children: true
+    initial: base
+    changed: true
+    expected: absent
+  - name: Child-wait MSP installation
+    params:
+      path: '{{ package_msp_workspace.path }}\patch.msp'
+      wait_for_children: true
+    initial: base
+    changed: true
+    expected: patched
+  - name: Child-wait installed MSP idempotence
+    params:
+      path: '{{ package_msp_workspace.path }}\patch.msp'
+      wait_for_children: true
+    initial: patched
+    expected: patched
+  - name: Child-wait MSP removal by identity
+    params:
+      product_id: '{{ package_msp_patch }}'
+      provider: msp
+      state: absent
+      wait_for_children: true
+    initial: patched
+    changed: true
+    expected: base

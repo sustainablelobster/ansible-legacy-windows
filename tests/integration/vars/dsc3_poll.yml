@@ -1,0 +1,56 @@
+---
+# SPDX-License-Identifier: GPL-3.0-or-later
+dsc3_archive: >-
+  {{ playbook_dir + '/../../tmp/codex/artifacts/' +
+     'DSC-3.1.2-x86_64-pc-windows-msvc.zip' }}
+dsc3_poll_expected_mac: BC-24-11-3E-87-91
+dsc3_poll_sources: |
+  WMI_SOURCE = {{ lookup('ansible.builtin.file',
+    playbook_dir + '/../../plugins/module_utils/legacy_windows_wmi.py') |
+    to_json }}
+  BASE_SOURCE = {{ lookup('ansible.builtin.file',
+    playbook_dir + '/fixtures/native_async.py') | to_json }}
+  ASYNC_SOURCE = BASE_SOURCE
+  UPDATES_SOURCE = {{ lookup('ansible.builtin.file',
+    playbook_dir + '/fixtures/win_updates_runas.py') | to_json }}
+  DSC_ASYNC_SOURCE = {{ lookup('ansible.builtin.file',
+    playbook_dir + '/fixtures/dsc3_async.py') | to_json }}
+dsc3_poll_monitor: |
+  {{ dsc3_poll_sources }}
+  {{ lookup('ansible.builtin.file', playbook_dir + '/fixtures/dsc3_poll.py') }}
+dsc3_poll_program: |
+  {{ dsc3_poll_sources }}
+  MONITOR_SOURCE = {{ dsc3_poll_monitor | to_json }}
+  {{ lookup('ansible.builtin.file', playbook_dir + '/fixtures/dsc3_poll.py') }}
+dsc3_poll_echo:
+  resources:
+    - name: automatic nested echo
+      type: Microsoft.DSC.Debug/Echo
+      properties:
+        output: {text: 'café λ \\ %PATH% !text!', items: [null, true, 3, 2.5]}
+dsc3_poll_cases:
+  - name: inline echo automatically polled
+    params: {config: '{{ dsc3_poll_echo }}'}
+    changed: false
+  - name: remote echo automatically polled
+    params:
+      config_file: '{{ dsc3_workspace.path }}\echo.dsc.json'
+      remote_config_file: true
+    changed: false
+  - name: genuine engine failure automatically polled
+    params:
+      config:
+        resources:
+          - name: unknown
+            type: LegacyWindows.Missing/Unknown
+            properties: {}
+    changed: false
+    error: Resource error (ExitCode=2)
+    rc: 2
+  - name: local file rejected before transfer and polling
+    params:
+      config_file: '{{ playbook_dir }}/files/dsc3_echo.dsc.json'
+      remote_config_file: false
+    changed: false
+    local_rejection: true
+    error: async operations are not supported with local config_file

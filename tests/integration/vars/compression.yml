@@ -1,0 +1,191 @@
+---
+compression_tree: '{{ compression_workspace.path }}\tree É '' % ! &'
+compression_file: "sample 雪 '.txt"
+compression_entries:
+  - '.'
+  - nested
+  - nested\deep
+  - "sample 雪 '.txt"
+  - nested\deep\data.bin
+compression_setup: |
+  import ctypes, json, os, sys
+  assert sys.version_info[:3] == (3, 4, 4)
+  root = sys.argv[1]
+  os.makedirs(os.path.join(root, 'nested', 'deep'))
+  content = b'Compression fixture\x00\xff\r\n' * 8192
+  files = ["sample \u96ea '.txt", os.path.join('nested', 'deep', 'data.bin')]
+  for name in files:
+      with open(os.path.join(root, name), 'wb') as output:
+          output.write(content)
+  kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+  kernel.SetFileAttributesW.argtypes = [ctypes.c_wchar_p, ctypes.c_uint32]
+  kernel.SetFileAttributesW.restype = ctypes.c_int
+  for name in ['.', 'nested', "sample \u96ea '.txt"]:
+      if not kernel.SetFileAttributesW(os.path.join(root, name), 2):
+          raise ctypes.WinError(ctypes.get_last_error())
+  print(json.dumps({'created': True}))
+compression_observer: |
+  import ctypes, json, os, sys
+  assert sys.version_info[:3] == (3, 4, 4)
+  root, expected = sys.argv[1], set(json.loads(sys.argv[2]))
+  kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+  kernel.GetFileAttributesW.argtypes = [ctypes.c_wchar_p]
+  kernel.GetFileAttributesW.restype = ctypes.c_uint32
+  found = set(['.'])
+  for directory, subdirs, files in os.walk(root):
+      for name in subdirs + files:
+          found.add(os.path.relpath(os.path.join(directory, name), root))
+  files = ["sample \u96ea '.txt", os.path.join('nested', 'deep', 'data.bin')]
+  entries = set(['.', 'nested', os.path.join('nested', 'deep')] + files)
+  assert found == entries, sorted(found)
+  compressed = []
+  for name in sorted(entries):
+      attributes = kernel.GetFileAttributesW(os.path.join(root, name))
+      assert attributes != 0xffffffff, name
+      if attributes & 0x800:
+          compressed.append(name)
+      if name in ['.', 'nested', files[0]]:
+          assert attributes & 2, (name, attributes)
+  assert set(compressed) == expected, (compressed, sorted(expected))
+  for name in files:
+      with open(os.path.join(root, name), 'rb') as source:
+          data = source.read()
+      assert data == b'Compression fixture\x00\xff\r\n' * 8192, name
+  print(json.dumps({'compressed': compressed, 'contents_unchanged': True}))
+compression_cases:
+  - name: Predict compression without writing attributes
+    check: true
+    changed: true
+    compressed: []
+  - name: Compress the hidden parent and its immediate files
+    changed: true
+    compressed: ['.', '{{ compression_file }}']
+  - name: Repeat parent compression
+    changed: false
+    compressed: ['.', '{{ compression_file }}']
+  - name: Preserve mixed descendants when force is false
+    recurse: true
+    force: false
+    changed: false
+    compressed: ['.', '{{ compression_file }}']
+  - name: Predict recursive changes without altering children
+    recurse: true
+    check: true
+    changed: true
+    compressed: ['.', '{{ compression_file }}']
+  - name: Compress every existing descendant
+    recurse: true
+    changed: true
+    compressed: '{{ compression_entries }}'
+  - name: Repeat full recursive compression
+    recurse: true
+    changed: false
+    compressed: '{{ compression_entries }}'
+  - name: Confirm full compression in check mode
+    recurse: true
+    check: true
+    changed: false
+    compressed: '{{ compression_entries }}'
+  - name: Decompress the parent and its immediate files
+    state: absent
+    changed: true
+    compressed: >-
+      {{ compression_entries | reject("equalto", ".") |
+         reject("equalto", compression_file) | list }}
+  - name: Repeat parent decompression
+    state: absent
+    changed: false
+    compressed: >-
+      {{ compression_entries | reject("equalto", ".") |
+         reject("equalto", compression_file) | list }}
+  - name: Preserve compressed children with force false
+    state: absent
+    recurse: true
+    force: false
+    changed: false
+    compressed: >-
+      {{ compression_entries | reject("equalto", ".") |
+         reject("equalto", compression_file) | list }}
+  - name: Predict recursive decompression
+    state: absent
+    recurse: true
+    check: true
+    changed: true
+    compressed: >-
+      {{ compression_entries | reject("equalto", ".") |
+         reject("equalto", compression_file) | list }}
+  - name: Decompress the full tree
+    state: absent
+    recurse: true
+    changed: true
+    compressed: []
+  - name: Repeat full decompression
+    state: absent
+    recurse: true
+    changed: false
+    compressed: []
+  - name: Compress one hidden file and warn about recursion
+    path: '{{ compression_tree }}\{{ compression_file }}'
+    recurse: true
+    changed: true
+    warning: true
+    compressed: ['{{ compression_file }}']
+  - name: Repeat file compression
+    path: '{{ compression_tree }}\{{ compression_file }}'
+    changed: false
+    compressed: ['{{ compression_file }}']
+  - name: Predict file decompression without writing
+    path: '{{ compression_tree }}\{{ compression_file }}'
+    state: absent
+    check: true
+    changed: true
+    compressed: ['{{ compression_file }}']
+  - name: Decompress the file
+    path: '{{ compression_tree }}\{{ compression_file }}'
+    state: absent
+    changed: true
+    compressed: []
+  - name: Compress recursively with force false when the parent differs
+    recurse: true
+    force: false
+    changed: true
+    compressed: '{{ compression_entries }}'
+  - name: Decompress recursively with force false when the parent differs
+    state: absent
+    recurse: true
+    force: false
+    changed: true
+    compressed: []
+  - name: Compress the parent and immediate files with null recursion
+    recurse: null
+    changed: true
+    compressed: ['.', '{{ compression_file }}']
+  - name: Preserve mixed descendants with null force
+    recurse: true
+    force: null
+    changed: false
+    compressed: ['.', '{{ compression_file }}']
+  - name: Compress descendants after a null-force shortcut
+    recurse: true
+    changed: true
+    compressed: '{{ compression_entries }}'
+  - name: Decompress the parent and immediate files with null recursion
+    state: absent
+    recurse: null
+    changed: true
+    compressed: >-
+      {{ compression_entries | reject("equalto", ".") |
+         reject("equalto", compression_file) | list }}
+  - name: Preserve compressed descendants with null force
+    state: absent
+    recurse: true
+    force: null
+    changed: false
+    compressed: >-
+      {{ compression_entries | reject("equalto", ".") |
+         reject("equalto", compression_file) | list }}
+  - name: Decompress descendants after a null-force shortcut
+    state: absent
+    recurse: true
+    changed: true
+    compressed: []

@@ -1,0 +1,273 @@
+---
+# Copyright 2026 Joe Lustri
+# SPDX-License-Identifier: GPL-3.0-or-later
+product_observation_code: |
+  import ctypes, hashlib, json, sys, uuid, winreg
+  from contextlib import ExitStack
+  assert sys.version_info[:3] == (3, 4, 4)
+
+  def expected_licenses(provider):
+      fields = ('edition', 'channel', 'status')
+      if not provider['available']:
+          return ({'ansible_os_license_' + field: None for field in fields},
+              ['ansible_os_license_' + field + ' is unavailable: this Windows '
+               'version does not provide SoftwareLicensingProduct.'
+               for field in fields])
+      required = ('PartialProductKey', 'Name', 'LicenseStatus')
+      if any(name not in provider['properties'] for name in required):
+          raise AssertionError('Licensing provider lacks a required property.')
+      rows = provider['windows_licenses']
+      states = ('Unlicensed', 'Licensed', 'OOBGrace', 'OOTGrace',
+          'NonGenuineGrace', 'Notification', 'ExtendedGrace')
+      values = {'edition': [row['Name'] for row in rows],
+          'channel': [row.get('ProductKeyChannel') for row in rows],
+          'status': [states[row['LicenseStatus']] if
+              isinstance(row['LicenseStatus'], int) and
+              0 <= row['LicenseStatus'] < len(states)
+              else None for row in rows]}
+      facts = {'ansible_os_license_' + field:
+          (None if not items else items[0] if len(items) == 1 else items)
+          for field, items in values.items()}
+      warnings = [] if 'ProductKeyChannel' in provider['properties'] else [
+          'ansible_os_license_channel is unavailable: SoftwareLicensingProduct '
+          'does not provide ProductKeyChannel.']
+      return facts, warnings
+
+  def licensing_provider():
+      # Read the native class schema and instances independently of the
+      # collection's projected WQL query. Provider failures remain failures.
+      pointer = ctypes.c_void_p
+      signed, unsigned = ctypes.c_int32, ctypes.c_uint32
+      class Guid(ctypes.Structure):
+          _fields_ = [('first', unsigned), ('second', ctypes.c_uint16),
+              ('third', ctypes.c_uint16), ('last', ctypes.c_ubyte * 8)]
+      class Data(ctypes.Union):
+          _fields_ = [('pointer', pointer), ('integer', ctypes.c_int64),
+              ('signed', signed), ('unsigned', unsigned),
+              ('record', pointer * 2)]
+      class Variant(ctypes.Structure):
+          _fields_ = [('kind', ctypes.c_uint16),
+              ('reserved', ctypes.c_uint16 * 3), ('data', Data)]
+      ole, auto = ctypes.WinDLL('ole32'), ctypes.WinDLL('oleaut32')
+      for library, name, arguments, result in (
+          (ole, 'CoInitializeEx', [pointer, unsigned], signed),
+          (ole, 'CoUninitialize', [], None),
+          (ole, 'CoInitializeSecurity', [pointer, signed, pointer, pointer,
+              unsigned, unsigned, pointer, unsigned, pointer], signed),
+          (ole, 'CoCreateInstance', [ctypes.POINTER(Guid), pointer, unsigned,
+              ctypes.POINTER(Guid), ctypes.POINTER(pointer)], signed),
+          (ole, 'CoSetProxyBlanket', [pointer, unsigned, unsigned,
+              ctypes.c_wchar_p, unsigned, unsigned, pointer, unsigned], signed),
+          (auto, 'SysAllocString', [ctypes.c_wchar_p], pointer),
+          (auto, 'SysFreeString', [pointer], None),
+          (auto, 'SysStringLen', [pointer], unsigned),
+          (auto, 'VariantClear', [ctypes.POINTER(Variant)], signed),
+          (auto, 'SafeArrayGetLBound', [pointer, unsigned,
+              ctypes.POINTER(signed)], signed),
+          (auto, 'SafeArrayGetUBound', [pointer, unsigned,
+              ctypes.POINTER(signed)], signed),
+          (auto, 'SafeArrayGetElement', [pointer, ctypes.POINTER(signed),
+              ctypes.POINTER(pointer)], signed),
+          (auto, 'SafeArrayDestroy', [pointer], signed)):
+          function = getattr(library, name)
+          function.argtypes, function.restype = arguments, result
+      def checked(result, operation):
+          if result & 0x80000000:
+              raise OSError('{} failed (HRESULT 0x{:08X}).'.format(
+                  operation, result & 0xffffffff))
+      def method(instance, slot, arguments, result=signed):
+          table = ctypes.cast(instance,
+              ctypes.POINTER(ctypes.POINTER(pointer)))[0]
+          return ctypes.WINFUNCTYPE(result, pointer, *arguments)(table[slot])
+      def release(instance):
+          if instance:
+              method(instance, 2, [], unsigned)(instance)
+      with ExitStack() as cleanup:
+          checked(ole.CoInitializeEx(None, 0), 'CoInitializeEx')
+          cleanup.callback(ole.CoUninitialize)
+          checked(ole.CoInitializeSecurity(None, -1, None, None, 0, 3,
+              None, 0, None), 'CoInitializeSecurity')
+          def string(value):
+              result = auto.SysAllocString(value)
+              if not result:
+                  raise MemoryError('Licensing observation allocation failed.')
+              cleanup.callback(auto.SysFreeString, result)
+              return result
+          locator = pointer()
+          cleanup.callback(release, locator)
+          clsid = Guid.from_buffer_copy(
+              uuid.UUID('4590f811-1d3a-11d0-891f-00aa004b2e24').bytes_le)
+          iid = Guid.from_buffer_copy(
+              uuid.UUID('dc12a687-737f-11cf-884d-00aa004b2e24').bytes_le)
+          checked(ole.CoCreateInstance(ctypes.byref(clsid), None, 1,
+              ctypes.byref(iid), ctypes.byref(locator)), 'CoCreateInstance')
+          services = pointer()
+          cleanup.callback(release, services)
+          checked(method(locator, 3, [pointer, pointer, pointer, pointer,
+              signed, pointer, pointer, ctypes.POINTER(pointer)])(locator,
+              string(r'ROOT\CIMV2'), None, None, None, 0x80, None, None,
+              ctypes.byref(services)), 'IWbemLocator.ConnectServer')
+          # Vista's licensing provider requires packet privacy, including the
+          # separately returned enumerator proxy.
+          checked(ole.CoSetProxyBlanket(services, 10, 0, None, 6, 3, None, 0),
+              'CoSetProxyBlanket(IWbemServices)')
+          schema = pointer()
+          cleanup.callback(release, schema)
+          result = method(services, 6, [pointer, signed, pointer,
+              ctypes.POINTER(pointer), pointer])(services,
+              string('SoftwareLicensingProduct'), 0, None,
+              ctypes.byref(schema), None)
+          if result & 0xffffffff in (0x80041002, 0x80041010) and \
+                  sys.getwindowsversion().major < 6:
+              return {'available': False, 'properties': [],
+                  'windows_licenses': []}
+          checked(result, 'GetObject(SoftwareLicensingProduct)')
+          names = pointer()
+          try:
+              checked(method(schema, 7, [ctypes.c_wchar_p, signed,
+                  ctypes.POINTER(Variant), ctypes.POINTER(pointer)])(schema,
+                  None, 0x40, None, ctypes.byref(names)), 'GetNames')
+              lower, upper = signed(), signed()
+              checked(auto.SafeArrayGetLBound(names, 1, ctypes.byref(lower)),
+                  'SafeArrayGetLBound')
+              checked(auto.SafeArrayGetUBound(names, 1, ctypes.byref(upper)),
+                  'SafeArrayGetUBound')
+              properties = []
+              for number in range(lower.value, upper.value + 1):
+                  index, value = signed(number), pointer()
+                  try:
+                      checked(auto.SafeArrayGetElement(names,
+                          ctypes.byref(index), ctypes.byref(value)),
+                          'SafeArrayGetElement')
+                      properties.append(ctypes.wstring_at(value,
+                          auto.SysStringLen(value)))
+                  finally:
+                      if value:
+                          auto.SysFreeString(value)
+          finally:
+              if names:
+                  checked(auto.SafeArrayDestroy(names), 'SafeArrayDestroy')
+          required = ('PartialProductKey', 'Name', 'LicenseStatus')
+          assert all(name in properties for name in required)
+          enumeration = pointer()
+          cleanup.callback(release, enumeration)
+          checked(method(services, 18, [pointer, signed, pointer,
+              ctypes.POINTER(pointer)])(services,
+              string('SoftwareLicensingProduct'), 0x30, None,
+              ctypes.byref(enumeration)), 'CreateInstanceEnum')
+          checked(ole.CoSetProxyBlanket(enumeration, 10, 0, None,
+              6, 3, None, 0), 'CoSetProxyBlanket(IEnumWbemClassObject)')
+          def read(instance, name):
+              value = Variant()
+              try:
+                  checked(method(instance, 4, [ctypes.c_wchar_p, signed,
+                      ctypes.POINTER(Variant), pointer, pointer])(
+                      instance, name, 0, ctypes.byref(value), None, None),
+                      'IWbemClassObject.Get(' + name + ')')
+                  if value.kind in (0, 1):
+                      return None
+                  if value.kind == 8:
+                      return ctypes.wstring_at(value.data.pointer,
+                          auto.SysStringLen(value.data.pointer)) \
+                          if value.data.pointer else ''
+                  if value.kind in (3, 19):
+                      return value.data.signed if value.kind == 3 \
+                          else value.data.unsigned
+                  raise AssertionError('Unexpected licensing property type: '
+                      + str(value.kind))
+              finally:
+                  checked(auto.VariantClear(ctypes.byref(value)),
+                      'VariantClear')
+          mapping = ctypes.WinDLL('kernel32', use_last_error=True).LCMapStringW
+          mapping.argtypes = [unsigned, unsigned, ctypes.c_wchar_p,
+              ctypes.c_int, ctypes.c_wchar_p, ctypes.c_int]
+          mapping.restype = ctypes.c_int
+          rows = []
+          while True:
+              instance, count = pointer(), unsigned()
+              with ExitStack() as row_cleanup:
+                  row_cleanup.callback(release, instance)
+                  result = method(enumeration, 4, [signed, unsigned,
+                      ctypes.POINTER(pointer), ctypes.POINTER(unsigned)])(
+                      enumeration, 5000, 1, ctypes.byref(instance),
+                      ctypes.byref(count))
+                  checked(result, 'IEnumWbemClassObject.Next')
+                  # WBEM_S_TIMEDOUT must not masquerade as an empty result.
+                  if result == 0x40004:
+                      raise OSError('Licensing enumeration timed out.')
+                  if not count.value:
+                      break
+                  assert count.value == 1 and instance
+                  partial = read(instance, 'PartialProductKey')
+                  name = read(instance, 'Name')
+                  assert partial is None or isinstance(partial, str)
+                  assert name is None or isinstance(name, str)
+                  if not partial or not name:
+                      continue
+                  length = len(name.encode('utf-16-le', 'surrogatepass')) // 2
+                  flags = 0x01000100
+                  size = mapping(0x400, flags, name, length, None, 0)
+                  if not size and ctypes.get_last_error() == 1004:
+                      flags = 0x100
+                      size = mapping(0x400, flags, name, length, None, 0)
+                  if not size:
+                      raise ctypes.WinError(ctypes.get_last_error())
+                  text = ctypes.create_unicode_buffer(size)
+                  written = mapping(0x400, flags, name, length, text, size)
+                  if not written:
+                      raise ctypes.WinError(ctypes.get_last_error())
+                  if 'windows' not in text[:written]:
+                      continue
+                  row = {'Name': name,
+                      'LicenseStatus': read(instance, 'LicenseStatus')}
+                  if 'ProductKeyChannel' in properties:
+                      row['ProductKeyChannel'] = read(instance,
+                          'ProductKeyChannel')
+                  rows.append(row)
+                  if result == 1:
+                      break
+          return {'available': True, 'properties': sorted(properties),
+              'windows_licenses': rows}
+
+  path = r'SOFTWARE\Microsoft\Windows NT\CurrentVersion'
+  values, snapshot = {}, {}
+  with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, path) as key:
+      written = winreg.QueryInfoKey(key)[2]
+      for name in ('ProductId', 'DigitalProductId', 'DigitalProductId4'):
+          try:
+              value, kind = winreg.QueryValueEx(key, name)
+          except OSError as error:
+              assert error.winerror == 2
+              snapshot[name] = None
+              continue
+          values[name] = value
+          raw = value if isinstance(value, bytes) else value.encode('utf-8')
+          snapshot[name] = {'kind': kind, 'length': len(raw),
+              'sha256': hashlib.sha256(raw).hexdigest()}
+  assert snapshot['ProductId']['kind'] == winreg.REG_SZ
+  assert snapshot['DigitalProductId']['kind'] == winreg.REG_BINARY
+  data = values['DigitalProductId']
+  assert len(data) >= 67
+  # Independent byte-array long division; no collection imports or big-integer
+  # decoder. Preserve the upstream decoder's unconditional N insertion.
+  octets = list(bytearray(data[52:67]))
+  octets[-1] &= 0xf7
+  alphabet = 'BCDFGHJKMPQRTVWXY2346789'
+  digits = []
+  for position in range(25):
+      remainder = 0
+      for index in range(14, -1, -1):
+          octets[index], remainder = divmod(
+              (remainder << 8) | octets[index], 24)
+      digits.insert(0, alphabet[remainder])
+  digits = digits[1:]
+  digits.insert(remainder, 'N')
+  expected_key = '-'.join(''.join(digits[index:index + 5])
+                          for index in range(0, 25, 5))
+  provider = licensing_provider()
+  license_facts, license_warnings = expected_licenses(provider)
+  print(json.dumps({'python': list(sys.version_info[:3]),
+      'product_id': values['ProductId'], 'product_key': expected_key,
+      'registry': snapshot, 'registry_write_time': written,
+      'licensing_provider': provider, 'license_facts': license_facts,
+      'license_warnings': license_warnings}))

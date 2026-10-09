@@ -1,0 +1,59 @@
+---
+- name: Exercise the public record contract from the owned classic zone state
+  ansible.builtin.include_tasks: win_dns_record_run.yml
+  vars:
+    dns_zone_implementation: native
+
+- name: Require declared legacy behavior and actual target records
+  ansible.builtin.assert:
+    that:
+      - (dns_record_case_results.native.result.failed |
+        default(false) | bool) ==
+        (dns_zone_case.failed | default(false) | bool)
+      - (dns_record_case_results.native.result.changed |
+        default(false) | bool) ==
+        (dns_zone_case.id not in dns_record_expected_unchanged and
+        not (dns_zone_case.failed | default(false) | bool))
+      - dns_zone_case.check | default(false) | bool or
+        dns_zone_case.failed | default(false) | bool or
+        (dns_zone_case.args.state | default('present') | lower) != 'absent' or
+        not dns_record_case_results.native.after.records
+      - dns_record_case_results.native.before.python == [3, 4, 4]
+      - dns_record_case_results.native.after.python == [3, 4, 4]
+
+- name: Require complete actual values after each successful real request
+  ansible.builtin.assert:
+    that:
+      - dns_record_case_results.native.after.records | length > 0 or
+        (dns_zone_case.args.state | default('present') | lower) == 'absent'
+      - dns_record_case_results.native.after['values'] | sort ==
+        dns_record_expected_values | sort
+      - (dns_zone_case.args.state | default('present') | lower) == 'absent' or
+        dns_record_case_results.native.after.ttls |
+        reject('equalto', dns_zone_case.args.ttl | default(3600)) |
+        list | length == 0
+      - (dns_zone_case.args.aging | default(false) | bool) ==
+        (dns_record_case_results.native.after.timestamps |
+        reject('equalto', 0) | list | length > 0)
+  when:
+    - not (dns_zone_case.check | default(false) | bool)
+    - not (dns_zone_case.failed | default(false) | bool)
+  vars:
+    dns_record_requested_values: >-
+      {{ dns_zone_case.args.get('values',
+      dns_zone_case.args.get('value', [])) }}
+    dns_record_value_list: >-
+      {{ [dns_record_requested_values] if dns_record_requested_values is string
+      else dns_record_requested_values }}
+    dns_record_expected_values: >-
+      {{ dns_record_value_list | map('regex_replace', '(?<!\\.)$', '.') | list
+      if dns_zone_case.args.type | upper in ['CNAME', 'NS', 'PTR', 'SRV']
+      else dns_record_value_list }}
+
+- name: Retain complete actual public behavior and native records for every case
+  ansible.builtin.set_fact:
+    dns_zone_comparisons: >-
+      {{ dns_zone_comparisons + [{'case': dns_zone_case,
+      'native': dns_record_case_results.native,
+      'declared_behavior_verified': true}] }}
+  no_log: true

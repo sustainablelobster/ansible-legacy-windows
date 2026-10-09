@@ -1,0 +1,213 @@
+---
+- name: Verify native background commands under requested Windows tokens
+  hosts: legacy_windows
+  gather_facts: false
+  vars_files:
+    - vars/native_async.yml
+    - vars/native_async_runas.yml
+  tasks:
+    - name: Require Python 3.4.4 and record original global staging
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import glob,json,os,subprocess,sys,tempfile;
+        assert sys.version_info[:3]==(3,4,4);
+        assert b'{{ native_async_runas_expected_mac }}' in
+        subprocess.check_output(['getmac','/fo','csv','/nh']).upper();
+        print(json.dumps(sorted(glob.glob(os.path.join(
+        tempfile.gettempdir(),'ansible-tmp-*')))))""
+      register: native_async_runas_staging_before
+      changed_when: false
+
+    - name: Record the connected account's actual SID
+      sustainablelobster.legacy_windows.win_whoami:
+      register: native_async_runas_identity
+
+    - name: Allocate private controller evidence
+      ansible.builtin.tempfile:
+        path: '{{ playbook_dir }}/../../tmp'
+        state: file
+        prefix: 'native-async-runas-{{ inventory_hostname }}-'
+        suffix: .json
+      register: native_async_runas_capture
+      delegate_to: localhost
+      vars: &controller
+        ansible_connection: local
+        ansible_shell_type: sh
+        ansible_python_interpreter: '{{ ansible_playbook_python }}'
+      changed_when: false
+
+    - name: Allocate an exclusively owned workspace
+      sustainablelobster.legacy_windows.win_tempfile:
+        prefix: legacy-windows-native-async-runas-
+        state: directory
+      register: native_async_runas_workspace
+
+    - name: Initialize raw result evidence
+      ansible.builtin.set_fact:
+        native_async_runas_results: []
+
+    - name: Exercise requested tokens with mandatory protected recovery
+      block:
+        - name: Journal protected state and owned cache directories
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - '-'
+              - '{{ native_async_runas_workspace.path }}'
+              - setup
+            stdin: '{{ native_async_program }}'
+          register: native_async_runas_setup
+          changed_when: false
+          no_log: true
+
+        - name: Exercise the connected account and passwordless SYSTEM
+          ansible.builtin.include_tasks: tasks/native_async_runas_case.yml
+          loop:
+            - phase: user
+              user: '{{ ansible_user }}'
+              password: '{{ ansible_password }}'
+              sid: '{{ native_async_runas_identity.account.sid }}'
+            - phase: system
+              user: 'NT AUTHORITY\SYSTEM'
+              password: null
+              sid: S-1-5-18
+          loop_control:
+            loop_var: native_async_runas_case
+            label: '{{ native_async_runas_case.phase }}'
+          no_log: true
+        - name: Compare complete native and source launch and result fields
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - '-'
+              - '{{ native_async_runas_workspace.path }}'
+            stdin: '{{ native_async_runas_comparison_program }}'
+          become: true
+          become_method: ansible.builtin.runas
+          become_user: 'NT AUTHORITY\SYSTEM'
+          register: native_async_runas_comparison
+          changed_when: false
+          no_log: true
+      always:
+        - name: Retain partial results before recovery
+          ansible.builtin.copy:
+            content: >-
+              {{ {'results': native_async_runas_results,
+                  'setup': native_async_runas_setup | default(none),
+                  'latest_launch': native_async_runas_launch | default(none),
+                  'latest_pin': native_async_runas_pin | default(none),
+                  'latest_status': native_async_runas_status | default(none),
+                  'latest_source_launch':
+                    native_async_runas_source_launch | default(none),
+                  'latest_source_pin':
+                    native_async_runas_source_pin | default(none),
+                  'latest_source_status':
+                    native_async_runas_source_status | default(none),
+                  'comparison': native_async_runas_comparison | default(none),
+                  'staging_before': native_async_runas_staging_before,
+                  'workspace': native_async_runas_workspace.path} |
+                 to_nice_json }}
+            dest: '{{ native_async_runas_capture.path }}'
+            mode: '0600'
+          delegate_to: localhost
+          vars: *controller
+          changed_when: false
+          no_log: true
+
+        - name: Recover only birth-journaled workers and inspect protected state
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - '-'
+              - '{{ native_async_runas_workspace.path }}'
+              - cleanup
+            stdin: '{{ native_async_runas_recovery_program }}'
+          become: true
+          become_method: ansible.builtin.runas
+          become_user: 'NT AUTHORITY\SYSTEM'
+          register: native_async_runas_recovery
+          failed_when: false
+          changed_when: false
+          no_log: true
+
+        - name: Preserve recovery diagnostics before enforcing its gate
+          ansible.builtin.copy:
+            content: >-
+              {{ {'results': native_async_runas_results,
+                  'setup': native_async_runas_setup | default(none),
+                  'latest_launch': native_async_runas_launch | default(none),
+                  'latest_pin': native_async_runas_pin | default(none),
+                  'latest_status': native_async_runas_status | default(none),
+                  'latest_source_launch':
+                    native_async_runas_source_launch | default(none),
+                  'latest_source_pin':
+                    native_async_runas_source_pin | default(none),
+                  'latest_source_status':
+                    native_async_runas_source_status | default(none),
+                  'comparison': native_async_runas_comparison | default(none),
+                  'staging_before': native_async_runas_staging_before,
+                  'workspace': native_async_runas_workspace.path,
+                  'recovery': native_async_runas_recovery} | to_nice_json }}
+            dest: '{{ native_async_runas_capture.path }}'
+            mode: '0600'
+          delegate_to: localhost
+          vars: *controller
+          changed_when: false
+          no_log: true
+
+        - name: Close the connection even when recovery reports failure
+          ansible.builtin.meta: reset_connection
+
+        - name: Require actual successful protected recovery
+          ansible.builtin.assert:
+            that:
+              - native_async_runas_recovery.rc == 0
+              - (native_async_runas_recovery.stdout | from_json).restored
+
+        - name: Remove only the verified owned workspace
+          sustainablelobster.legacy_windows.win_file:
+            path: '{{ native_async_runas_workspace.path }}'
+            state: absent
+          become: true
+          become_method: ansible.builtin.runas
+          become_user: 'NT AUTHORITY\SYSTEM'
+
+        - name: Independently verify workspace absence and global staging
+          ansible.builtin.raw: >-
+            cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+            "import glob,json,os,sys,tempfile;
+            assert not os.path.exists(sys.argv[1]);
+            print(json.dumps(sorted(glob.glob(os.path.join(
+            tempfile.gettempdir(),'ansible-tmp-*')))))"
+            "{{ native_async_runas_workspace.path }}""
+          register: native_async_runas_staging_after
+          changed_when: false
+
+        - name: Require original staging and both requested identities
+          ansible.builtin.assert:
+            that:
+              - >-
+                (native_async_runas_staging_before.stdout | from_json) ==
+                (native_async_runas_staging_after.stdout | from_json)
+              - native_async_runas_results | length == 4
+
+        - name: Retain final result and cleanup observations
+          ansible.builtin.copy:
+            content: >-
+              {{ {'results': native_async_runas_results,
+                  'setup': native_async_runas_setup,
+                  'comparison': native_async_runas_comparison | default(none),
+                  'staging_before': native_async_runas_staging_before,
+                  'staging_after': native_async_runas_staging_after,
+                  'workspace': native_async_runas_workspace.path,
+                  'workspace_absent': true,
+                  'recovery': native_async_runas_recovery} | to_nice_json }}
+            dest: '{{ native_async_runas_capture.path }}'
+            mode: '0600'
+          delegate_to: localhost
+          vars: *controller
+          changed_when: false
+          no_log: true
+
+        - name: Close the final verification connection
+          ansible.builtin.meta: reset_connection

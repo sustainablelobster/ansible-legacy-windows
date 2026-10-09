@@ -1,0 +1,348 @@
+---
+# The FTP server and its process journal run only on the Nix controller.
+get_url_ftp_server: |
+  # SPDX-License-Identifier: GPL-3.0-or-later
+  import json, os, socket, sys, threading, time, uuid
+  from pyftpdlib.authorizers import DummyAuthorizer
+  from pyftpdlib.handlers import FTPHandler
+  from pyftpdlib.servers import FTPServer
+  root, token = sys.argv[1:3]
+  control, passive = 2121, 2122
+
+  def write_event(event):
+      with open(os.path.join(root, 'wire.jsonl'), 'a',
+                encoding='utf-8') as stream:
+          stream.write(json.dumps(dict(event, time=time.time())) + '\n')
+          stream.flush()
+
+  class FixedPassive(FTPHandler.passive_dtp):
+      def bind(self, address):
+          # pyftpdlib falls back to a random port when its range is busy.
+          # Reject that fallback before binding anything outside the owned port.
+          if address != ('127.0.0.1', passive):
+              write_event({'kind': 'refused_passive', 'address': address})
+              raise ValueError('FTP fixture refuses an unowned passive port')
+          super().bind(address)
+          write_event({'kind': 'passive', 'port': self.socket.getsockname()[1]})
+
+  class Handler(FTPHandler):
+      passive_dtp = FixedPassive
+      passive_ports = [passive]
+      masquerade_address = '127.0.0.1'
+      timeout = 15
+
+      def __init__(self, *arguments, **options):
+          self.fixture_session = uuid.uuid4().hex
+          self.fixture_preliminary_125 = False
+          self.fixture_transfer_length = None
+          super().__init__(*arguments, **options)
+
+      def pre_process_command(self, line, command, argument):
+          if command == 'RETR':
+              filename = argument.rsplit('/', 1)[-1]
+              self.fixture_preliminary_125 = (
+                  filename in ('preliminary-125.bin', 'length-125.bin'))
+              self.fixture_transfer_length = (
+                  26 if filename in ('length-125.bin', 'length-150.bin')
+                  else None)
+          write_event({'kind': 'command', 'session': self.fixture_session,
+              'command': command, 'argument': '<redacted>'
+              if command == 'PASS' else argument})
+          super().pre_process_command(line, command, argument)
+
+      def respond(self, response, **options):
+          # Both preliminary replies are valid, but scheduling selects 125/150.
+          # Send one valid fixed reply so paired public results stay literal.
+          if response.startswith(('125 ', '150 ')):
+              response = ('125 Data connection already open. Transfer starting.'
+                  if self.fixture_preliminary_125 else
+                  '150 File status okay. About to open data connection.')
+              if self.fixture_transfer_length is not None:
+                  response += ' ({} bytes).'.format(
+                      self.fixture_transfer_length)
+          write_event({'kind': 'reply', 'session': self.fixture_session,
+                       'response': response + '\r\n'})
+          super().respond(response, **options)
+
+  authorizer = DummyAuthorizer()
+  authorizer.add_anonymous(os.path.join(root, 'data'), perm='elr')
+  authorizer.add_user('fixture', 'secret', os.path.join(root, 'data'),
+                      perm='elr')
+  Handler.authorizer = authorizer
+  server = FTPServer(('127.0.0.1', control), Handler)
+  try:
+      with open('/proc/self/stat', encoding='utf-8') as stream:
+          creation = stream.read().rsplit(')', 1)[1].split()[19]
+      metadata = {'pid': os.getpid(), 'creation': creation, 'token': token,
+                  'control': control, 'passive': passive}
+      with open(os.path.join(root, 'server.json.tmp'), 'w',
+                encoding='utf-8') as stream:
+          json.dump(metadata, stream)
+          stream.flush()
+          os.fsync(stream.fileno())
+      os.replace(os.path.join(root, 'server.json.tmp'),
+                 os.path.join(root, 'server.json'))
+      timer = threading.Timer(600, server.close_all)
+      timer.daemon = True
+      timer.start()
+      server.serve_forever(timeout=.1)
+  finally:
+      server.close_all()
+
+get_url_ftp_program: |
+  # SPDX-License-Identifier: GPL-3.0-or-later
+  import hashlib, json, os, pathlib, re, select, signal, socket, stat
+  import subprocess, sys, tempfile, time, uuid
+  workspace, operation = pathlib.Path(sys.argv[1]), sys.argv[2]
+  parent = pathlib.Path(sys.argv[3])
+  assert workspace.is_absolute() and not workspace.is_symlink()
+  assert workspace.name.startswith('get-url-ftp-')
+  assert workspace.parent.resolve() == parent.resolve()
+  assert workspace.is_dir()
+  journal_path = workspace / 'journal.json'
+  ports = (2121, 2122)
+  payload = b'legacy download fixture\x00\xff\n'
+
+  def tree(path):
+      assert not path.is_symlink()
+      info = path.stat()
+      if path.is_dir():
+          return {'mode': stat.S_IMODE(info.st_mode), 'children': {
+              child.name: tree(child) for child in sorted(path.iterdir())}}
+      assert path.is_file()
+      return {'mode': stat.S_IMODE(info.st_mode), 'mtime_ns': info.st_mtime_ns,
+              'hex': path.read_bytes().hex()}
+
+  def write(record):
+      descriptor, temporary = tempfile.mkstemp(prefix='.ftp-journal-',
+                                              dir=workspace)
+      try:
+          with os.fdopen(descriptor, 'w', encoding='utf-8') as stream:
+              json.dump(record, stream, sort_keys=True)
+              stream.flush()
+              os.fsync(stream.fileno())
+          os.replace(temporary, journal_path)
+      finally:
+          if os.path.exists(temporary):
+              os.remove(temporary)
+
+  def journal():
+      assert not journal_path.is_symlink()
+      record = json.loads(journal_path.read_text(encoding='utf-8'))
+      assert record['workspace'] == str(workspace)
+      assert re.fullmatch('[0-9a-f]{32}', record['token'])
+      assert set(record['protected']) in ({}, {'data', 'server.py'})
+      for name, original in record['protected'].items():
+          assert tree(workspace / name) == original
+      if record.get('process') is not None:
+          command = [sys.executable, str(workspace / 'server.py'),
+                     str(workspace), record['token']]
+          encoded = b'\x00'.join(os.fsencode(item) for item in command)
+          encoded += b'\x00'
+          assert record['process']['command'] == encoded.hex()
+      return record
+
+  def identity(pid):
+      process = pathlib.Path('/proc') / str(pid)
+      try:
+          text = (process / 'stat').read_text(encoding='utf-8')
+          status = text.rsplit(')', 1)[1].split()
+          return {'pid': pid, 'creation': status[19],
+                  'command': (process / 'cmdline').read_bytes().hex()}
+      except FileNotFoundError:
+          return None
+
+  def stop(process):
+      try:
+          descriptor = os.pidfd_open(process['pid'])
+      except ProcessLookupError:
+          return
+      try:
+          observed = identity(process['pid'])
+          if observed is None:
+              assert select.select([descriptor], [], [], 0)[0]
+              return
+          assert observed['creation'] == process['creation']
+          if select.select([descriptor], [], [], 0)[0]:
+              return
+          assert observed == process
+          signal.pidfd_send_signal(descriptor, signal.SIGTERM)
+          assert select.select([descriptor], [], [], 5)[0]
+      finally:
+          os.close(descriptor)
+
+  def closed():
+      for port in ports:
+          with socket.socket() as connection:
+              assert connection.connect_ex(('127.0.0.1', port)) != 0
+
+  def wire():
+      path = workspace / 'wire.jsonl'
+      assert not path.is_symlink()
+      events = ([json.loads(line) for line in
+                 path.read_text(encoding='utf-8').splitlines()]
+                if path.exists() else [])
+      assert not any(event['kind'] == 'refused_passive' for event in events)
+      assert all(event['port'] == ports[1] for event in events
+                 if event['kind'] == 'passive')
+      return events
+
+  def master(connection):
+      completed = subprocess.run(['ssh', '-S', connection['socket'], '-O',
+          'check', connection['destination']], capture_output=True,
+          text=True, check=True, timeout=5)
+      match = re.fullmatch(r'Master running \(pid=(\d+)\)\s*', completed.stderr)
+      assert match
+      observed = identity(int(match.group(1)))
+      assert observed is not None
+      return observed
+
+  def forwarding(connection, action, port):
+      return subprocess.run(['ssh', '-S', connection['socket'], '-O', action,
+          '-o', 'ExitOnForwardFailure=yes', '-R',
+          '127.0.0.1:{0}:127.0.0.1:{0}'.format(port),
+          connection['destination']],
+          capture_output=True, text=True, timeout=5)
+
+  if (operation in ('cleanup', 'finalize', 'unforward') and
+          not journal_path.exists()):
+      assert not list(workspace.iterdir())
+      result = {'empty_owned_workspace': True, 'server_stopped': True,
+                'restored': True, 'finalized': True, 'forwards_cancelled': True}
+  elif operation == 'setup':
+      assert not list(workspace.iterdir())
+      for port in ports:
+          with socket.socket() as connection:
+              connection.bind(('127.0.0.1', port))
+      record = {'workspace': str(workspace), 'token': uuid.uuid4().hex,
+                'protected': {}, 'verified': False}
+      write(record)
+      data = workspace / 'data'
+      data.mkdir(mode=0o700)
+      for name, content in (('payload.bin', payload),
+          ('preliminary-125.bin', payload),
+          ('checksum.sha256', (hashlib.sha256(payload).hexdigest() +
+                              '  ./payload.bin\n').encode('ascii'))) + (
+          (('length-125.bin', payload), ('length-150.bin', payload))
+          if json.loads(
+              '{{ get_url_ftp_include_lengths | default(false) | to_json }}')
+          else ()):
+          path = data / name
+          path.write_bytes(content)
+          os.utime(path, (946684800,) * 2)
+      script = workspace / 'server.py'
+      script.write_text({{ get_url_ftp_server | to_json }}, encoding='utf-8')
+      record['protected'] = {'data': tree(data), 'server.py': tree(script)}
+      write(record)
+      try:
+          with (workspace / 'server.log').open('wb') as log:
+              process = subprocess.Popen([sys.executable, str(script),
+                  str(workspace), record['token']], stdin=subprocess.DEVNULL,
+                  stdout=log, stderr=log,
+                  start_new_session=True, close_fds=True)
+      except OSError:
+          record['spawn_error'] = True
+          write(record)
+          raise
+      try:
+          record['process'] = identity(process.pid)
+          assert record['process'] is not None
+          write(record)
+      except BaseException:
+          process.terminate()
+          process.wait(timeout=5)
+          record['child_stopped'] = True
+          write(record)
+          raise
+      for attempt in range(100):
+          if (workspace / 'server.json').exists():
+              metadata = json.loads((workspace / 'server.json').read_text(
+                  encoding='utf-8'))
+              assert metadata['token'] == record['token']
+              assert metadata['pid'] == record['process']['pid']
+              assert metadata['creation'] == record['process']['creation']
+              assert (metadata['control'], metadata['passive']) == ports
+              break
+          assert process.poll() is None, 'Owned FTP server exited before ready'
+          time.sleep(.05)
+      else:
+          raise ValueError('Owned FTP server did not become ready')
+      result = {'server': metadata, 'ftp': 'ftp://127.0.0.1:2121'}
+  elif operation == 'forward':
+      record = journal()
+      assert 'connection' not in record
+      connection = json.loads(sys.argv[4])
+      assert set(connection) == {'socket', 'destination'}
+      assert pathlib.Path(connection['socket']).is_socket()
+      assert not pathlib.Path(connection['socket']).is_symlink()
+      record['connection'], record['master'] = connection, master(connection)
+      record['attempted_ports'] = []
+      write(record)
+      for port in ports:
+          record['attempted_ports'].append(port)
+          write(record)
+          completed = forwarding(connection, 'forward', port)
+          assert completed.returncode == 0, completed.stderr
+      result = {'forwarded': True, 'ports': list(ports)}
+  elif operation == 'unforward':
+      record = journal()
+      cancellations = []
+      unchanged_master = True
+      if record.get('attempted_ports'):
+          connection = record['connection']
+          try:
+              unchanged_master = master(connection) == record['master']
+          except subprocess.CalledProcessError:
+              unchanged_master = False
+          if unchanged_master:
+              for port in record['attempted_ports']:
+                  completed = forwarding(connection, 'cancel', port)
+                  cancellations.append({'port': port,
+                                        'returncode': completed.returncode,
+                                        'stderr': completed.stderr})
+      record['cancellations'] = cancellations
+      write(record)
+      # A replaced/dead master is never adopted. The play must independently
+      # prove both guest listeners closed before any cleanup can be accepted.
+      result = {'forwards_cancelled': unchanged_master and
+                all(item['returncode'] == 0 for item in cancellations),
+                'unchanged_master': unchanged_master,
+                'cancellations': cancellations}
+  elif operation == 'mark':
+      record = journal()
+      record['wire_start'] = len(wire())
+      write(record)
+      result = {'marked': True}
+  elif operation == 'observe':
+      record = journal()
+      assert identity(record['process']['pid']) == record['process']
+      result = {'protected': record['protected'],
+                'wire': wire()[record.get('wire_start', 0):]}
+  elif operation == 'cleanup':
+      record = journal()
+      assert not record.get('attempted_ports') or 'cancellations' in record
+      if record.get('process') is not None and not record.get('child_stopped'):
+          stop(record['process'])
+      else:
+          assert record.get('spawn_error') or record.get('child_stopped')
+      closed()
+      record['verified'] = True
+      write(record)
+      result = {'restored': True, 'server_stopped': True, 'wire': wire(),
+                'protected': record['protected']}
+  elif operation == 'finalize':
+      record = journal()
+      assert record['verified']
+      closed()
+      allowed = {'journal.json'} | set(record['protected'])
+      if record.get('process') is not None or record.get('child_stopped'):
+          allowed.update(name for name in ('server.log', 'server.json',
+              'server.json.tmp', 'wire.jsonl') if (workspace / name).exists())
+      elif record.get('spawn_error'):
+          allowed.add('server.log')
+      assert set(path.name for path in workspace.iterdir()) == allowed
+      assert all(not path.is_symlink() for path in workspace.iterdir())
+      result = {'finalized': True}
+  else:
+      raise ValueError('Unknown FTP fixture operation')
+  print(json.dumps(result, sort_keys=True))

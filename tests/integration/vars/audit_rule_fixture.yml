@@ -1,0 +1,356 @@
+---
+audit_rule_fixture: |
+  # Copyright 2026 Joe Lustri
+  # SPDX-License-Identifier: GPL-3.0-or-later
+  """Journal and independently inspect only owned audit-rule resources."""
+
+  import base64
+  import ctypes
+  import json
+  import os
+  import struct
+  import sys
+  import uuid
+  import winreg
+  from contextlib import contextmanager
+
+  assert sys.version_info[:3] == (3, 4, 4), sys.version
+  workspace, operation = sys.argv[1:3]
+  journal_path = os.path.join(workspace, "audit-rule-journal.json")
+  content = b"Audit fixture\x00\xff\r\n"
+  security = ctypes.WinDLL("advapi32", use_last_error=True)
+  kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+  pointer, dword = ctypes.c_void_p, ctypes.c_uint32
+
+
+  def bind(library, name, result, arguments):
+      function = getattr(library, name)
+      function.restype, function.argtypes = result, arguments
+      return function
+
+
+  get_security = bind(security, "GetSecurityInfo", dword,
+                      [pointer, ctypes.c_int, dword] + [pointer] * 5)
+  get_control = bind(security, "GetSecurityDescriptorControl", ctypes.c_int,
+                     [pointer, pointer, pointer])
+  to_sddl = bind(
+      security, "ConvertSecurityDescriptorToStringSecurityDescriptorW",
+      ctypes.c_int, [pointer, dword, dword, pointer, pointer])
+  to_sid = bind(security, "ConvertSidToStringSidW", ctypes.c_int,
+                [pointer, pointer])
+  local_free = bind(kernel, "LocalFree", pointer, [pointer])
+  create_file = bind(kernel, "CreateFileW", pointer,
+                     [ctypes.c_wchar_p, dword, dword, pointer, dword,
+                      dword, pointer])
+  close_handle = bind(kernel, "CloseHandle", ctypes.c_int, [pointer])
+  open_token = bind(security, "OpenProcessToken", ctypes.c_int,
+                    [pointer, dword, pointer])
+  lookup_privilege = bind(security, "LookupPrivilegeValueW", ctypes.c_int,
+                          [ctypes.c_wchar_p, ctypes.c_wchar_p, pointer])
+  adjust_privilege = bind(security, "AdjustTokenPrivileges", ctypes.c_int,
+                          [pointer, ctypes.c_int, pointer, dword,
+                           pointer, pointer])
+
+
+  class Luid(ctypes.Structure):
+      _fields_ = [("low", dword), ("high", ctypes.c_int32)]
+
+
+  class Privilege(ctypes.Structure):
+      _fields_ = [("luid", Luid), ("attributes", dword)]
+
+
+  class Privileges(ctypes.Structure):
+      _fields_ = [("count", dword), ("entries", Privilege * 1)]
+
+
+  def require(result):
+      if not result:
+          raise ctypes.WinError(ctypes.get_last_error())
+
+
+  def check(error):
+      if error:
+          raise ctypes.WinError(error)
+
+
+  @contextmanager
+  def audit_privilege():
+      token = pointer()
+      require(open_token(pointer(-1), 0x28, ctypes.byref(token)))
+      requested, previous = Privileges(), Privileges()
+      requested.count = 1
+      requested.entries[0].attributes = 2
+      require(lookup_privilege(
+          None, "SeSecurityPrivilege", ctypes.byref(requested.entries[0].luid)))
+      needed = dword()
+      try:
+          ctypes.set_last_error(0)
+          require(adjust_privilege(token, False, ctypes.byref(requested),
+                                   ctypes.sizeof(previous),
+                                   ctypes.byref(previous),
+                                   ctypes.byref(needed)))
+          check(ctypes.get_last_error())
+          yield
+      finally:
+          if previous.count:
+              ctypes.set_last_error(0)
+              require(adjust_privilege(token, False, ctypes.byref(previous),
+                                       0, None, None))
+              check(ctypes.get_last_error())
+          require(close_handle(token))
+
+
+  def save(journal):
+      temporary = journal_path + ".new"
+      with open(temporary, "w") as stream:
+          json.dump(journal, stream)
+          stream.flush()
+          os.fsync(stream.fileno())
+      os.replace(temporary, journal_path)
+
+
+  def registry_path(path):
+      assert path.startswith("HKCU:\\Software\\legacy_audit_rule_"), path
+      return path[6:]
+
+
+  def owned_paths(suffix):
+      assert len(suffix) == 32 and all(
+          character in "0123456789abcdef" for character in suffix), suffix
+      directory = os.path.join(workspace, "audit_" + suffix)
+      registry = "HKCU:\\Software\\legacy_audit_rule_" + suffix
+      return {"directory": directory,
+              "child_directory": os.path.join(directory, "child"),
+              "child_file": os.path.join(directory, "child.txt"),
+              "file": os.path.join(workspace, "audit_" + suffix + ".txt"),
+              "registry": registry, "child_registry": registry + "\\child",
+              "provider_empty_file": os.path.join(
+                  workspace, "audit_" + suffix + "_none[a].txt"),
+              "provider_file": os.path.join(
+                  workspace, "audit_" + suffix + "[.]txt"),
+              "provider_empty_registry": registry + "_none[a]",
+              "provider_registry": registry + "_select[a]",
+              "provider_registry_sibling": registry + "_selecta",
+              "provider_escaped_file": os.path.join(
+                  workspace, "audit_" + suffix + "``[.]txt"),
+              "provider_single_escape_file": os.path.join(
+                  workspace, "audit_" + suffix + "`[.]txt"),
+              "provider_escaped_registry": registry + "_select``[a]",
+              "provider_single_escape_registry": registry + "_select`[a]",
+              "provider_range_file": os.path.join(
+                  workspace, "audit_" + suffix + "_range[Ö-Ø].txt"),
+              "provider_range_file_sibling": os.path.join(
+                  workspace, "audit_" + suffix + "_range÷.txt"),
+              "provider_invalid_range_file": os.path.join(
+                  workspace, "audit_" + suffix + "_invalid[@-[].txt"),
+              "provider_invalid_range_file_sibling": os.path.join(
+                  workspace, "audit_" + suffix + "_invalidA.txt"),
+              "provider_range_registry": registry + "_range[Ö-Ø]",
+              "provider_range_registry_sibling": registry + "_range÷",
+              "provider_invalid_range_registry": registry + "_invalid[@-[]",
+              "provider_invalid_range_registry_sibling": registry + "_invalidA"}
+
+
+  def exists(path):
+      if not path.startswith("HKCU:"):
+          return os.path.lexists(path)
+      try:
+          key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, registry_path(path))
+      except OSError as error:
+          if error.winerror == 2:
+              return False
+          raise
+      key.Close()
+      return True
+
+
+  @contextmanager
+  def object_handle(path, access):
+      if path.startswith("HKCU:"):
+          handle = winreg.OpenKey(winreg.HKEY_CURRENT_USER,
+                                 registry_path(path), 0, access)
+          try:
+              yield int(handle), 4
+          finally:
+              handle.Close()
+      else:
+          handle = create_file(path, access, 7, None, 3, 0x02000000, None)
+          if handle == pointer(-1).value:
+              raise ctypes.WinError(ctypes.get_last_error())
+          try:
+              yield handle, 1
+          finally:
+              require(close_handle(handle))
+
+
+  def sid_text(sid):
+      text = pointer()
+      require(to_sid(sid, ctypes.byref(text)))
+      try:
+          return ctypes.wstring_at(text)
+      finally:
+          local_free(text)
+
+
+  def encoded_acl(acl):
+      if not acl:
+          return None
+      size = ctypes.c_uint16.from_address(acl.value + 2).value
+      return base64.b64encode(ctypes.string_at(acl, size)).decode("ascii")
+
+
+  def snapshot(path):
+      descriptor, owner, group, dacl, sacl = [pointer() for unused in range(5)]
+      text = pointer()
+      with object_handle(path, 0x01020000) as opened:
+          handle, kind = opened
+          try:
+              check(get_security(handle, kind, 15, ctypes.byref(owner),
+                                 ctypes.byref(group), ctypes.byref(dacl),
+                                 ctypes.byref(sacl), ctypes.byref(descriptor)))
+              control, revision = ctypes.c_uint16(), dword()
+              require(get_control(descriptor, ctypes.byref(control),
+                                  ctypes.byref(revision)))
+              require(to_sddl(descriptor, 1, 15, ctypes.byref(text), None))
+              entries = []
+              raw = encoded_acl(sacl)
+              if raw:
+                  data = base64.b64decode(raw)
+                  offset = 8
+                  for unused in range(struct.unpack_from("<H", data, 4)[0]):
+                      ace_type, flags, size = struct.unpack_from(
+                          "<BBH", data, offset)
+                      ace = data[offset:offset + size]
+                      record = {"type": ace_type, "flags": flags,
+                                "raw": base64.b64encode(ace).decode("ascii")}
+                      if ace_type == 2:
+                          sid = ctypes.create_string_buffer(ace[8:])
+                          record.update(
+                              mask=struct.unpack_from("<I", ace, 4)[0],
+                                        sid=sid_text(sid))
+                      entries.append(record)
+                      offset += size
+              return {"owner": sid_text(owner), "group": sid_text(group),
+                      "dacl": encoded_acl(dacl), "sacl": raw,
+                      "control": control.value, "sddl": ctypes.wstring_at(text),
+                      "aces": entries}
+          finally:
+              if text:
+                  local_free(text)
+              if descriptor:
+                  local_free(descriptor)
+
+
+  def observe(journal):
+      result = {}
+      for role, path in journal["paths"].items():
+          if not path.startswith("HKCU:") and role not in (
+                  "directory", "child_directory"):
+              with open(path, "rb") as stream:
+                  assert stream.read() == content, path
+          result[role] = snapshot(path) if exists(path) else None
+      return result
+
+
+  with audit_privilege():
+      if operation == "setup":
+          assert not os.path.exists(journal_path)
+          suffix = uuid.uuid4().hex
+          paths = owned_paths(suffix)
+          assert all(not exists(path) for path in paths.values())
+          journal = {"paths": paths, "suffix": suffix, "baseline": {},
+                     "initial_absence": True,
+                     "creation_order": ["directory", "child_directory",
+                                        "child_file", "file", "registry",
+                                        "child_registry", "provider_empty_file",
+                                        "provider_file",
+                                        "provider_empty_registry",
+                                        "provider_registry",
+                                        "provider_registry_sibling",
+                                        "provider_escaped_file",
+                                        "provider_single_escape_file",
+                                        "provider_escaped_registry",
+                                        "provider_single_escape_registry",
+                                        "provider_range_file",
+                                        "provider_range_file_sibling",
+                                        "provider_invalid_range_file",
+                                        "provider_invalid_range_file_sibling",
+                                        "provider_range_registry",
+                                        "provider_range_registry_sibling",
+                                        "provider_invalid_range_registry",
+                                        "provider_invalid_range_registry_sibling"]}
+          save(journal)
+          for role in journal["creation_order"]:
+              path = paths[role]
+              if path.startswith("HKCU:"):
+                  key = winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER,
+                                           registry_path(path), 0, 0xF003F)
+                  key.Close()
+              elif role in ("directory", "child_directory"):
+                  os.mkdir(path)
+              else:
+                  with open(path, "wb") as stream:
+                      stream.write(content)
+              journal["baseline"][role] = snapshot(path)
+              save(journal)
+          print(json.dumps({"paths": paths, "baseline": journal["baseline"],
+                            "runtime": list(sys.version_info[:3])}))
+      elif operation in ("observe", "cleanup"):
+          if not os.path.exists(journal_path):
+              assert operation == "cleanup"
+              print(json.dumps({"restored": True, "journal_absent": True}))
+          else:
+              with open(journal_path) as stream:
+                  journal = json.load(stream)
+              assert journal["initial_absence"]
+              assert journal["paths"] == owned_paths(journal["suffix"])
+              assert journal["creation_order"] == [
+                  "directory", "child_directory", "child_file", "file",
+                  "registry", "child_registry", "provider_empty_file",
+                  "provider_file", "provider_empty_registry",
+                  "provider_registry", "provider_registry_sibling",
+                  "provider_escaped_file", "provider_single_escape_file",
+                  "provider_escaped_registry",
+                  "provider_single_escape_registry",
+                  "provider_range_file", "provider_range_file_sibling",
+                  "provider_invalid_range_file",
+                  "provider_invalid_range_file_sibling",
+                  "provider_range_registry", "provider_range_registry_sibling",
+                  "provider_invalid_range_registry",
+                  "provider_invalid_range_registry_sibling"]
+              assert set(journal["baseline"]).issubset(journal["paths"])
+              if operation == "observe":
+                  print(json.dumps(observe(journal)))
+              else:
+                  final = {}
+                  for role in journal["creation_order"]:
+                      path = journal["paths"][role]
+                      if exists(path) and role in journal["baseline"]:
+                          actual = snapshot(path)
+                          original = journal["baseline"][role]
+                          for field in ("owner", "group", "dacl"):
+                              assert actual[field] == original[field], (
+                                  role, field)
+                          final[role] = actual
+                  for role in reversed(journal["creation_order"]):
+                      path = journal["paths"][role]
+                      if not exists(path):
+                          continue
+                      if path.startswith("HKCU:"):
+                          winreg.DeleteKey(winreg.HKEY_CURRENT_USER,
+                                           registry_path(path))
+                      elif role in ("directory", "child_directory"):
+                          os.rmdir(path)
+                      else:
+                          with open(path, "rb") as stream:
+                              assert stream.read() == content, path
+                          os.remove(path)
+                  assert all(not exists(path)
+                             for path in journal["paths"].values())
+                  os.remove(journal_path)
+                  print(json.dumps({"restored": True, "paths": journal["paths"],
+                                    "final_snapshots": final,
+                                    "absent": True, "journal_absent": True}))
+      else:
+          raise ValueError("Unknown fixture operation: " + operation)

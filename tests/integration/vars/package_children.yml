@@ -1,0 +1,54 @@
+---
+package_compare: false
+package_children_selected_cases: >-
+  {{ package_children_case_indices |
+  default(range(package_children_cases | length) | list) |
+  map('extract', package_children_cases) | list }}
+package_children_cases:
+  - name: Complete child and grandchild installation
+    changed: true
+    installed: true
+    executed: true
+  - name: Child-wait installation preview launches nothing
+    check: true
+    changed: true
+  - name: Child-wait installed package is idempotent
+    initial: present
+    installed: true
+  - name: Child-wait installed package preview is idempotent
+    initial: present
+    check: true
+    installed: true
+  - name: Parent failure still waits for successful descendant installation
+    code: 23
+    failed: true
+    installed: true
+    executed: true
+  - name: Parent reboot code is retained rather than descendant return code
+    code: 3010
+    changed: true
+    reboot: true
+    installed: true
+    executed: true
+  - name: Parent signed negative code retains exact failure streams
+    code: -1
+    failed: true
+    installed: true
+    executed: true
+  - name: Child-wait descendant removal runs the recorded uninstall command
+    initial: present
+    state: absent
+    changed: true
+    executed: true
+  - name: Child-wait removal preview launches nothing
+    initial: present
+    state: absent
+    check: true
+    changed: true
+    installed: true
+  - name: Default policy returns before detached grandchild completion
+    wait: false
+    delay: 20
+    changed: true
+    executed: true
+    pending: true

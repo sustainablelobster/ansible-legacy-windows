@@ -1,0 +1,1 @@
+{{ {'managed': ansible_managed, 'host': template_host, 'uid': template_uid, 'source': template_path, 'full': template_fullpath, 'dest_matches': template_destpath == expected_template_destination, 'has_run_date': template_run_date is defined, 'has_mtime': template_mtime is defined} | to_json }}

@@ -1,0 +1,115 @@
+---
+# SPDX-License-Identifier: GPL-3.0-or-later
+- name: Compare command input failures with the pinned released collection
+  hosts: legacy_windows
+  gather_facts: false
+  vars_files:
+    - vars/command_inputs.yml
+  tasks:
+    - name: Require an explicit expected Windows version
+      ansible.builtin.assert:
+        that:
+          - command_inputs_expected_windows_version is defined
+          - command_inputs_expected_windows_version | length == 2
+          - command_inputs_expected_windows_version[0] is integer
+          - command_inputs_expected_windows_version[1] is integer
+          - >-
+            (command_inputs_compare_source | bool) or
+            command_inputs_reference_capture is defined
+
+    - name: Allocate a private controller capture
+      ansible.builtin.tempfile:
+        path: '{{ playbook_dir }}/../../tmp'
+        prefix: 'command-inputs-{{ inventory_hostname }}-'
+        suffix: .json
+      register: command_inputs_capture
+      delegate_to: localhost
+      vars: &local
+        ansible_connection: local
+        ansible_shell_type: sh
+        ansible_python_interpreter: '{{ ansible_playbook_python }}'
+      changed_when: false
+
+    - name: Retain complete failures and require staging recovery
+      block:
+        - name: Record actual runtime, guest identity and original staging
+          ansible.builtin.raw: &observe >-
+            cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+            "exec(__import__('base64').b64decode(
+            '{{ command_inputs_observer | b64encode }}'))"
+            "{{ command_inputs_expected_windows_version | to_json }}""
+          register: command_inputs_before
+          changed_when: false
+          no_log: true
+
+        - name: Capture released command failures with named argument binding
+          ansible.windows.win_command:
+            cmd: '{{ item.args.cmd | default(omit) }}'
+            argv: '{{ item.args.argv | default(omit) }}'
+            _raw_params: '{{ item.args._raw_params | default(omit) }}'
+          loop: '{{ command_inputs_cases }}'
+          register: command_inputs_source
+          when: command_inputs_compare_source | bool
+          ignore_errors: true
+          no_log: true
+
+        - name: Capture native command failures with the same named binding
+          sustainablelobster.legacy_windows.win_command:
+            cmd: '{{ item.args.cmd | default(omit) }}'
+            argv: '{{ item.args.argv | default(omit) }}'
+            _raw_params: '{{ item.args._raw_params | default(omit) }}'
+          loop: '{{ command_inputs_cases }}'
+          register: command_inputs_native
+          ignore_errors: true
+          no_log: true
+      always:
+        - name: Record final runtime, guest identity and global staging
+          ansible.builtin.raw: *observe
+          register: command_inputs_after
+          changed_when: false
+          # Save failed observations; their rc is still a mandatory proof gate.
+          failed_when: false
+          no_log: true
+
+        - name: Save raw captures before validating recovery or parity
+          ansible.builtin.copy:
+            content: >-
+              {{ {'mode': ('paired' if (command_inputs_compare_source | bool)
+                          else 'native'),
+                  'expected_windows_version':
+                      command_inputs_expected_windows_version,
+                  'cases': command_inputs_cases,
+                  'source': command_inputs_source | default({}),
+                  'native': command_inputs_native | default({}),
+                  'before': command_inputs_before,
+                  'after': command_inputs_after} | to_nice_json }}
+            dest: '{{ command_inputs_capture.path }}'
+            mode: '0600'
+          delegate_to: localhost
+          vars: *local
+          changed_when: false
+          no_log: true
+
+        - name: Require literal staging and guest identity recovery
+          ansible.builtin.assert:
+            that:
+              - command_inputs_before.rc == 0
+              - command_inputs_after.rc == 0
+              - >-
+                (command_inputs_before.stdout | from_json | to_json(
+                    sort_keys=true)) ==
+                (command_inputs_after.stdout | from_json | to_json(
+                    sort_keys=true))
+          no_log: true
+
+    - name: Verify all typed failures against live or retained released results
+      ansible.builtin.command:
+        argv: >-
+          {{ [ansible_playbook_python,
+              playbook_dir + '/../../scripts/verify_command_inputs_capture.py',
+              command_inputs_capture.path] +
+              (['--reference', command_inputs_reference_capture]
+               if not (command_inputs_compare_source | bool) else []) }}
+      delegate_to: localhost
+      vars: *local
+      changed_when: false

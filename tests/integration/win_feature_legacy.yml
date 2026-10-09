@@ -1,0 +1,280 @@
+---
+- name: Verify older server feature contracts and exact recovery
+  hosts: legacy_windows
+  gather_facts: false
+  vars_files:
+    - vars/feature_legacy_fixture.yml
+  vars:
+    feature_legacy_script: >-
+      {{ lookup('ansible.builtin.file', playbook_dir ~
+      '/../../plugins/module_utils/legacy_windows_wmi.py') ~
+      ('%c' | format(10)) ~ feature_legacy_fixture }}
+  tasks:
+    - name: Record original global module staging
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import glob,json,os,tempfile;print(json.dumps(sorted(glob.glob(
+        os.path.join(tempfile.gettempdir(),'ansible-tmp-*')))))""
+      register: feature_legacy_staging_before
+      changed_when: false
+
+    - name: Allocate a private durable feature capture
+      ansible.builtin.tempfile:
+        state: file
+        path: '{{ playbook_dir }}/../../tmp/codex/evidence'
+        prefix: feature-legacy-
+        suffix: .json
+      delegate_to: localhost
+      vars: &local
+        ansible_connection: local
+        ansible_shell_type: sh
+        ansible_python_interpreter: '{{ ansible_playbook_python }}'
+      register: feature_legacy_capture
+      changed_when: false
+
+    - name: Allocate the journal-owned target workspace
+      sustainablelobster.legacy_windows.win_tempfile: # noqa: args[module]
+        state: directory
+        prefix: legacy-server-feature-proof-
+      register: feature_legacy_workspace
+
+    - name: Exercise the existing public server feature modules
+      block:
+        - name: Retain original whole-catalogue service and client-file state
+          sustainablelobster.legacy_windows.win_command: # noqa: args[module]
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - '-'
+              - '{{ feature_legacy_workspace.path }}'
+              - setup
+            stdin: '{{ feature_legacy_script }}'
+          register: feature_legacy_setup
+          changed_when: false
+
+        - name: Read the real available catalogue
+          sustainablelobster.legacy_windows.win_feature_info:
+          register: feature_legacy_info
+
+        - name: Require catalogue breadth and honest older metadata
+          ansible.builtin.assert:
+            that:
+              - feature_legacy_info.exists
+              - >-
+                feature_legacy_info.features | length ==
+                (feature_legacy_setup.stdout | from_json).before.catalogue
+                | length
+              - feature_legacy_info.warnings | length > 0
+
+        - name: Predict a literal feature batch without servicing
+          sustainablelobster.legacy_windows.win_feature: # noqa: args[module]
+            name: [Telnet-Client, TFTP-Client]
+          check_mode: true
+          register: feature_legacy_check
+
+        - name: Reject a later unavailable name before installing the first
+          sustainablelobster.legacy_windows.win_feature: # noqa: args[module]
+            name: [Telnet-Client, LegacyFeatureProofMissing_2026]
+          register: feature_legacy_failure
+          ignore_errors: true
+
+        - name: Reject an unsupported source override before servicing
+          sustainablelobster.legacy_windows.win_feature: # noqa: args[module]
+            name: Telnet-Client
+            source: '{{ feature_legacy_workspace.path }}'
+          register: feature_legacy_source_failure
+          ignore_errors: true
+
+        - name: Observe nonmutation after prediction and name validation
+          sustainablelobster.legacy_windows.win_command: # noqa: args[module]
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - '-'
+              - '{{ feature_legacy_workspace.path }}'
+              - observe
+            stdin: '{{ feature_legacy_script }}'
+          register: feature_legacy_checked
+          changed_when: false
+
+        - name: Require check-mode prediction and failed-name nonmutation
+          ansible.builtin.assert:
+            that:
+              - feature_legacy_check.changed
+              - feature_legacy_failure is failed
+              - not feature_legacy_failure.changed
+              - feature_legacy_source_failure is failed
+              - not feature_legacy_source_failure.changed
+              - >-
+                (feature_legacy_checked.stdout | from_json) ==
+                (feature_legacy_setup.stdout | from_json).before
+
+        - name: Install real catalogue client features through the public module
+          sustainablelobster.legacy_windows.win_feature: # noqa: args[module]
+            name: [Telnet-Client, TFTP-Client, telnet-client]
+            include_sub_features: true
+          register: feature_legacy_installed
+
+        - name: Repeat the installed batch
+          sustainablelobster.legacy_windows.win_feature: # noqa: args[module]
+            name: [tftp-client, Telnet-Client]
+          register: feature_legacy_repeated
+
+        - name: Read installed client feature metadata
+          sustainablelobster.legacy_windows.win_feature_info:
+            name: Telnet-Client
+          register: feature_legacy_installed_info
+
+        - name: Require successful installation and idempotence
+          ansible.builtin.assert:
+            that:
+              - feature_legacy_installed.changed
+              - feature_legacy_installed.success
+              - not feature_legacy_installed.reboot_required
+              - not feature_legacy_repeated.changed
+              - feature_legacy_installed_info.features[0].installed
+
+        - name: Predict removing the installed batch
+          sustainablelobster.legacy_windows.win_feature: # noqa: args[module]
+            name: [Telnet-Client, TFTP-Client]
+            state: absent
+          check_mode: true
+          register: feature_legacy_remove_check
+
+        - name: Observe installed state after removal prediction
+          sustainablelobster.legacy_windows.win_command: # noqa: args[module]
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - '-'
+              - '{{ feature_legacy_workspace.path }}'
+              - observe
+            stdin: '{{ feature_legacy_script }}'
+          register: feature_legacy_remove_checked
+          changed_when: false
+
+        - name: Require removal prediction leaves both clients installed
+          ansible.builtin.assert:
+            that:
+              - feature_legacy_remove_check.changed
+              - >-
+                (feature_legacy_remove_checked.stdout | from_json).catalogue
+                ['Telnet-Client'].Installed == 'true'
+              - >-
+                (feature_legacy_remove_checked.stdout | from_json).catalogue
+                ['TFTP-Client'].Installed == 'true'
+      always:
+        - name: Remove only the journal-owned originally absent client features
+          sustainablelobster.legacy_windows.win_feature: # noqa: args[module]
+            name: [Telnet-Client, TFTP-Client]
+            state: absent
+          register: feature_legacy_removed
+          failed_when: false
+          when: feature_legacy_setup is succeeded
+
+        - name: Require removal idempotence for the originally absent clients
+          sustainablelobster.legacy_windows.win_feature: # noqa: args[module]
+            name: [Telnet-Client, TFTP-Client]
+            state: absent
+          register: feature_legacy_remove_repeated
+          failed_when: false
+          when: feature_legacy_setup is succeeded
+
+        - name: Restore the originally stopped servicing service
+          sustainablelobster.legacy_windows.win_service: # noqa: args[module]
+            name: TrustedInstaller
+            state: stopped
+          failed_when: false
+          when:
+            - feature_legacy_setup is succeeded
+            - >-
+              (feature_legacy_setup.stdout | from_json).before.services
+              .TrustedInstaller.State == 'Stopped'
+
+        - name: Verify complete native feature service and file recovery
+          sustainablelobster.legacy_windows.win_command: # noqa: args[module]
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - '-'
+              - '{{ feature_legacy_workspace.path }}'
+              - verify
+            stdin: '{{ feature_legacy_script }}'
+          register: feature_legacy_cleanup
+          changed_when: false
+          failed_when: false
+
+        - name: Save original public and recovered native evidence
+          ansible.builtin.copy:
+            content: >-
+              {{ {'setup': feature_legacy_setup | default(none),
+                  'catalogue': feature_legacy_info | default(none),
+                  'check': feature_legacy_check | default(none),
+                  'failure': feature_legacy_failure | default(none),
+                  'source_failure': feature_legacy_source_failure |
+                                    default(none),
+                  'install': feature_legacy_installed | default(none),
+                  'repeat': feature_legacy_repeated | default(none),
+                  'installed_info': feature_legacy_installed_info |
+                                    default(none),
+                  'remove_check': feature_legacy_remove_check | default(none),
+                  'remove_checked': feature_legacy_remove_checked |
+                                    default(none),
+                  'remove': feature_legacy_removed | default(none),
+                  'remove_repeat': feature_legacy_remove_repeated |
+                                   default(none),
+                  'cleanup': feature_legacy_cleanup | default(none)}
+                  | to_nice_json }}
+            dest: '{{ feature_legacy_capture.path }}'
+            mode: '0600'
+          delegate_to: localhost
+          vars: *local
+          changed_when: false
+
+        - name: Require complete verified recovery before workspace deletion
+          ansible.builtin.assert:
+            that:
+              - feature_legacy_cleanup.rc == 0
+              - (feature_legacy_cleanup.stdout | from_json).restored
+
+        - name: Require successful public removal and repeat where servicing ran
+          ansible.builtin.assert:
+            that:
+              - feature_legacy_removed.success
+              - not feature_legacy_remove_repeated.changed
+              - feature_legacy_remove_repeated.success
+          when: feature_legacy_setup is succeeded
+
+        - name: Remove the workspace only after native recovery passes
+          sustainablelobster.legacy_windows.win_file: # noqa: args[module]
+            path: '{{ feature_legacy_workspace.path }}'
+            state: absent
+          when:
+            - feature_legacy_cleanup.rc == 0
+            - (feature_legacy_cleanup.stdout | from_json).restored
+
+        - name: Verify owned workspace absence and global staging closure
+          ansible.builtin.raw: >-
+            cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+            "import glob,json,os,sys,tempfile;
+            assert not os.path.exists(sys.argv[1]);
+            print(json.dumps(sorted(glob.glob(os.path.join(
+            tempfile.gettempdir(),'ansible-tmp-*')))))"
+            "{{ feature_legacy_workspace.path }}""
+          register: feature_legacy_staging_after
+          changed_when: false
+
+        - name: Preserve literal workspace and staging closure
+          ansible.builtin.copy:
+            dest: '{{ feature_legacy_capture.path }}.closure.json'
+            mode: '0600'
+            content: >-
+              {{ {'workspace_absent': true,
+                  'before': feature_legacy_staging_before,
+                  'after': feature_legacy_staging_after} | to_nice_json }}
+          delegate_to: localhost
+          vars: *local
+          changed_when: false
+
+        - name: Require unchanged global staging
+          ansible.builtin.assert:
+            that:
+              - >-
+                (feature_legacy_staging_before.stdout | from_json) ==
+                (feature_legacy_staging_after.stdout | from_json)

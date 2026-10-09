@@ -1,0 +1,106 @@
+---
+# Copyright 2026 Joe Lustri
+# SPDX-License-Identifier: GPL-3.0-or-later
+- name: Observe the installer counter before this guard
+  sustainablelobster.legacy_windows.win_command:
+    argv: ['{{ ansible_python_interpreter }}', '{{ package_guard_program }}',
+           '{{ package_guard_workspace.path }}', observe]
+  register: package_guard_before
+  changed_when: false
+
+- name: Exercise the native public package service guard
+  sustainablelobster.legacy_windows.win_package:
+    provider: registry
+    path: '{{ package_guard_setup_data.installer }}'
+    product_id: '{{ package_guard_setup_data.prefix }}'
+    arguments: ['{{ package_guard_program }}',
+                '{{ package_guard_workspace.path }}', install]
+    creates_service: '{{ package_guard_case.guard }}'
+    creates_path: '{{ package_guard_case.path | default(omit) }}'
+  register: package_guard_native
+  environment:
+    PYTHONHOME: '{{ package_guard_setup_data.python_home }}'
+  check_mode: '{{ package_guard_case.check | default(false) }}'
+  ignore_errors: true
+
+- name: Independently observe effects after the native guard
+  sustainablelobster.legacy_windows.win_command:
+    argv: ['{{ ansible_python_interpreter }}', '{{ package_guard_program }}',
+           '{{ package_guard_workspace.path }}', observe]
+  register: package_guard_after
+  changed_when: false
+
+- name: Save native observations before validating this guard
+  ansible.builtin.set_fact:
+    package_guard_results: >-
+      {{ package_guard_results +
+      [{'case': package_guard_case, 'native': package_guard_native,
+        'before': package_guard_before, 'after': package_guard_after}] }}
+
+- name: Require the guard decision and exact independent installer effects
+  ansible.builtin.assert:
+    that:
+      - package_guard_native.failed | default(false) ==
+        package_guard_case.fail | default(false)
+      - package_guard_native.changed == package_guard_case.changed
+      - not package_guard_native.reboot_required
+      - >-
+        (package_guard_after.stdout | from_json).count ==
+        (package_guard_before.stdout | from_json).count +
+        (1 if package_guard_case.changed and not
+        package_guard_case.check | default(false) else 0)
+      - >-
+        not package_guard_case.fail | default(false) or
+        'wildcard' in package_guard_native.msg
+
+- name: Compare this same guard with the pinned upstream public module
+  when: package_guard_compare | bool
+  block:
+    - name: Execute the unchanged released package service guard
+      ansible.windows.win_package:
+        provider: registry
+        path: '{{ package_guard_setup_data.installer }}'
+        product_id: '{{ package_guard_setup_data.prefix }}'
+        arguments: ['{{ package_guard_program }}',
+                    '{{ package_guard_workspace.path }}', install]
+        creates_service: '{{ package_guard_case.guard }}'
+        creates_path: '{{ package_guard_case.path | default(omit) }}'
+      register: package_guard_original
+      environment:
+        PYTHONHOME: '{{ package_guard_setup_data.python_home }}'
+      check_mode: '{{ package_guard_case.check | default(false) }}'
+      ignore_errors: true
+
+    - name: Independently observe effects after the original guard
+      sustainablelobster.legacy_windows.win_command:
+        argv: ['{{ ansible_python_interpreter }}',
+               '{{ package_guard_program }}',
+               '{{ package_guard_workspace.path }}', observe]
+      register: package_guard_after_original
+      changed_when: false
+
+    - name: Save original observations before comparing guard decisions
+      ansible.builtin.set_fact:
+        package_guard_comparisons: >-
+          {{ package_guard_comparisons +
+          [{'case': package_guard_case, 'original': package_guard_original,
+            'before': package_guard_after,
+            'after': package_guard_after_original}] }}
+
+    - name: Require matching public guard decisions and installer effects
+      ansible.builtin.assert:
+        that:
+          - >-
+            package_guard_original.failed | default(false) ==
+            package_guard_native.failed | default(false)
+          - package_guard_original.changed == package_guard_native.changed
+          # Upstream's terminating wildcard errors can omit its reboot flag.
+          - >-
+            package_guard_case.fail | default(false) or
+            'reboot_required' in package_guard_original
+          - not package_guard_original.reboot_required | default(false)
+          - >-
+            (package_guard_after_original.stdout | from_json).count ==
+            (package_guard_after.stdout | from_json).count +
+            (1 if package_guard_case.changed and not
+            package_guard_case.check | default(false) else 0)

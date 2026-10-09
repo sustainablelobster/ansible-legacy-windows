@@ -1,0 +1,310 @@
+{
+  "provenance": {
+    "upstream": "ansible.windows 3.8.0",
+    "upstream_commit": "ff0ac96011ee196742901f34c0dd134acddbe89a",
+    "observed_on": "2026-09-29",
+    "powershell": "5.1.26100.7462",
+    "scope": "Synthetic byte buffers only; no services or persistent settings were changed.",
+    "source": "Unmodified TriggerItem class, TriggerDataType enum, and SERVICE_TRIGGER_SPECIFIC_DATA_ITEM struct extracted from plugins/module_utils/SCManager.cs, compiled in a private in-memory observation namespace.",
+    "conversion": "Construct the upstream TriggerItem, read its Data property, and apply the module's byte/byte[] to Base64 conversion.",
+    "serialization": "Explicit ConvertTo-Json -InputObject $rows -Depth 99 -Compress captured as a raw string before win_powershell normalization. Values are the observed JSON output, including replacement of a terminal unpaired surrogate.",
+    "rejected": "Rejected cases record constructor exceptions. The module-level Triggers getter failure boundary is tested separately."
+  },
+  "cases": [
+    {
+      "id": "binary_empty",
+      "type": 1,
+      "bytes": [],
+      "value": "",
+      "accepted": true
+    },
+    {
+      "id": "binary_bytes",
+      "type": 1,
+      "bytes": [
+        0,
+        1,
+        255
+      ],
+      "value": "AAH/",
+      "accepted": true
+    },
+    {
+      "id": "unknown_bytes",
+      "type": 99,
+      "bytes": [
+        128,
+        255
+      ],
+      "value": "gP8=",
+      "accepted": true
+    },
+    {
+      "id": "level_zero",
+      "type": 3,
+      "bytes": [
+        0
+      ],
+      "value": "AA==",
+      "accepted": true
+    },
+    {
+      "id": "level_max",
+      "type": 3,
+      "bytes": [
+        255
+      ],
+      "value": "/w==",
+      "accepted": true
+    },
+    {
+      "id": "level_extra",
+      "type": 3,
+      "bytes": [
+        42,
+        255
+      ],
+      "value": "Kg==",
+      "accepted": true
+    },
+    {
+      "id": "level_empty",
+      "type": 3,
+      "bytes": [],
+      "accepted": false,
+      "exception": "System.IndexOutOfRangeException"
+    },
+    {
+      "id": "keyword_any_zero",
+      "type": 4,
+      "bytes": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "value": 0,
+      "accepted": true
+    },
+    {
+      "id": "keyword_all_max",
+      "type": 5,
+      "bytes": [
+        255,
+        255,
+        255,
+        255,
+        255,
+        255,
+        255,
+        255
+      ],
+      "value": 18446744073709551615,
+      "accepted": true
+    },
+    {
+      "id": "keyword_any_endian",
+      "type": 4,
+      "bytes": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8
+      ],
+      "value": 578437695752307201,
+      "accepted": true
+    },
+    {
+      "id": "keyword_short",
+      "type": 4,
+      "bytes": [
+        1,
+        2
+      ],
+      "accepted": false,
+      "exception": "System.ArgumentException"
+    },
+    {
+      "id": "string_empty",
+      "type": 2,
+      "bytes": [
+        0,
+        0
+      ],
+      "value": "",
+      "accepted": true
+    },
+    {
+      "id": "string_empty_multi",
+      "type": 2,
+      "bytes": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "value": [],
+      "accepted": true
+    },
+    {
+      "id": "string_empty_bytes",
+      "type": 2,
+      "bytes": [],
+      "accepted": false,
+      "exception": "System.ArgumentOutOfRangeException"
+    },
+    {
+      "id": "string_single",
+      "type": 2,
+      "bytes": [
+        65,
+        0,
+        0,
+        0
+      ],
+      "value": "A",
+      "accepted": true
+    },
+    {
+      "id": "string_single_multi",
+      "type": 2,
+      "bytes": [
+        65,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "value": [
+        "A"
+      ],
+      "accepted": true
+    },
+    {
+      "id": "string_multi",
+      "type": 2,
+      "bytes": [
+        65,
+        0,
+        0,
+        0,
+        66,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "value": [
+        "A",
+        "B"
+      ],
+      "accepted": true
+    },
+    {
+      "id": "string_empty_middle",
+      "type": 2,
+      "bytes": [
+        65,
+        0,
+        0,
+        0,
+        0,
+        0,
+        66,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "value": [
+        "A",
+        "B"
+      ],
+      "accepted": true
+    },
+    {
+      "id": "string_without_nul",
+      "type": 2,
+      "bytes": [
+        65,
+        0,
+        66,
+        0
+      ],
+      "value": "A",
+      "accepted": true
+    },
+    {
+      "id": "string_astral",
+      "type": 2,
+      "bytes": [
+        61,
+        216,
+        0,
+        222,
+        0,
+        0
+      ],
+      "value": "😀",
+      "accepted": true
+    },
+    {
+      "id": "string_astral_without_nul",
+      "type": 2,
+      "bytes": [
+        61,
+        216,
+        0,
+        222
+      ],
+      "value": "�",
+      "accepted": true
+    },
+    {
+      "id": "string_lone_high",
+      "type": 2,
+      "bytes": [
+        0,
+        216,
+        0,
+        0
+      ],
+      "value": "�",
+      "accepted": true
+    },
+    {
+      "id": "string_lone_low",
+      "type": 2,
+      "bytes": [
+        0,
+        220,
+        0,
+        0
+      ],
+      "value": "�",
+      "accepted": true
+    },
+    {
+      "id": "string_odd_tail",
+      "type": 2,
+      "bytes": [
+        65,
+        0,
+        255
+      ],
+      "value": "A",
+      "accepted": true
+    }
+  ]
+}

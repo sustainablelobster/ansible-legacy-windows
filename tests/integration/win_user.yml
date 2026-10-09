@@ -1,0 +1,749 @@
+---
+# SPDX-License-Identifier: GPL-3.0-or-later
+- name: Verify isolated local users on Windows Python 3.4.4
+  hosts: legacy_windows
+  gather_facts: false
+  vars_files:
+    - vars/local_users.yml
+  vars:
+    prefix: '{{ user_fixture.prefix }}'
+    primary: '{{ prefix }}main'
+    partial: '{{ prefix }}part'
+    group_one: '{{ prefix }}one'
+    group_two: '{{ prefix }}two'
+    prepared_groups: '{{ (prepared.stdout | from_json).groups }}'
+  tasks:
+    - name: Require Python 3.4.4 and record initial task directories
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import glob, json, os, sys, tempfile;
+        assert sys.version_info[:3] == (3, 4, 4);
+        print(json.dumps(sorted(glob.glob(os.path.join(tempfile.gettempdir(),
+        'ansible-tmp-*')))))""
+      register: task_directories_before
+      changed_when: false
+      check_mode: false
+
+    - name: Reserve absent names and generate private ephemeral passwords
+      sustainablelobster.legacy_windows.win_command:
+        argv:
+          - '{{ ansible_python_interpreter }}'
+          - -c
+          - '{{ user_fixture_code }}'
+          - allocate
+      register: user_allocation
+      changed_when: false
+      no_log: true
+
+    - name: Separate public fixture identity from private credentials
+      ansible.builtin.set_fact:
+        user_fixture: '{{ (user_allocation.stdout | from_json).public }}'
+        user_passwords: '{{ (user_allocation.stdout | from_json).passwords }}'
+      no_log: true
+
+    - name: Exercise owned users memberships and recovery
+      block:
+        - name: Create only the reserved fixture groups
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - '{{ user_fixture_code }}'
+              - prepare
+              - '{{ prefix }}'
+          register: prepared
+
+        - name: Query the reserved missing user
+          sustainablelobster.legacy_windows.win_user:
+            name: '{{ primary }}'
+            state: query
+          diff: true
+          register: missing_query
+
+        - name: Preview creation without resolving a missing group
+          sustainablelobster.legacy_windows.win_user:
+            name: '{{ prefix }}prev'
+            password: '{{ user_passwords[0] }}'
+            fullname: Preview only
+            groups: ['{{ prefix }}miss']
+          check_mode: true
+          diff: true
+          register: creation_preview
+          no_log: true
+
+        - name: Inspect account absence after the creation preview
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - '{{ user_fixture_code }}'
+              - inspect
+              - '{{ prefix }}'
+          register: after_creation_preview
+          changed_when: false
+
+        - name: Verify missing query and creation-preview result shapes
+          ansible.builtin.assert:
+            that:
+              - not missing_query.changed
+              - missing_query.state == 'absent'
+              - missing_query.sid is undefined
+              - missing_query.diff.before == ''
+              - missing_query.diff.after == ''
+              - creation_preview.changed
+              - creation_preview.state == 'present'
+              - creation_preview.sid is undefined
+              - creation_preview.fullname is undefined
+              - creation_preview.diff.after.name == prefix + 'prev'
+              - creation_preview.diff.after.password == 'REDACTED'
+              - >-
+                (after_creation_preview.stdout | from_json).users ==
+                {'main': none, 'part': none, 'prev': none}
+
+        - name: Create a user with a private password and an owned group
+          sustainablelobster.legacy_windows.win_user:
+            name: '{{ primary }}'
+            password: '{{ user_passwords[0] }}'
+            fullname: Initial user 雪
+            description: Initial description
+            groups: ['{{ group_one }}']
+          diff: true
+          register: created
+          no_log: true
+
+        - name: Repeat the same password properties and membership
+          sustainablelobster.legacy_windows.win_user:
+            name: '{{ primary }}'
+            password: '{{ user_passwords[0] }}'
+            fullname: Initial user 雪
+            description: Initial description
+            groups: ['{{ group_one }}']
+          register: creation_repeated
+          no_log: true
+
+        - name: Request the existing user without property changes
+          sustainablelobster.legacy_windows.win_user:
+            name: '{{ primary }}'
+          register: unchanged
+
+        - name: Query the created user
+          sustainablelobster.legacy_windows.win_user:
+            name: '{{ primary }}'
+            state: query
+          register: queried
+
+        - name: Inspect the created account independently
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - '{{ user_fixture_code }}'
+              - inspect
+              - '{{ prefix }}'
+          register: creation_actual
+          changed_when: false
+
+        - name: Verify creation identity query and repeated-call idempotence
+          ansible.builtin.assert:
+            that:
+              - created.changed
+              - created.state == 'present'
+              - not creation_repeated.changed
+              - not unchanged.changed
+              - not queried.changed
+              - queried.state == 'present'
+              - queried.name == primary
+              - queried.sid == actual.sid
+              - queried.fullname == 'Initial user 雪'
+              - queried.description == 'Initial description'
+              - not queried.password_expired
+              - not queried.account_disabled
+              - not queried.account_locked
+              - queried.groups | map(attribute='name') | list == [group_one]
+              - actual.groups == [group_one]
+              - actual.fullname == queried.fullname
+              - actual.description == queried.description
+              - actual.account_expires == 4294967295
+              - >-
+                queried.path.endswith('/' + user_fixture.computer + '/' +
+                primary)
+              - queried.path.startswith('WinNT://')
+              - >-
+                queried.groups[0].path ==
+                queried.path.rsplit('/', 1)[0] + '/' + group_one
+          vars:
+            actual: '{{ (creation_actual.stdout | from_json).users.main }}'
+
+        - name: Update scalar properties and account flags together
+          sustainablelobster.legacy_windows.win_user:
+            name: '{{ primary }}'
+            fullname: Updated user 雪
+            description: Updated description
+            home_directory: C:\LW_User_Home
+            login_script: owned.cmd
+            profile: C:\LW_User_Profile
+            account_disabled: true
+            password_never_expires: true
+            user_cannot_change_password: true
+          diff: true
+          register: properties_updated
+
+        - name: Repeat the configured scalar properties and flags
+          sustainablelobster.legacy_windows.win_user:
+            name: '{{ primary }}'
+            fullname: Updated user 雪
+            description: Updated description
+            home_directory: C:\LW_User_Home
+            login_script: owned.cmd
+            profile: C:\LW_User_Profile
+            account_disabled: true
+            password_never_expires: true
+            user_cannot_change_password: true
+          register: properties_repeated
+
+        - name: Inspect state before mutation and deletion previews
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - '{{ user_fixture_code }}'
+              - inspect
+              - '{{ prefix }}'
+          register: before_preview
+          changed_when: false
+
+        - name: Preview scalar and membership replacement
+          sustainablelobster.legacy_windows.win_user:
+            name: '{{ primary }}'
+            fullname: Preview user
+            description: Preview description
+            account_disabled: false
+            password_never_expires: false
+            user_cannot_change_password: false
+            groups: ['{{ group_two }}']
+          check_mode: true
+          diff: true
+          register: mutation_preview
+
+        - name: Preview deletion of the existing account
+          sustainablelobster.legacy_windows.win_user:
+            name: '{{ primary }}'
+            state: absent
+          check_mode: true
+          diff: true
+          register: deletion_preview
+
+        - name: Inspect stored state after both previews
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - '{{ user_fixture_code }}'
+              - inspect
+              - '{{ prefix }}'
+          register: after_preview
+          changed_when: false
+
+        - name: Verify stored properties and check-mode nonmutation
+          ansible.builtin.assert:
+            that:
+              - properties_updated.changed
+              - not properties_repeated.changed
+              - actual.sid == created.sid
+              - actual.fullname == 'Updated user 雪'
+              - actual.description == 'Updated description'
+              - actual.home_directory == 'C:\LW_User_Home'
+              - actual.login_script == 'owned.cmd'
+              - actual.profile == 'C:\LW_User_Profile'
+              - actual.account_disabled
+              - actual.password_never_expires
+              - actual.user_cannot_change_password
+              - mutation_preview.changed
+              - mutation_preview.fullname == actual.fullname
+              - mutation_preview.account_disabled
+              - mutation_preview.password_never_expires
+              - >-
+                mutation_preview.groups | map(attribute='name') | list ==
+                [group_one]
+              - mutation_preview.diff.after.fullname == 'Preview user'
+              - not mutation_preview.diff.after.account_disabled
+              - deletion_preview.changed
+              - deletion_preview.state == 'absent'
+              - deletion_preview.sid == actual.sid
+              - deletion_preview.diff.after == ''
+              - >-
+                (before_preview.stdout | from_json) ==
+                (after_preview.stdout | from_json)
+          vars:
+            actual: '{{ (before_preview.stdout | from_json).users.main }}'
+
+        - name: Clear the flags and request an already unlocked account
+          sustainablelobster.legacy_windows.win_user:
+            name: '{{ primary }}'
+            account_disabled: false
+            account_locked: false
+            password_never_expires: false
+            user_cannot_change_password: false
+          register: flags_cleared
+
+        - name: Add the second owned group through its SID
+          sustainablelobster.legacy_windows.win_user:
+            name: '{{ primary }}'
+            groups: ['{{ prepared_groups.two.sid }}']
+            groups_action: add
+          register: group_added
+
+        - name: Repeat the addition with duplicate aliases
+          sustainablelobster.legacy_windows.win_user:
+            name: '{{ primary }}'
+            groups: ['{{ group_two }}', '{{ prepared_groups.two.sid }}']
+            groups_action: add
+          register: group_add_repeated
+
+        - name: Remove the first group only
+          sustainablelobster.legacy_windows.win_user:
+            name: '{{ primary }}'
+            groups: ['{{ group_one }}']
+            groups_action: remove
+          register: group_removed
+
+        - name: Repeat removal of the absent membership
+          sustainablelobster.legacy_windows.win_user:
+            name: '{{ primary }}'
+            groups: ['{{ group_one }}']
+            groups_action: remove
+          register: group_remove_repeated
+
+        - name: Replace memberships with the first owned group
+          sustainablelobster.legacy_windows.win_user:
+            name: '{{ primary }}'
+            groups: ['{{ group_one }}']
+            groups_action: replace
+          register: groups_replaced
+
+        - name: Clear every membership
+          sustainablelobster.legacy_windows.win_user:
+            name: '{{ primary }}'
+            groups: []
+          register: groups_cleared
+
+        - name: Repeat the empty membership
+          sustainablelobster.legacy_windows.win_user:
+            name: '{{ primary }}'
+            groups: []
+          register: groups_clear_repeated
+
+        - name: Inspect cleared flags and memberships independently
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - '{{ user_fixture_code }}'
+              - inspect
+              - '{{ prefix }}'
+          register: membership_actual
+          changed_when: false
+
+        - name: Verify additions removals replacements and cleared flags
+          ansible.builtin.assert:
+            that:
+              - flags_cleared.changed
+              - not actual.account_disabled
+              - not actual.account_locked
+              - not actual.password_never_expires
+              - not actual.user_cannot_change_password
+              - group_added.changed
+              - >-
+                group_added.groups | map(attribute='name') | sort ==
+                [group_one, group_two] | sort
+              - not group_add_repeated.changed
+              - group_removed.changed
+              - >-
+                group_removed.groups | map(attribute='name') | list ==
+                [group_two]
+              - not group_remove_repeated.changed
+              - groups_replaced.changed
+              - >-
+                groups_replaced.groups | map(attribute='name') | list ==
+                [group_one]
+              - groups_cleared.changed
+              - not groups_clear_repeated.changed
+              - groups_cleared.groups == []
+              - actual.groups == []
+          vars:
+            actual: '{{ (membership_actual.stdout | from_json).users.main }}'
+
+        - name: Reset the password to the second private value
+          sustainablelobster.legacy_windows.win_user:
+            name: '{{ primary }}'
+            password: '{{ user_passwords[1] }}'
+          register: password_reset
+          no_log: true
+
+        - name: Repeat the new password
+          sustainablelobster.legacy_windows.win_user:
+            name: '{{ primary }}'
+            password: '{{ user_passwords[1] }}'
+          register: password_repeat
+          no_log: true
+
+        - name: Preserve the password under on-create behavior
+          sustainablelobster.legacy_windows.win_user:
+            name: '{{ primary }}'
+            password: '{{ user_passwords[0] }}'
+            update_password: on_create
+          register: password_on_create
+          no_log: true
+
+        - name: Verify the second password is still current
+          sustainablelobster.legacy_windows.win_user:
+            name: '{{ primary }}'
+            password: '{{ user_passwords[1] }}'
+          register: password_preserved
+          no_log: true
+
+        - name: Set the password-expired flag
+          sustainablelobster.legacy_windows.win_user:
+            name: '{{ primary }}'
+            password_expired: true
+          register: expired_set
+
+        - name: Repeat the expired flag
+          sustainablelobster.legacy_windows.win_user:
+            name: '{{ primary }}'
+            password_expired: true
+          register: expired_repeat
+
+        - name: Inspect the stored expired flag
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - '{{ user_fixture_code }}'
+              - inspect
+              - '{{ prefix }}'
+          register: expired_actual
+          changed_when: false
+
+        - name: Clear the password-expired flag
+          sustainablelobster.legacy_windows.win_user:
+            name: '{{ primary }}'
+            password_expired: false
+          register: expired_cleared
+
+        - name: Repeat the cleared password-expired flag
+          sustainablelobster.legacy_windows.win_user:
+            name: '{{ primary }}'
+            password_expired: false
+          register: expired_clear_repeat
+
+        - name: Verify password reset preservation and explicit expiry flags
+          ansible.builtin.assert:
+            that:
+              - password_reset.changed
+              - not password_repeat.changed
+              - not password_on_create.changed
+              - not password_preserved.changed
+              - expired_set.changed
+              - expired_set.password_expired
+              - not expired_repeat.changed
+              - (expired_actual.stdout | from_json).users.main.password_expired
+              - expired_cleared.changed
+              - not expired_cleared.password_expired
+              - not expired_clear_repeat.changed
+
+        - name: Set a finite account expiration with an explicit timezone
+          sustainablelobster.legacy_windows.win_user:
+            name: '{{ primary }}'
+            account_expires: '2040-10-27T14:30:00+02:00'
+          diff: true
+          register: expiration_set
+
+        - name: Repeat the same account expiration
+          sustainablelobster.legacy_windows.win_user:
+            name: '{{ primary }}'
+            account_expires: '2040-10-27T14:30:00+02:00'
+          register: expiration_repeat
+
+        - name: Inspect finite account expiration before its preview
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - '{{ user_fixture_code }}'
+              - inspect
+              - '{{ prefix }}'
+          register: before_expiration_preview
+          changed_when: false
+
+        - name: Preview removing account expiration
+          sustainablelobster.legacy_windows.win_user:
+            name: '{{ primary }}'
+            account_expires: never
+          check_mode: true
+          diff: true
+          register: expiration_preview
+
+        - name: Inspect expiration after the preview
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - '{{ user_fixture_code }}'
+              - inspect
+              - '{{ prefix }}'
+          register: after_expiration_preview
+          changed_when: false
+
+        - name: Remove account expiration
+          sustainablelobster.legacy_windows.win_user:
+            name: '{{ primary }}'
+            account_expires: never
+          diff: true
+          register: expiration_cleared
+
+        - name: Repeat the account that never expires
+          sustainablelobster.legacy_windows.win_user:
+            name: '{{ primary }}'
+            account_expires: never
+          register: expiration_clear_repeat
+
+        - name: Inspect the removed account expiration
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - '{{ user_fixture_code }}'
+              - inspect
+              - '{{ prefix }}'
+          register: expiration_actual
+          changed_when: false
+
+        - name: Verify finite expiry repetition preview and cleared state
+          ansible.builtin.assert:
+            that:
+              - expiration_set.changed
+              - not expiration_repeat.changed
+              - finite.account_expires > 0
+              - finite.account_expires < 4294967295
+              - expiration_preview.changed
+              - expiration_preview.diff.after.account_expires == 'never'
+              - >-
+                before_expiration_preview.stdout | from_json ==
+                after_expiration_preview.stdout | from_json
+              - expiration_cleared.changed
+              - expiration_cleared.diff.after.account_expires == 'never'
+              - not expiration_clear_repeat.changed
+              - actual.account_expires == 4294967295
+              - not actual.password_expired
+          vars:
+            finite: >-
+              {{ (before_expiration_preview.stdout | from_json).users.main
+              }}
+            actual: '{{ (expiration_actual.stdout | from_json).users.main }}'
+
+        - name: Create a second owned user for partial-failure recovery
+          sustainablelobster.legacy_windows.win_user:
+            name: '{{ partial }}'
+            password: '{{ user_passwords[0] }}'
+          no_log: true
+
+        - name: Exercise missing-group resolution after a scalar commit
+          block:
+            - name: Change the full name before resolving all requested groups
+              sustainablelobster.legacy_windows.win_user:
+                name: '{{ partial }}'
+                fullname: Committed before lookup
+                groups: ['{{ group_one }}', '{{ prefix }}miss']
+              register: partial_failure
+            - name: Reject unexpected missing-group success
+              ansible.builtin.fail:
+                msg: The reserved missing group unexpectedly resolved
+          rescue:
+            - name: Verify the missing-group failure
+              ansible.builtin.assert:
+                that:
+                  - partial_failure.failed
+                  - partial_failure.changed
+                  - >-
+                    partial_failure.msg ==
+                    "group '" + prefix + "miss' not found"
+
+        - name: Inspect the committed full name and unchanged membership
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - '{{ user_fixture_code }}'
+              - inspect
+              - '{{ prefix }}'
+          register: partial_actual
+          changed_when: false
+
+        - name: Recover the second user with a valid owned group
+          sustainablelobster.legacy_windows.win_user:
+            name: '{{ partial }}'
+            fullname: Recovered user
+            groups: ['{{ group_one }}']
+          register: recovered
+
+        - name: Repeat the recovered account state
+          sustainablelobster.legacy_windows.win_user:
+            name: '{{ partial }}'
+            fullname: Recovered user
+            groups: ['{{ group_one }}']
+          register: recovery_repeat
+
+        - name: Inspect both users before argument-validation failures
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - '{{ user_fixture_code }}'
+              - inspect
+              - '{{ prefix }}'
+          register: before_validation
+          changed_when: false
+
+        - name: Verify persisted partial changes and recovery
+          ansible.builtin.assert:
+            that:
+              - failed_actual.fullname == 'Committed before lookup'
+              - failed_actual.groups == []
+              - recovered.changed
+              - not recovery_repeat.changed
+              - recovered.sid == failed_actual.sid
+              - actual.fullname == 'Recovered user'
+              - actual.groups == [group_one]
+          vars:
+            failed_actual: >-
+              {{ (partial_actual.stdout | from_json).users.part }}
+            actual: '{{ (before_validation.stdout | from_json).users.part }}'
+
+        - name: Exercise the prohibited lock request
+          block:
+            - name: Reject account locking before writing another property
+              sustainablelobster.legacy_windows.win_user:
+                name: '{{ primary }}'
+                account_locked: true
+                fullname: Must not be written
+              register: lock_failure
+            - name: Reject unexpected lock-request success
+              ansible.builtin.fail:
+                msg: The prohibited lock request unexpectedly succeeded
+          rescue:
+            - name: Verify lock validation failed without a reported change
+              ansible.builtin.assert:
+                that:
+                  - lock_failure.failed
+                  - not lock_failure.changed
+                  - "\"account_locked must be set to 'no'\" in lock_failure.msg"
+
+        - name: Exercise malformed expiration on a read-only query
+          block:
+            - name: Reject the malformed expiration before querying
+              sustainablelobster.legacy_windows.win_user:
+                name: '{{ primary }}'
+                state: query
+                account_expires: invalid
+              register: date_failure
+            - name: Reject unexpected malformed-date success
+              ansible.builtin.fail:
+                msg: The malformed expiration unexpectedly succeeded
+          rescue:
+            - name: Verify date validation failed without a reported change
+              ansible.builtin.assert:
+                that:
+                  - date_failure.failed
+                  - not date_failure.changed
+                  - "'Failed to parse account_expires' in date_failure.msg"
+
+        - name: Inspect users after the expected validation failures
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - '{{ user_fixture_code }}'
+              - inspect
+              - '{{ prefix }}'
+          register: after_validation
+          changed_when: false
+
+        - name: Verify validation preserved users and fixture group identities
+          ansible.builtin.assert:
+            that:
+              - >-
+                (before_validation.stdout | from_json) ==
+                (after_validation.stdout | from_json)
+              - (after_validation.stdout | from_json).groups == prepared_groups
+
+        - name: Delete both owned users
+          sustainablelobster.legacy_windows.win_user:
+            name: '{{ item }}'
+            state: absent
+          loop: ['{{ primary }}', '{{ partial }}']
+          diff: true
+          register: deleted
+
+        - name: Repeat deletion of the absent users
+          sustainablelobster.legacy_windows.win_user:
+            name: '{{ item }}'
+            state: absent
+          loop: ['{{ primary }}', '{{ partial }}']
+          register: delete_repeated
+
+        - name: Inspect account absence after deletion
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - '{{ user_fixture_code }}'
+              - inspect
+              - '{{ prefix }}'
+          register: deletion_actual
+          changed_when: false
+
+        - name: Verify deletion results and repeated absence
+          ansible.builtin.assert:
+            that:
+              - deleted.results[item].changed
+              - deleted.results[item].state == 'absent'
+              - deleted.results[item].sid is undefined
+              - deleted.results[item].diff.after == ''
+              - not delete_repeated.results[item].changed
+              - delete_repeated.results[item].state == 'absent'
+              - >-
+                (deletion_actual.stdout | from_json).users ==
+                {'main': none, 'part': none, 'prev': none}
+          loop: [0, 1]
+      always:
+        - name: Remove only reserved users and groups and verify their absence
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - '{{ user_fixture_code }}'
+              - cleanup
+              - '{{ prefix }}'
+          register: cleanup
+
+        - name: Verify all allocated users and groups are absent
+          ansible.builtin.assert:
+            that: (cleanup.stdout | from_json).removed
+
+        - name: Record remaining task directories
+          ansible.builtin.raw: >-
+            cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+            "import glob, json, os, tempfile;
+            print(json.dumps(sorted(glob.glob(os.path.join(tempfile.gettempdir(),
+            'ansible-tmp-*')))))""
+          register: task_directories_after
+          changed_when: false
+          check_mode: false
+
+        - name: Verify successful and failed requests cleaned staged files
+          ansible.builtin.assert:
+            that:
+              - >-
+                (task_directories_before.stdout | from_json) ==
+                (task_directories_after.stdout | from_json)

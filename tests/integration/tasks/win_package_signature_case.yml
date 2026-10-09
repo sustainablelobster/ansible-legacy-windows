@@ -1,0 +1,151 @@
+---
+- name: Establish the exact owned native prerequisite
+  sustainablelobster.legacy_windows.win_command:
+    argv: ['{{ ansible_python_interpreter }}', '-',
+           '{{ package_signature_workspace.path }}',
+           prepare, '{{ package_signature_case.initial }}']
+    stdin: '{{ package_signature_program }}'
+  register: package_signature_before
+  changed_when: false
+  no_log: true
+
+- name: Observe complete native public signature result
+  block:
+    - name: Request native signature behavior  # noqa: args[module]
+      sustainablelobster.legacy_windows.win_package: >-
+        {{ package_signature_case.params }}
+      register: package_signature_native
+      check_mode: '{{ package_signature_case.check | default(false) }}'
+  rescue:
+    - name: Retain the native failure unchanged
+      ansible.builtin.debug:
+        msg: Native signature failure retained.
+
+- name: Observe native complete package and protected state
+  sustainablelobster.legacy_windows.win_command:
+    argv: ['{{ ansible_python_interpreter }}', '-',
+           '{{ package_signature_workspace.path }}', observe]
+    stdin: '{{ package_signature_program }}'
+  register: package_signature_after_native
+  changed_when: false
+  no_log: true
+
+- name: Establish the identical owned source prerequisite
+  when: package_compare | bool
+  sustainablelobster.legacy_windows.win_command:
+    argv: ['{{ ansible_python_interpreter }}', '-',
+           '{{ package_signature_workspace.path }}',
+           prepare, '{{ package_signature_case.initial }}']
+    stdin: '{{ package_signature_program }}'
+  register: package_signature_before_original
+  changed_when: false
+  no_log: true
+
+- name: Observe complete untouched released signature result
+  when: package_compare | bool
+  block:
+    - name: Request original signature behavior
+      ansible.windows.win_package: '{{ package_signature_case.params }}'
+      register: package_signature_original
+      check_mode: '{{ package_signature_case.check | default(false) }}'
+      vars:
+        ansible_shell_type: cmd
+        ansible_remote_tmp: '{{ package_signature_workspace.path }}'
+  rescue:
+    - name: Retain the source failure unchanged
+      ansible.builtin.debug:
+        msg: Original signature failure retained.
+
+- name: Observe source complete package and protected state
+  when: package_compare | bool
+  sustainablelobster.legacy_windows.win_command:
+    argv: ['{{ ansible_python_interpreter }}', '-',
+           '{{ package_signature_workspace.path }}', observe]
+    stdin: '{{ package_signature_program }}'
+  register: package_signature_after_original
+  changed_when: false
+  no_log: true
+
+- name: Retain raw observations before any assertion
+  ansible.builtin.set_fact:
+    package_signature_results: >-
+      {{ package_signature_results + [{'name': package_signature_case.name,
+      'request': package_signature_case.params,
+      'expected': package_signature_case,
+      'native': package_signature_native,
+      'original': package_signature_original | default(none),
+      'before': package_signature_before,
+      'before_original': package_signature_before_original | default(none),
+      'after_native': package_signature_after_native,
+      'after_original': package_signature_after_original | default(none),
+      'validated': false}] }}
+
+- name: Persist raw signature observation
+  ansible.builtin.copy:
+    content: >-
+      {{ {'results': package_signature_results,
+      'journal': package_signature_journal,
+      'setup': package_signature_setup} | to_nice_json }}
+    dest: '{{ package_signature_capture.path }}'
+    mode: '0600'
+  delegate_to: localhost
+  vars: &controller
+    ansible_connection: local
+    ansible_shell_type: sh
+    ansible_python_interpreter: '{{ ansible_playbook_python }}'
+  changed_when: false
+  no_log: true
+
+- name: Require expected native public flags and actual installed bytes
+  vars:
+    after: '{{ package_signature_after_native.stdout | from_json }}'
+    owned_patches: >-
+      {{ after.patches |
+      selectattr("product", "equalto", package_signature_product) | list }}
+  ansible.builtin.assert:
+    that:
+      - >-
+        (package_signature_native is failed) ==
+        (package_signature_case.failed | default(false))
+      - >-
+        package_signature_native.changed ==
+        (package_signature_case.changed | default(false))
+      - not package_signature_native.reboot_required | default(false)
+      - >-
+        after.state ==
+        (-1 if package_signature_case.expected == 'absent' else 5)
+      - owned_patches | length == 0
+      - >-
+        after.outputs | length ==
+        (0 if package_signature_case.expected == 'absent' else 1)
+      - >-
+        package_signature_case.expected == 'absent' or
+        after.outputs['Sample.txt'].bytes.raw_bytes ==
+        ('This is version 1.0' | b64encode)
+
+- name: Compare whole typed source results and literal state
+  when: package_compare | bool
+  vars:
+    native_public: >-
+      {{ package_signature_native | dict2items |
+      rejectattr('key', 'in', ['invocation', 'exception']) | items2dict }}
+    original_public: >-
+      {{ package_signature_original | dict2items |
+      rejectattr('key', 'in', ['invocation', 'exception']) | items2dict }}
+  ansible.builtin.assert:
+    that:
+      - >-
+        (native_public | to_json(sort_keys=true)) ==
+        (original_public | to_json(sort_keys=true))
+      - >-
+        (package_signature_before.stdout | from_json) ==
+        (package_signature_before_original.stdout | from_json)
+      - >-
+        (package_signature_after_native.stdout | from_json) ==
+        (package_signature_after_original.stdout | from_json)
+
+- name: Mark only fully passing signature observations
+  ansible.builtin.set_fact:
+    package_signature_results: >-
+      {{ package_signature_results[:-1] +
+      [package_signature_results[-1] | combine({'validated': true})] }}

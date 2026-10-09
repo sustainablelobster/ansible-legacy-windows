@@ -1,0 +1,21 @@
+---
+# SPDX-License-Identifier: GPL-3.0-or-later
+uri_ftp_length_cases:
+  - name: length_150_unread
+    params:
+      url: ftp://127.0.0.1:2121/length-150.bin
+      status_code: [150]
+  - name: length_150_consumed
+    params:
+      url: ftp://127.0.0.1:2121/length-150.bin
+      return_content: true
+      status_code: [226]
+  - name: length_125_unread
+    params:
+      url: ftp://127.0.0.1:2121/length-125.bin
+      status_code: [125]
+  - name: length_125_consumed
+    params:
+      url: ftp://127.0.0.1:2121/length-125.bin
+      return_content: true
+      status_code: [226]

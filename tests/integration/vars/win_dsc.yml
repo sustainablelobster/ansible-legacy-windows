@@ -1,0 +1,95 @@
+---
+win_dsc_compare: false
+win_dsc_cases:
+  - name: File creation preview
+    check: true
+    changed: true
+    params: {Contents: 'desired λ content', Ensure: Present}
+  - name: File creation
+    changed: true
+    params: {Contents: 'desired λ content', Ensure: Present}
+  - name: File idempotence
+    seed: 'desired λ content'
+    params: {Contents: 'desired λ content', Ensure: Present}
+  - name: File update preview
+    seed: predecessor
+    check: true
+    changed: true
+    params: {Contents: 'desired λ content', Ensure: Present}
+  - name: File update
+    seed: predecessor
+    changed: true
+    params: {Contents: 'desired λ content', Ensure: Present}
+  - name: File removal preview
+    seed: predecessor
+    check: true
+    changed: true
+    params: {Ensure: Absent}
+  - name: File removal
+    seed: predecessor
+    changed: true
+    params: {Ensure: Absent}
+  - name: Missing file removal
+    params: {Ensure: Absent}
+  - name: Directory creation
+    directory: true
+    changed: true
+    params: {Ensure: Present, Type: Directory}
+  - name: Directory idempotence
+    directory: true
+    seed: directory
+    params: {Ensure: Present, Type: Directory}
+  - name: Directory removal
+    directory: true
+    seed: directory
+    changed: true
+    params: {Ensure: Absent, Type: Directory}
+  - name: Copy owned source file
+    changed: true
+    source: true
+    params: {Ensure: Present}
+  - name: Resource not found
+    failed: true
+    params: {resource_name: SustainableLobsterNoSuchResourceProbe}
+  - name: Version not found
+    failed: true
+    params: {module_version: '99.99.99'}
+  - name: Explicit latest preserves released binding failure
+    failed: true
+    params: {module_version: latest}
+  - name: Missing required property
+    destination: false
+    failed: true
+    params: {}
+  - name: Invalid Ensure is delegated to Test
+    failed: true
+    params: {Ensure: invalid-fixture-value}
+  - name: Invalid bool is rejected before Test
+    failed: true
+    params: {Force: invalid-fixture-value}
+  - name: Unknown property is rejected before Test
+    failed: true
+    params: {UnknownFixtureProperty: example}
+  - name: Read-only property is rejected before Test
+    failed: true
+    params: {CreatedDate: '2000-01-01'}
+  - name: Incomplete credential pair
+    failed: true
+    params: {Credential_username: fixture-user}
+  - name: Null optional bool is omitted
+    check: true
+    changed: true
+    params: {Force: null, Ensure: Present}
+  - name: Comma string array
+    directory: true
+    check: true
+    changed: true
+    params: {Type: Directory, Attributes: 'Hidden, System'}
+  - name: List array
+    directory: true
+    check: true
+    changed: true
+    params: {Type: Directory, Attributes: [Hidden, System]}
+win_dsc_program: >-
+  {{ lookup('file', (win_dsc_source_root | default(playbook_dir + '/../..')) +
+     '/tests/integration/fixtures/win_dsc.py') }}

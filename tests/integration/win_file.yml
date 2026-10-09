@@ -1,0 +1,936 @@
+---
+# SPDX-License-Identifier: GPL-3.0-or-later
+- name: Verify file management on Windows Python 3.4.4
+  hosts: legacy_windows
+  gather_facts: false
+  vars:
+    workspace_path: '{{ workspace.stdout | from_json }}'
+    cleanup_code: |
+      import ctypes, os, sys, tempfile
+      root = os.path.abspath(sys.argv[1])
+      assert os.path.basename(root).startswith('legacy-windows-file-')
+      assert os.path.normcase(os.path.dirname(root)) == os.path.normcase(
+          os.path.abspath(tempfile.gettempdir()))
+      kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+      kernel.GetFileAttributesW.argtypes = [ctypes.c_wchar_p]
+      kernel.GetFileAttributesW.restype = ctypes.c_ulong
+      kernel.SetFileAttributesW.argtypes = [ctypes.c_wchar_p, ctypes.c_ulong]
+      kernel.SetFileAttributesW.restype = ctypes.c_int
+      def remove_owned(path):
+          attributes = kernel.GetFileAttributesW(path)
+          if attributes == 0xffffffff:
+              error = ctypes.get_last_error()
+              if error in (2, 3):
+                  return
+              raise ctypes.WinError(error)
+          if attributes & 1:
+              if not kernel.SetFileAttributesW(path, attributes & ~1):
+                  raise ctypes.WinError(ctypes.get_last_error())
+          if attributes & 0x10:
+              if not attributes & 0x400:
+                  for name in os.listdir(path):
+                      remove_owned(os.path.join(path, name))
+              os.rmdir(path)
+          else:
+              os.remove(path)
+      remove_owned(root)
+      assert kernel.GetFileAttributesW(root) == 0xffffffff
+      print('owned workspace removed without following links')
+  tasks:
+    - name: Require the intended runtime and record task directories
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import glob, json, os, sys, tempfile;
+        assert sys.version_info[:3] == (3, 4, 4);
+        print(json.dumps(sorted(glob.glob(os.path.join(tempfile.gettempdir(),
+        'ansible-tmp-*')))))""
+      register: task_directories_before
+      changed_when: false
+      check_mode: false
+
+    - name: Allocate an owned workspace
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import json, tempfile;
+        print(json.dumps(tempfile.mkdtemp(prefix='legacy-windows-file-')))""
+      register: workspace
+      changed_when: true
+      check_mode: false
+
+    - name: Exercise file operations inside the owned workspace
+      block:
+        - name: Prepare ordinary files and readonly recursive fixtures
+          # WANT_JSON arguments are verified by the child and result assertions.
+          sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - |
+                import ctypes, json, os, sys
+                root = sys.argv[1]
+                assert os.path.basename(root).startswith('legacy-windows-file-')
+                kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+                kernel.SetFileAttributesW.argtypes = [
+                    ctypes.c_wchar_p, ctypes.c_ulong]
+                kernel.SetFileAttributesW.restype = ctypes.c_int
+                for name in ('existing-dir', 'remove-tree/child',
+                             'retained-target'):
+                    os.makedirs(os.path.join(root, name))
+                for name, content in (
+                        ('preserved.txt', b'original'), ('empty.txt', b''),
+                        ('binary.bin', b'abc\x00'),
+                        ('late-zero.bin', b'x' * 8192 + b'\x00'),
+                        ('readonly.txt', b'original readonly file'),
+                        ('partial-time.txt', b'original partial-time file'),
+                        ('remove-tree/child/hidden-readonly.txt', b'remove me'),
+                        ('retained-target/sentinel.txt', b'retained sentinel')):
+                    with open(os.path.join(root, name), 'wb') as stream:
+                        stream.write(content)
+                for name in ('preserved.txt', 'existing-dir',
+                             'partial-time.txt'):
+                    os.utime(os.path.join(root, name), (946684800, 946684800))
+                for name, attributes in (
+                        ('readonly.txt', 1),
+                        ('remove-tree/child/hidden-readonly.txt', 3)):
+                    if not kernel.SetFileAttributesW(
+                            os.path.join(root, name), attributes):
+                        raise ctypes.WinError(ctypes.get_last_error())
+                print(json.dumps({
+                    'symbolic_links': hasattr(kernel, 'CreateSymbolicLinkW')}))
+              - '{{ workspace_path }}'
+          register: fixtures
+
+        - name: Predict creation beneath missing parents
+          # WANT_JSON arguments are verified by these runtime assertions.
+          sustainablelobster.legacy_windows.win_file:  # noqa: args[module]
+            path: '{{ workspace_path }}\check-{{ item }}\child'
+            state: '{{ item }}'
+          loop: [directory, touch]
+          check_mode: true
+          register: predicted_creation
+
+        - name: Create a directory with parents and prefer the canonical path
+          # The unused aliases must not create alternate directories.
+          sustainablelobster.legacy_windows.win_file:  # noqa: args[module]
+            path: '{{ workspace_path }}\created-parent\child'
+            dest: '{{ workspace_path }}\unused-dest'
+            name: '{{ workspace_path }}\unused-name'
+            state: DiReCtOrY
+          register: created_directory
+
+        - name: Repeat directory creation through the destination alias
+          # WANT_JSON arguments are verified by these runtime assertions.
+          sustainablelobster.legacy_windows.win_file:  # noqa: args[module]
+            dest: '{{ workspace_path }}\created-parent\child'
+            name: '{{ workspace_path }}\unused-name'
+            state: directory
+          register: repeated_directory
+
+        - name: Query an existing file through the name alias
+          # WANT_JSON arguments are verified by these runtime assertions.
+          sustainablelobster.legacy_windows.win_file:  # noqa: args[module]
+            name: '{{ workspace_path }}\preserved.txt'
+            state: FiLe
+          register: name_alias
+
+        - name: Accept an existing path with omitted state
+          # The pinned legacy parser ignores unrelated parameters.
+          sustainablelobster.legacy_windows.win_file:  # noqa: args[module]
+            path: '{{ workspace_path }}\existing-dir'
+            ignored_option: value
+          register: omitted_state
+
+        - name: Create an empty file with touch
+          # WANT_JSON arguments are verified by these runtime assertions.
+          sustainablelobster.legacy_windows.win_file:  # noqa: args[module]
+            path: '{{ workspace_path }}\touched.txt'
+            state: touch
+          register: created_file
+
+        - name: Repeat touch with its default current timestamps
+          # A repeated touch reports a timestamp change.
+          sustainablelobster.legacy_windows.win_file:  # noqa: args[module]
+            path: '{{ workspace_path }}\touched.txt'
+            state: touch
+          register: repeated_touch
+
+        - name: Preserve both timestamps on existing files and directories
+          # WANT_JSON arguments are verified by these runtime assertions.
+          sustainablelobster.legacy_windows.win_file:  # noqa: args[module]
+            path: '{{ workspace_path }}\{{ item }}'
+            state: ToUcH
+            access_time: PrEsErVe
+            modification_time: PRESERVE
+          loop: [touched.txt, existing-dir]
+          register: preserved_touch
+
+        - name: Create a child through the original basename option
+          # Copy-style basename handling must stay within the owned directory.
+          sustainablelobster.legacy_windows.win_file:  # noqa: args[module]
+            path: '{{ workspace_path }}\created-parent\child'
+            state: touch
+            _original_basename: Café 雪 [x].txt
+            access_time: preserve
+            modification_time: preserve
+          register: basename_file
+
+        - name: Ignore timestamp updates on existing non-touch objects
+          # Upstream file and directory state both ignore these timestamps.
+          sustainablelobster.legacy_windows.win_file:  # noqa: args[module]
+            path: '{{ workspace_path }}\{{ item.path }}'
+            state: '{{ item.state }}'
+            access_time: '2020-02-03 04:05:06'
+            modification_time: '2021-03-04 05:06:07'
+          loop:
+            - {path: preserved.txt, state: file}
+            - {path: existing-dir, state: directory}
+          register: ignored_timestamps
+
+        - name: Verify creation, preservation, and the ordinary return shape
+          ansible.builtin.assert:
+            that:
+              - created_directory is changed
+              - repeated_directory is not changed
+              - name_alias is not changed
+              - omitted_state is not changed
+              - created_file is changed
+              - repeated_touch is changed
+              - basename_file is changed
+              - created_file.path is not defined
+              - created_file.state is not defined
+              - preserved_touch.results | select('changed') | list | length == 0
+              - >-
+                ignored_timestamps.results | select('changed') | list
+                | length == 0
+              - >-
+                predicted_creation.results | select('changed') | list
+                | length == 2
+
+        - name: Inspect preserved objects and check-mode non-mutation
+          # Native inspection is independent of the file payload's helpers.
+          sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - |
+                import os, sys
+                root = sys.argv[1]
+                for name in ('check-directory', 'check-touch',
+                             'unused-dest', 'unused-name'):
+                    assert not os.path.exists(os.path.join(root, name)), name
+                assert os.path.isdir(os.path.join(root, 'created-parent/child'))
+                for name in ('touched.txt',
+                             'created-parent/child/Café 雪 [x].txt'):
+                    assert os.path.isfile(os.path.join(root, name))
+                    assert os.path.getsize(os.path.join(root, name)) == 0
+                for name in ('preserved.txt', 'existing-dir'):
+                    observed = os.stat(os.path.join(root, name))
+                    assert observed.st_atime == 946684800, observed
+                    assert observed.st_mtime == 946684800, observed
+                print('creation, preservation, and check mode verified')
+              - '{{ workspace_path }}'
+          changed_when: false
+
+        - name: Set exact custom timestamps on a file and directory
+          # Seven fractional digits must survive the native file-time writes.
+          sustainablelobster.legacy_windows.win_file:  # noqa: args[module]
+            path: '{{ workspace_path }}\{{ item }}'
+            state: touch
+            access_time: '03/02/2020 04:05:06.1234567'
+            access_time_format: dd/MM/yyyy HH:mm:ss.fffffff
+            modification_time: '04/03/2021 05:06:07.7654321'
+            modification_time_format: dd/MM/yyyy HH:mm:ss.fffffff
+          loop: [touched.txt, existing-dir]
+          register: custom_timestamps
+
+        - name: Repeat identical timestamps with the round-trip format
+          # The round-trip form without an offset denotes the same local time.
+          sustainablelobster.legacy_windows.win_file:  # noqa: args[module]
+            path: '{{ workspace_path }}\{{ item }}'
+            state: touch
+            access_time: '2020-02-03T04:05:06.1234567'
+            access_time_format: o
+            modification_time: '2021-03-04T05:06:07.7654321'
+            modification_time_format: o
+          loop: [touched.txt, existing-dir]
+          register: repeated_timestamps
+
+        - name: Predict a timestamp change without applying it
+          # Native inspection below verifies these WANT_JSON arguments.
+          sustainablelobster.legacy_windows.win_file:  # noqa: args[module]
+            path: '{{ workspace_path }}\touched.txt'
+            state: touch
+            access_time: preserve
+            modification_time: '2022-01-01 00:00:00'
+          check_mode: true
+          register: predicted_timestamp
+
+        - name: Set timestamps while creating a directory
+          # Existing directories ignore these options but new ones apply them.
+          sustainablelobster.legacy_windows.win_file:  # noqa: args[module]
+            path: '{{ workspace_path }}\fixed-directory'
+            state: directory
+            access_time: '2020-02-03T04:05:06.1234567'
+            access_time_format: o
+            modification_time: '2021-03-04T05:06:07.7654321'
+            modification_time_format: o
+          register: fixed_directory
+
+        - name: Verify exact timestamp results and idempotence
+          ansible.builtin.assert:
+            that:
+              - >-
+                custom_timestamps.results | select('changed') | list
+                | length == 2
+              - >-
+                repeated_timestamps.results | select('changed') | list
+                | length == 0
+              - predicted_timestamp is changed
+              - fixed_directory is changed
+
+        - name: Inspect all seven fractional digits without reading file data
+          # Integer FILETIMEs expose all fractions without float rounding.
+          sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - |
+                import ctypes, os, sys, time
+                class Attributes(ctypes.Structure):
+                    _fields_ = [(name, ctypes.c_uint32) for name in (
+                        'attributes', 'created_low', 'created_high',
+                        'access_low', 'access_high', 'write_low', 'write_high',
+                        'size_high', 'size_low')]
+                kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+                kernel.GetFileAttributesExW.argtypes = [
+                    ctypes.c_wchar_p, ctypes.c_int, ctypes.POINTER(Attributes)]
+                kernel.GetFileAttributesExW.restype = ctypes.c_int
+                access = (int(time.mktime((2020, 2, 3, 4, 5, 6, 0, 0, -1)))
+                          + 11644473600) * 10000000 + 1234567
+                modification = (
+                    int(time.mktime((2021, 3, 4, 5, 6, 7, 0, 0, -1)))
+                    + 11644473600) * 10000000 + 7654321
+                for name in ('touched.txt', 'existing-dir', 'fixed-directory'):
+                    data = Attributes()
+                    if not kernel.GetFileAttributesExW(
+                            os.path.join(sys.argv[1], name), 0,
+                            ctypes.byref(data)):
+                        raise ctypes.WinError(ctypes.get_last_error())
+                    assert data.access_low + (data.access_high << 32) == access
+                    assert (data.write_low + (data.write_high << 32)
+                            == modification)
+                print('exact file and directory timestamps verified')
+              - '{{ workspace_path }}'
+          changed_when: false
+
+        - name: Probe binary prefixes even when diff peek is false
+          # A present false value enables the probe and short-circuits absence.
+          sustainablelobster.legacy_windows.win_file:  # noqa: args[module]
+            path: '{{ workspace_path }}\{{ item.path }}'
+            state: absent
+            _diff_peek: false
+          loop:
+            - {path: binary.bin, binary: true, state: file}
+            - {path: late-zero.bin, binary: false, state: file}
+            - {path: empty.txt, binary: false, state: file}
+            - {path: existing-dir, binary: false, state: file}
+            - {path: missing.txt, binary: false, state: absent}
+          register: peek_results
+
+        - name: Verify the binary read limit and pinned peek return keys
+          ansible.builtin.assert:
+            that:
+              - item is not changed
+              - not item.change
+              - item.appears_binary == item.item.binary
+              - item.state == item.item.state
+              - item.path | win_dirname == workspace_path
+              - item.path | win_basename == item.item.path
+          loop: '{{ peek_results.results }}'
+          loop_control:
+            label: '{{ item.item.path }}'
+
+        - name: Verify missing-file failures in both execution modes
+          block:
+            - name: Reject state file for a missing path
+              # These requests deliberately exercise the recorded failure.
+              sustainablelobster.legacy_windows.win_file:  # noqa: args[module]
+                path: '{{ workspace_path }}\missing-{{ item }}.txt'
+                state: file
+              check_mode: '{{ item }}'
+              loop: [false, true]
+              register: missing_files
+
+            - name: Reject unexpected success for a missing file
+              ansible.builtin.fail:
+                msg: State file unexpectedly created a missing file
+          rescue:
+            - name: Verify both missing-file failures leave the target unchanged
+              ansible.builtin.assert:
+                that:
+                  - missing_files.results | length == 2
+                  - item is failed
+                  - item is not changed
+                  - item.msg.endswith(' will not be created')
+              loop: '{{ missing_files.results }}'
+
+        - name: Verify existing object types are enforced
+          block:
+            - name: Reject file and directory type mismatches
+              # These requests deliberately exercise the recorded failure.
+              sustainablelobster.legacy_windows.win_file:  # noqa: args[module]
+                path: '{{ workspace_path }}\{{ item.path }}'
+                state: '{{ item.state }}'
+              loop:
+                - {path: preserved.txt, state: directory}
+                - {path: existing-dir, state: file}
+              register: wrong_types
+
+            - name: Reject unexpected type conversion
+              ansible.builtin.fail:
+                msg: A file or directory was unexpectedly replaced
+          rescue:
+            - name: Verify type errors report the requested type
+              ansible.builtin.assert:
+                that:
+                  - item is failed
+                  - item is not changed
+                  - item.msg.endswith(' is not a ' ~ item.item.state)
+              loop: '{{ wrong_types.results }}'
+
+        - name: Verify validation occurs before removal and probing
+          block:
+            - name: Reject invalid states and timestamps before mutation
+              # Every case targets an existing file that must survive.
+              sustainablelobster.legacy_windows.win_file:  # noqa: args[module]
+                path: '{{ workspace_path }}\preserved.txt'
+                state: '{{ item.state | default("absent") }}'
+                access_time: '{{ item.access | default("preserve") }}'
+                modification_time: >-
+                  {{ item.modification | default("preserve") }}
+                _diff_peek: '{{ item.peek | default(omit) }}'
+              check_mode: '{{ item.check | default(false) }}'
+              loop:
+                - {access: invalid, message: "Invalid access_time 'invalid'"}
+                - access: invalid
+                  check: true
+                  message: "Invalid access_time 'invalid'"
+                - access: invalid
+                  peek: false
+                  message: "Invalid access_time 'invalid'"
+                - modification: invalid
+                  message: "Invalid modification_time 'invalid'"
+                - state: false
+                  message: 'state must be one of:'
+                - state: null
+                  message: 'state must be one of:'
+              register: invalid_parameters
+
+            - name: Reject unexpectedly accepted invalid parameters
+              ansible.builtin.fail:
+                msg: Invalid state or timestamp arguments were accepted
+          rescue:
+            - name: Verify validation failures do not claim mutations
+              ansible.builtin.assert:
+                that:
+                  - invalid_parameters.results | length == 6
+                  - item is failed
+                  - item is not changed
+                  - item.msg.startswith(item.item.message)
+              loop: '{{ invalid_parameters.results }}'
+
+        - name: Verify touch does not create missing parents
+          block:
+            - name: Attempt touch below a missing parent
+              # Check mode predicted this without executing it earlier.
+              sustainablelobster.legacy_windows.win_file:  # noqa: args[module]
+                path: '{{ workspace_path }}\check-touch\child'
+                state: touch
+              register: missing_parent
+
+            - name: Reject unexpected parent creation
+              ansible.builtin.fail:
+                msg: Touch unexpectedly created its missing parent
+          rescue:
+            - name: Verify the failed creation has no reported mutation
+              ansible.builtin.assert:
+                that:
+                  - missing_parent is failed
+                  - missing_parent is not changed
+
+        - name: Predict a readonly timestamp update
+          # The readonly write failure is deferred until an actual update.
+          sustainablelobster.legacy_windows.win_file:  # noqa: args[module]
+            path: '{{ workspace_path }}\readonly.txt'
+            state: touch
+            access_time: preserve
+            modification_time: '2020-02-03 04:05:06'
+          check_mode: true
+          register: readonly_check
+
+        - name: Verify the readonly timestamp failure
+          block:
+            - name: Attempt the readonly timestamp update
+              # This deliberately invalid write is asserted in rescue.
+              sustainablelobster.legacy_windows.win_file:  # noqa: args[module]
+                path: '{{ workspace_path }}\readonly.txt'
+                state: touch
+                access_time: preserve
+                modification_time: '2020-02-03 04:05:06'
+              register: readonly_failure
+
+            - name: Reject an unexpected readonly write
+              ansible.builtin.fail:
+                msg: A readonly file unexpectedly accepted timestamp changes
+          rescue:
+            - name: Verify readonly failure and check-mode prediction
+              ansible.builtin.assert:
+                that:
+                  - readonly_check is changed
+                  - readonly_failure is failed
+                  - readonly_failure is not changed
+                  - >-
+                    readonly_failure.msg.startswith(
+                    'Failed to update timestamps on ')
+                  - "'5' in readonly_failure.msg"
+
+        - name: Confirm failure preserved the attribute then allow recovery
+          # Only the owned fixture's readonly flag is cleared.
+          sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - |
+                import ctypes, os, sys
+                kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+                kernel.GetFileAttributesW.argtypes = [ctypes.c_wchar_p]
+                kernel.GetFileAttributesW.restype = ctypes.c_ulong
+                kernel.SetFileAttributesW.argtypes = [
+                    ctypes.c_wchar_p, ctypes.c_ulong]
+                kernel.SetFileAttributesW.restype = ctypes.c_int
+                path = os.path.join(sys.argv[1], 'readonly.txt')
+                attributes = kernel.GetFileAttributesW(path)
+                assert attributes != 0xffffffff and attributes & 1
+                if not kernel.SetFileAttributesW(path, attributes & ~1):
+                    raise ctypes.WinError(ctypes.get_last_error())
+                assert os.path.isfile(
+                    os.path.join(sys.argv[1], 'preserved.txt'))
+                assert not os.path.exists(
+                    os.path.join(sys.argv[1], 'check-touch'))
+              - '{{ workspace_path }}'
+
+        - name: Recover the timestamp update and verify repetition
+          # Recovery must work in a later independent module invocation.
+          sustainablelobster.legacy_windows.win_file:  # noqa: args[module]
+            path: '{{ workspace_path }}\readonly.txt'
+            state: touch
+            access_time: preserve
+            modification_time: '2020-02-03 04:05:06'
+          loop: [first, repeated]
+          register: recovered_timestamps
+
+        - name: Verify timestamp recovery is idempotent
+          ansible.builtin.assert:
+            that:
+              - recovered_timestamps.results[0] is changed
+              - recovered_timestamps.results[1] is not changed
+
+        - name: Predict timestamps earlier than the native file-time epoch
+          # Parsing accepts this date; an actual filesystem setter rejects it.
+          sustainablelobster.legacy_windows.win_file:  # noqa: args[module]
+            path: '{{ workspace_path }}\{{ item.path }}'
+            state: '{{ item.state }}'
+            access_time: '1500-01-01 00:00:00'
+            modification_time: '2020-02-03 04:05:06'
+          loop:
+            - {path: partial-time.txt, state: touch}
+            - {path: partial-time-new.txt, state: touch}
+            - {path: partial-time-directory, state: directory}
+          check_mode: true
+          register: predicted_partial_times
+
+        - name: Verify the predictions neither create nor update objects
+          # Native inspection checks missing paths and preserved timestamps.
+          sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - |
+                import os, sys
+                root = sys.argv[1]
+                for name in ('partial-time-new.txt', 'partial-time-directory'):
+                    assert not os.path.exists(os.path.join(root, name))
+                existing = os.stat(os.path.join(root, 'partial-time.txt'))
+                assert existing.st_atime == 946684800
+                assert existing.st_mtime == 946684800
+              - '{{ workspace_path }}'
+          changed_when: false
+
+        - name: Verify a later timestamp failure preserves the earlier write
+          block:
+            - name: Apply modification time before an invalid native access time
+              # Failure flags distinguish existing objects from new creations.
+              sustainablelobster.legacy_windows.win_file:  # noqa: args[module]
+                path: '{{ workspace_path }}\{{ item.path }}'
+                state: '{{ item.state }}'
+                access_time: '1500-01-01 00:00:00'
+                modification_time: '2020-02-03 04:05:06'
+              loop:
+                - {path: partial-time.txt, state: touch, created: false}
+                - {path: partial-time-new.txt, state: touch, created: true}
+                - path: partial-time-directory
+                  state: directory
+                  created: true
+              register: partial_failures
+
+            - name: Reject unexpected success for a pre-epoch file time
+              ansible.builtin.fail:
+                msg: A native setter unexpectedly accepted a timestamp in 1500
+          rescue:
+            - name: Verify the recorded partial-failure change flags
+              ansible.builtin.assert:
+                that:
+                  - >-
+                    predicted_partial_times.results | select('changed') | list
+                    | length == 3
+                  - partial_failures.results | length == 3
+                  - item is failed
+                  - item.changed == item.item.created
+                  - >-
+                    item.msg.startswith('Failed to update timestamps on ')
+                  - "'between 1601 and 9999' in item.msg"
+              loop: '{{ partial_failures.results }}'
+
+        - name: Inspect the exact modification time after partial failures
+          # Independent attribute queries expose each successful first write.
+          sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - |
+                import ctypes, os, sys, time
+                class Attributes(ctypes.Structure):
+                    _fields_ = [(name, ctypes.c_uint32) for name in (
+                        'attributes', 'created_low', 'created_high',
+                        'access_low', 'access_high', 'write_low', 'write_high',
+                        'size_high', 'size_low')]
+                kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+                kernel.GetFileAttributesExW.argtypes = [
+                    ctypes.c_wchar_p, ctypes.c_int, ctypes.POINTER(Attributes)]
+                kernel.GetFileAttributesExW.restype = ctypes.c_int
+                modification = (
+                    int(time.mktime((2020, 2, 3, 4, 5, 6, 0, 0, -1)))
+                    + 11644473600) * 10000000
+                original_access = (946684800 + 11644473600) * 10000000
+                for name, directory in (
+                        ('partial-time.txt', False),
+                        ('partial-time-new.txt', False),
+                        ('partial-time-directory', True)):
+                    data = Attributes()
+                    if not kernel.GetFileAttributesExW(
+                            os.path.join(sys.argv[1], name), 0,
+                            ctypes.byref(data)):
+                        raise ctypes.WinError(ctypes.get_last_error())
+                    assert bool(data.attributes & 0x10) == directory
+                    assert (data.write_low + (data.write_high << 32)
+                            == modification)
+                    access = data.access_low + (data.access_high << 32)
+                    if name == 'partial-time.txt':
+                        assert access == original_access
+                    else:
+                        assert access > original_access
+                print('partial writes and retained access times verified')
+              - '{{ workspace_path }}'
+          changed_when: false
+
+        - name: Recover all partially updated objects with a valid access time
+          # Touch applies timestamps to the already created directory.
+          sustainablelobster.legacy_windows.win_file:  # noqa: args[module]
+            path: '{{ workspace_path }}\{{ item }}'
+            state: touch
+            access_time: '2021-03-04 05:06:07'
+            modification_time: '2020-02-03 04:05:06'
+          loop: [partial-time.txt, partial-time-new.txt, partial-time-directory]
+          register: recovered_partial_times
+
+        - name: Repeat valid timestamps after partial-failure recovery
+          # A second independent invocation must see the completed state.
+          sustainablelobster.legacy_windows.win_file:  # noqa: args[module]
+            path: '{{ workspace_path }}\{{ item }}'
+            state: touch
+            access_time: '2021-03-04 05:06:07'
+            modification_time: '2020-02-03 04:05:06'
+          loop: [partial-time.txt, partial-time-new.txt, partial-time-directory]
+          register: repeated_partial_times
+
+        - name: Verify partial-failure recovery and idempotence
+          ansible.builtin.assert:
+            that:
+              - >-
+                recovered_partial_times.results | select('changed') | list
+                | length == 3
+              - >-
+                repeated_partial_times.results | select('changed') | list
+                | length == 0
+
+        - name: Predict recursive removal of hidden readonly contents
+          # Check mode must preserve the complete tree and its attributes.
+          sustainablelobster.legacy_windows.win_file:  # noqa: args[module]
+            path: '{{ workspace_path }}\remove-tree'
+            state: absent
+          check_mode: true
+          register: predicted_removal
+
+        - name: Inspect the tree after predicted removal
+          # Native inspection verifies the readonly and hidden flags remain set.
+          sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - |
+                import ctypes, os, sys
+                kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+                kernel.GetFileAttributesW.argtypes = [ctypes.c_wchar_p]
+                kernel.GetFileAttributesW.restype = ctypes.c_ulong
+                attributes = kernel.GetFileAttributesW(os.path.join(
+                    sys.argv[1], 'remove-tree/child/hidden-readonly.txt'))
+                assert attributes != 0xffffffff and attributes & 3 == 3
+              - '{{ workspace_path }}'
+          changed_when: false
+
+        - name: Remove the tree recursively and repeat absence
+          # Recursive removal must handle hidden readonly ordinary files.
+          sustainablelobster.legacy_windows.win_file:  # noqa: args[module]
+            path: '{{ workspace_path }}\remove-tree'
+            state: absent
+          loop: [first, repeated]
+          register: removed_tree
+
+        - name: Verify recursive removal and repeated absence
+          ansible.builtin.assert:
+            that:
+              - predicted_removal is changed
+              - removed_tree.results[0] is changed
+              - removed_tree.results[1] is not changed
+
+        - name: Create live and broken junctions with the native API
+          # Junction targets and links all remain inside the owned workspace.
+          sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - |
+                import ctypes, os, struct, sys
+                root = sys.argv[1]
+                kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+                kernel.CreateFileW.argtypes = [
+                    ctypes.c_wchar_p, ctypes.c_ulong, ctypes.c_ulong,
+                    ctypes.c_void_p, ctypes.c_ulong, ctypes.c_ulong,
+                    ctypes.c_void_p]
+                kernel.CreateFileW.restype = ctypes.c_void_p
+                kernel.CloseHandle.argtypes = [ctypes.c_void_p]
+                kernel.CloseHandle.restype = ctypes.c_int
+                kernel.DeviceIoControl.argtypes = [
+                    ctypes.c_void_p, ctypes.c_ulong, ctypes.c_void_p,
+                    ctypes.c_ulong, ctypes.c_void_p, ctypes.c_ulong,
+                    ctypes.POINTER(ctypes.c_ulong), ctypes.c_void_p]
+                kernel.DeviceIoControl.restype = ctypes.c_int
+                kernel.SetFileAttributesW.argtypes = [
+                    ctypes.c_wchar_p, ctypes.c_ulong]
+                kernel.SetFileAttributesW.restype = ctypes.c_int
+                os.mkdir(os.path.join(root, 'junction-tree'))
+                # Older Windows requires a live target when setting a junction.
+                # Remove it only after both junctions have been created.
+                os.mkdir(os.path.join(root, 'missing-target'))
+                for name, target in (
+                        ('live-junction', 'retained-target'),
+                        ('broken-junction', 'missing-target'),
+                        ('junction-tree/live', 'retained-target'),
+                        ('junction-tree/broken', 'missing-target'),
+                        ('junction-tree/hidden', 'retained-target')):
+                    path = os.path.join(root, name)
+                    target = os.path.join(root, target)
+                    os.mkdir(path)
+                    handle = kernel.CreateFileW(
+                        path, 0x40000000, 0, None, 3, 0x02200000, None)
+                    assert handle != ctypes.c_void_p(-1).value
+                    try:
+                        substitute = ('\\??\\' + target).encode('utf-16-le')
+                        printable = target.encode('utf-16-le')
+                        names = (substitute + b'\x00\x00'
+                                 + printable + b'\x00\x00')
+                        data = struct.pack(
+                            '<IHHHHHH', 0xA0000003, 8 + len(names), 0, 0,
+                            len(substitute), len(substitute) + 2,
+                            len(printable)) + names
+                        received = ctypes.c_ulong()
+                        buffer = ctypes.create_string_buffer(data)
+                        if not kernel.DeviceIoControl(
+                                handle, 0x900a4, buffer, len(data), None, 0,
+                                ctypes.byref(received), None):
+                            raise ctypes.WinError(ctypes.get_last_error())
+                    finally:
+                        assert kernel.CloseHandle(handle)
+                os.rmdir(os.path.join(root, 'missing-target'))
+                if not kernel.SetFileAttributesW(
+                        os.path.join(root, 'junction-tree/hidden'), 2):
+                    raise ctypes.WinError(ctypes.get_last_error())
+              - '{{ workspace_path }}'
+
+        - name: Predict removal of junctions without following their targets
+          # Both standalone and recursive paths must preserve reparse points.
+          sustainablelobster.legacy_windows.win_file:  # noqa: args[module]
+            path: '{{ workspace_path }}\{{ item }}'
+            state: absent
+          loop: [live-junction, broken-junction, junction-tree]
+          check_mode: true
+          register: predicted_junctions
+
+        - name: Confirm check mode retained live and broken junctions
+          # Attribute queries inspect reparse points, including broken links.
+          sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - |
+                import ctypes, os, sys
+                kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+                kernel.GetFileAttributesW.argtypes = [ctypes.c_wchar_p]
+                kernel.GetFileAttributesW.restype = ctypes.c_ulong
+                for name in ('live-junction', 'broken-junction',
+                             'junction-tree/live', 'junction-tree/broken',
+                             'junction-tree/hidden'):
+                    attributes = kernel.GetFileAttributesW(
+                        os.path.join(sys.argv[1], name))
+                    assert attributes != 0xffffffff and attributes & 0x400
+              - '{{ workspace_path }}'
+          changed_when: false
+
+        - name: Remove standalone junctions and a tree containing junctions
+          # The retained target must survive both kinds of removal.
+          sustainablelobster.legacy_windows.win_file:  # noqa: args[module]
+            path: '{{ workspace_path }}\{{ item }}'
+            state: absent
+          loop: [live-junction, broken-junction, junction-tree]
+          register: removed_junctions
+
+        - name: Create symbolic links where the native API is available
+          # The missing API on older targets must cause an asserted skip.
+          sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - |
+                import ctypes, os, sys
+                root = sys.argv[1]
+                kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+                kernel.CreateSymbolicLinkW.argtypes = [
+                    ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_ulong]
+                kernel.CreateSymbolicLinkW.restype = ctypes.c_ubyte
+                os.mkdir(os.path.join(root, 'symbolic-tree'))
+                for name, target, flags in (
+                        ('file-link', 'retained-target/sentinel.txt', 0),
+                        ('dir-link', 'retained-target', 1),
+                        ('broken-file-link', 'missing-file', 0),
+                        ('broken-dir-link', 'missing-target', 1),
+                        ('symbolic-tree/live', 'retained-target', 1),
+                        ('symbolic-tree/broken', 'missing-target', 1)):
+                    if not kernel.CreateSymbolicLinkW(
+                            os.path.join(root, name),
+                            os.path.join(root, target),
+                            flags):
+                        raise ctypes.WinError(ctypes.get_last_error())
+              - '{{ workspace_path }}'
+          when: (fixtures.stdout | from_json).symbolic_links
+          register: symbolic_setup
+
+        - name: Remove live and broken symbolic links and their containing tree
+          # WANT_JSON arguments are verified by native target inspection below.
+          sustainablelobster.legacy_windows.win_file:  # noqa: args[module]
+            path: '{{ workspace_path }}\{{ item }}'
+            state: absent
+          loop:
+            - file-link
+            - dir-link
+            - broken-file-link
+            - broken-dir-link
+            - symbolic-tree
+          when: (fixtures.stdout | from_json).symbolic_links
+          register: removed_symbolic
+
+        - name: Verify link results including explicit old-target skips
+          ansible.builtin.assert:
+            that:
+              - >-
+                predicted_junctions.results | select('changed') | list
+                | length == 3
+              - >-
+                removed_junctions.results | select('changed') | list
+                | length == 3
+              - >-
+                ((fixtures.stdout | from_json).symbolic_links and
+                 symbolic_setup is changed and
+                 removed_symbolic.results | select('changed') | list
+                 | length == 5)
+                or
+                (not (fixtures.stdout | from_json).symbolic_links and
+                 symbolic_setup is skipped and
+                 removed_symbolic.results | select('skipped') | list
+                 | length == 5)
+
+        - name: Inspect absence and retained targets after link removal
+          # The sentinel detects accidental traversal during removal.
+          sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - |
+                import ctypes, os, sys
+                root = sys.argv[1]
+                kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+                kernel.GetFileAttributesW.argtypes = [ctypes.c_wchar_p]
+                kernel.GetFileAttributesW.restype = ctypes.c_ulong
+                for name in ('remove-tree', 'live-junction', 'broken-junction',
+                             'junction-tree', 'file-link', 'dir-link',
+                             'broken-file-link', 'broken-dir-link',
+                             'symbolic-tree', 'check-directory', 'check-touch'):
+                    assert kernel.GetFileAttributesW(
+                        os.path.join(root, name)) == 0xffffffff, name
+                    assert ctypes.get_last_error() in (2, 3), name
+                with open(os.path.join(root, 'retained-target/sentinel.txt'),
+                          'rb') as stream:
+                    assert stream.read() == b'retained sentinel'
+                with open(os.path.join(root, 'preserved.txt'), 'rb') as stream:
+                    assert stream.read() == b'original'
+                assert os.path.getsize(
+                    os.path.join(root, 'late-zero.bin')) == 8193
+                assert os.path.getsize(os.path.join(root, 'binary.bin')) == 4
+                print('absence, retained content, and binary peek verified')
+              - '{{ workspace_path }}'
+          changed_when: false
+      always:
+        - name: Remove only the owned workspace without following reparse points
+          ansible.builtin.raw: >-
+            cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+            "import base64;
+            exec(base64.b64decode('{{ cleanup_code | b64encode }}'))"
+            "{{ workspace_path }}""
+          changed_when: true
+          check_mode: false
+
+    - name: Record remaining task directories
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import glob, json, os, tempfile;
+        print(json.dumps(sorted(glob.glob(os.path.join(tempfile.gettempdir(),
+        'ansible-tmp-*')))))""
+      register: task_directories_after
+      changed_when: false
+      check_mode: false
+
+    - name: Verify successful and failed tasks removed their staged files
+      ansible.builtin.assert:
+        that:
+          - >-
+            (task_directories_before.stdout | from_json) ==
+            (task_directories_after.stdout | from_json)

@@ -1,0 +1,32 @@
+---
+- name: '{{ owner_case.name }}'
+  # The native WANT_JSON interface is exercised by the assertions below.
+  sustainablelobster.legacy_windows.win_owner:  # noqa: args[module]
+    path: '{{ owner_case.path | default(owner_tree) }}'
+    user: '{{ owner_case.user | default("SYSTEM") }}'
+    recurse: '{{ owner_case.recurse | default(omit) }}'
+  check_mode: '{{ owner_case.check | default(false) }}'
+  register: owner_result
+
+- name: Check public ownership results
+  ansible.builtin.assert:
+    that:
+      - owner_result.changed == owner_case.changed
+      - owner_result.warnings | default([]) == []
+
+- name: Independently verify owners and unchanged permissions and contents
+  sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+    argv:
+      - '{{ ansible_python_interpreter }}'
+      - '-'
+      - '{{ owner_workspace.path }}'
+      - observe
+      - '{{ owner_case.system | to_json }}'
+      - '{{ owner_case.secure_owner | default("SY") }}'
+    stdin: '{{ owner_fixture }}'
+  changed_when: false
+  check_mode: false
+
+- name: Retain registered results for comparison
+  ansible.builtin.set_fact:
+    owner_results: '{{ owner_results | default([]) + [owner_result] }}'

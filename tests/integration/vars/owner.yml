@@ -1,0 +1,93 @@
+---
+owner_tree: '{{ owner_workspace.path }}\tree É '' % ! & [literal]'
+owner_file: "sample 雪 '.txt"
+owner_entries:
+  - '.'
+  - nested
+  - nested\deep
+  - '{{ owner_file }}'
+  - nested\deep\data.bin
+owner_cases:
+  - name: Predict a root owner change
+    check: true
+    changed: true
+    system: []
+  - name: Change only the directory owner
+    changed: true
+    system: ['.']
+  - name: Repeat the directory owner change
+    changed: false
+    system: ['.']
+  - name: Null recursion leaves descendants untouched
+    recurse: null
+    changed: false
+    system: ['.']
+  - name: Predict changes to descendants
+    recurse: true
+    check: true
+    changed: true
+    system: ['.']
+  - name: Change all descendants including hidden directories
+    recurse: true
+    changed: true
+    system: '{{ owner_entries }}'
+  - name: Repeat recursive ownership with a canonical SID
+    user: S-1-5-18
+    recurse: true
+    changed: false
+    system: '{{ owner_entries }}'
+  - name: Confirm recursive ownership in check mode
+    recurse: true
+    check: true
+    changed: false
+    system: '{{ owner_entries }}'
+  - name: Restore only the parent using a local qualified group
+    user: .\Administrators
+    changed: true
+    system: '{{ owner_entries | reject("equalto", ".") | list }}'
+  - name: Predict a file owner change with recursion enabled
+    path: '{{ owner_tree }}\{{ owner_file }}'
+    user: S-1-5-32-544
+    recurse: true
+    check: true
+    changed: true
+    system: '{{ owner_entries | reject("equalto", ".") | list }}'
+  - name: Restore a Unicode file owner without warnings
+    path: '{{ owner_tree }}\{{ owner_file }}'
+    user: S-1-5-32-544
+    recurse: true
+    changed: true
+    system: >-
+      {{ owner_entries | reject("equalto", ".") |
+         reject("equalto", owner_file) | list }}
+  - name: Restore descendants using the computer-qualified group
+    user: '{{ (owner_setup.stdout | from_json).computer }}\Administrators'
+    recurse: true
+    changed: true
+    system: []
+  - name: Repeat recursive restoration
+    user: BUILTIN\Administrators
+    recurse: true
+    changed: false
+    system: []
+  - name: Predict ownership on a SYSTEM-only permission tree
+    path: '{{ owner_workspace.path }}\secure'
+    user: S-1-5-32-544
+    recurse: true
+    check: true
+    changed: true
+    system: []
+  - name: Change ownership on a SYSTEM-only permission tree
+    path: '{{ owner_workspace.path }}\secure'
+    user: S-1-5-32-544
+    recurse: true
+    changed: true
+    system: []
+    secure_owner: BA
+  - name: Repeat ownership on the restricted tree
+    path: '{{ owner_workspace.path }}\secure'
+    user: S-1-5-32-544
+    recurse: true
+    changed: false
+    system: []
+    secure_owner: BA

@@ -1,0 +1,537 @@
+---
+# Copyright 2026 Joe Lustri
+# SPDX-License-Identifier: GPL-3.0-or-later
+- name: Verify reboot prediction and failed native runas credentials
+  tags: [reboot_failure]
+  hosts: legacy_windows
+  gather_facts: false
+  become: false
+  vars:
+    reboot_staging_command: &staging_command >-
+      cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+      "import glob,json,os,sys,tempfile;
+      assert sys.version_info[:3]==(3,4,4);
+      print(json.dumps(sorted(glob.glob(os.path.join(
+      tempfile.gettempdir(),'ansible-tmp-*')))))""
+    reboot_invalid_user: >-
+      RebootAbsent-{{ (reboot_failure_capture.path | hash('sha1'))[:7] }}
+  tasks:
+    - name: Allocate private prediction and credential-failure evidence
+      ansible.builtin.tempfile:
+        state: file
+        path: >-
+          {{ evidence_dir |
+          default(playbook_dir + '/../../tmp/codex/evidence') }}
+        prefix: 'reboot-runas-failure-{{ inventory_hostname }}-'
+        suffix: .json
+      register: reboot_failure_capture
+      delegate_to: localhost
+      become: false
+      vars: &controller
+        ansible_connection: local
+        ansible_shell_type: sh
+        ansible_python_interpreter: '{{ ansible_playbook_python }}'
+        ansible_become: false
+      changed_when: false
+
+    - name: Exercise prediction and rejected logon with final observations
+      block:
+        - name: Require the target runtime and record original staging
+          ansible.builtin.raw: '{{ reboot_staging_command }}'
+          register: reboot_failure_staging_before
+          changed_when: false
+
+        - name: Read the original connection account
+          sustainablelobster.legacy_windows.win_whoami:
+          register: reboot_connection_identity
+          no_log: true
+
+        - name: Read the boot before prediction or failed logon
+          sustainablelobster.legacy_windows.win_reboot_info:
+          register: reboot_failure_boot_before
+
+        - name: Verify that the unique invalid account does not exist
+          sustainablelobster.legacy_windows.win_user:
+            name: '{{ reboot_invalid_user }}'
+            state: query
+          register: reboot_missing_account
+          no_log: true
+
+        - name: Require an absent account before attempting rejected logon
+          ansible.builtin.assert:
+            that: reboot_missing_account.state == 'absent'
+          no_log: true
+
+        - name: Predict reboot without credential validation or target execution
+          sustainablelobster.legacy_windows.win_reboot:
+          become: true
+          become_method: ansible.builtin.runas
+          become_user: '{{ reboot_invalid_user }}'
+          vars:
+            ansible_become_password: 'invalid-fixture-password'
+          check_mode: true
+          register: reboot_runas_prediction
+          no_log: true
+
+        - name: Independently read the boot after prediction
+          sustainablelobster.legacy_windows.win_reboot_info:
+          register: reboot_prediction_boot_after
+
+        - name: Require prediction without a genuine boot change
+          ansible.builtin.assert:
+            that:
+              - reboot_runas_prediction.changed
+              - reboot_runas_prediction.rebooted
+              - reboot_runas_prediction.elapsed == 0
+              - not reboot_runas_prediction.failed | default(false)
+              - >-
+                reboot_prediction_boot_after.last_reboot.time_epoch ==
+                reboot_failure_boot_before.last_reboot.time_epoch
+          no_log: true
+
+        - name: Reject invalid credentials before requesting restart
+          sustainablelobster.legacy_windows.win_reboot:
+            reboot_timeout: 180
+          become: true
+          become_method: ansible.builtin.runas
+          become_user: '{{ reboot_invalid_user }}'
+          vars:
+            ansible_become_password: 'invalid-fixture-password'
+          register: reboot_runas_invalid
+          ignore_errors: true
+          no_log: true
+
+        - name: Independently read the boot after rejected credentials
+          sustainablelobster.legacy_windows.win_reboot_info:
+          register: reboot_invalid_boot_after
+
+        - name: Require logon failure without a restart request or boot change
+          ansible.builtin.assert:
+            that:
+              - reboot_runas_invalid is failed
+              - reboot_runas_invalid is not changed
+              - not reboot_runas_invalid.rebooted
+              - reboot_runas_invalid.elapsed == 0
+              - "'Native runas failed:' in reboot_runas_invalid.stderr"
+              - "'1332' in reboot_runas_invalid.stderr"
+              - >-
+                reboot_invalid_boot_after.last_reboot.time_epoch ==
+                reboot_failure_boot_before.last_reboot.time_epoch
+          no_log: true
+      always:
+        - name: Read the connection identity after the failed credential case
+          sustainablelobster.legacy_windows.win_whoami:
+          register: reboot_failure_identity_after
+          ignore_errors: true
+          ignore_unreachable: true
+          no_log: true
+
+        - name: Record staging after prediction and rejected credentials
+          ansible.builtin.raw: '{{ reboot_staging_command }}'
+          register: reboot_failure_staging_after
+          changed_when: false
+          ignore_errors: true
+          ignore_unreachable: true
+
+        - name: Preserve prediction and credential-failure observations
+          ansible.builtin.copy:
+            content: >-
+              {{ {'prediction': reboot_runas_prediction | default(none),
+                  'invalid': reboot_runas_invalid | default(none),
+                  'boot_before': reboot_failure_boot_before | default(none),
+                  'boot_after_prediction':
+                  reboot_prediction_boot_after | default(none),
+                  'boot_after_invalid':
+                  reboot_invalid_boot_after | default(none),
+                  'identity_before':
+                  reboot_connection_identity | default(none),
+                  'identity_after':
+                  reboot_failure_identity_after | default(none),
+                  'staging_before':
+                  reboot_failure_staging_before | default(none),
+                  'staging_after':
+                  reboot_failure_staging_after | default(none)} |
+                  to_nice_json }}
+            dest: '{{ reboot_failure_capture.path }}'
+            mode: '0600'
+          delegate_to: localhost
+          become: false
+          vars: *controller
+          changed_when: false
+          no_log: true
+
+        - name: Require the original account and exact staging recovery
+          ansible.builtin.assert:
+            that:
+              - >-
+                reboot_failure_identity_after.account ==
+                reboot_connection_identity.account
+              - >-
+                (reboot_failure_staging_after.stdout | from_json) ==
+                (reboot_failure_staging_before.stdout | from_json)
+          no_log: true
+
+        - name: Close the credential-case connection
+          ansible.builtin.meta: reset_connection
+
+- name: Reboot once using the named connection account through native runas
+  tags: [reboot_connection_user]
+  hosts: legacy_windows
+  gather_facts: false
+  become: false
+  vars:
+    reboot_staging_command: *staging_command
+    reboot_case: connection_user
+    reboot_account: '{{ ansible_user }}'
+    reboot_password: '{{ ansible_password }}'
+    reboot_expected_sid: '{{ reboot_connection_identity.account.sid }}'
+    reboot_readiness_command: &readiness_command >-
+      cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+      "import ctypes,json,sys,winreg;
+      assert sys.version_info[:3]==(3,4,4);
+      version=sys.getwindowsversion();
+      legacy=version.major==5 and version.minor in (1,2);
+      kernel=ctypes.WinDLL('kernel32',use_last_error=True);
+      kernel.OpenEventW.argtypes=[ctypes.c_uint32,ctypes.c_int,ctypes.c_wchar_p];
+      kernel.OpenEventW.restype=ctypes.c_void_p;
+      kernel.WaitForSingleObject.argtypes=[ctypes.c_void_p,ctypes.c_uint32];
+      kernel.WaitForSingleObject.restype=ctypes.c_uint32;
+      kernel.CloseHandle.argtypes=[ctypes.c_void_p];
+      kernel.CloseHandle.restype=ctypes.c_int;
+      handle=kernel.OpenEventW(0x00100000,False,'Global\\SC_AutoStartComplete')
+      if legacy else winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,
+      r'SOFTWARE\Microsoft\Windows NT\CurrentVersion'
+      r'\Winlogon\AutoLogonChecked');
+      assert handle;
+      signaled=kernel.WaitForSingleObject(handle,0)==0 if legacy else True;
+      closed=bool(kernel.CloseHandle(handle)) if legacy else
+      winreg.CloseKey(handle) is None;
+      assert signaled and closed;
+      print(json.dumps({'python':list(sys.version_info[:3]),'legacy':legacy,
+      'signaled':signaled,'closed':closed}))""
+  tasks: &reboot_case_tasks
+    - name: Clear captures before this account case can fail
+      ansible.builtin.set_fact:
+        reboot_case_capture: null
+        reboot_case_result: null
+        reboot_case_boot_before: null
+        reboot_case_boot_after: null
+        reboot_case_readiness: null
+        reboot_requested_identity_before: null
+        reboot_requested_identity_after: null
+        reboot_connection_identity: null
+        reboot_case_identity_after: null
+        reboot_case_staging_before: null
+        reboot_case_staging_after: null
+      no_log: true
+
+    - name: Allocate private evidence for this reboot account
+      ansible.builtin.tempfile:
+        state: file
+        path: >-
+          {{ evidence_dir |
+          default(playbook_dir + '/../../tmp/codex/evidence') }}
+        prefix: 'reboot-runas-{{ reboot_case }}-{{ inventory_hostname }}-'
+        suffix: .json
+      register: reboot_case_capture
+      delegate_to: localhost
+      become: false
+      vars: *controller
+      changed_when: false
+
+    - name: Reboot through native runas with mandatory final observations
+      block:
+        - name: Require the target runtime and record staging before this case
+          ansible.builtin.raw: '{{ reboot_staging_command }}'
+          register: reboot_case_staging_before
+          changed_when: false
+
+        - name: Read the original account for this independently selected case
+          sustainablelobster.legacy_windows.win_whoami:
+          register: reboot_connection_identity
+          no_log: true
+
+        - name: Read the boot and reject queued servicing before restart
+          sustainablelobster.legacy_windows.win_reboot_info:
+          register: reboot_case_boot_before
+
+        - name: Require an idle servicing baseline
+          ansible.builtin.assert:
+            that: not reboot_case_boot_before.reboot_required
+
+        - name: Observe the requested account through the public token reader
+          sustainablelobster.legacy_windows.win_whoami:
+          become: true
+          become_method: ansible.builtin.runas
+          become_user: '{{ reboot_account }}'
+          vars:
+            ansible_become_password: '{{ reboot_password }}'
+          register: reboot_requested_identity_before
+          no_log: true
+
+        - name: Require the actual requested SID before reboot
+          ansible.builtin.assert:
+            that:
+              - reboot_requested_identity_before is not changed
+              - >-
+                reboot_requested_identity_before.account.sid ==
+                reboot_expected_sid
+          no_log: true
+
+        - name: Reboot once using native boot and readiness operations
+          sustainablelobster.legacy_windows.win_reboot:
+            reboot_timeout: 180
+            msg: 'Legacy runas {{ reboot_case_capture.path | basename }}'
+          become: true
+          become_method: ansible.builtin.runas
+          become_user: '{{ reboot_account }}'
+          vars:
+            ansible_become_password: '{{ reboot_password }}'
+          register: reboot_case_result
+          no_log: true
+
+        - name: Independently read the boot after reboot
+          sustainablelobster.legacy_windows.win_reboot_info:
+          register: reboot_case_boot_after
+
+        - name: Independently observe the native startup readiness signal
+          ansible.builtin.raw: '{{ reboot_readiness_command }}'
+          register: reboot_case_readiness
+          changed_when: false
+
+        - name: Read the requested account after reconnecting
+          sustainablelobster.legacy_windows.win_whoami:
+          become: true
+          become_method: ansible.builtin.runas
+          become_user: '{{ reboot_account }}'
+          vars:
+            ansible_become_password: '{{ reboot_password }}'
+          register: reboot_requested_identity_after
+          no_log: true
+
+        - name: Require genuine reboot readiness and the requested identity
+          ansible.builtin.assert:
+            that:
+              - reboot_case_result.changed and reboot_case_result.rebooted
+              - not reboot_case_result.failed
+              - not reboot_case_result.unreachable | default(false)
+              - reboot_case_result.elapsed >= 0
+              - reboot_case_result.elapsed < 360
+              - >-
+                reboot_case_boot_after.last_reboot.time_epoch >
+                reboot_case_boot_before.last_reboot.time_epoch
+              - >-
+                reboot_case_boot_after.last_reboot.details.comment ==
+                'Legacy runas ' + (reboot_case_capture.path | basename)
+              - >-
+                not reboot_case_boot_after.last_reboot.details.initiated_by or
+                (reboot_case_boot_after.last_reboot.details.initiated_by |
+                lower) ==
+                ((reboot_requested_identity_before.account.domain_name +
+                '\\' + reboot_requested_identity_before.account.account_name) |
+                lower)
+              - (reboot_case_readiness.stdout | from_json).python == [3, 4, 4]
+              - (reboot_case_readiness.stdout | from_json).signaled
+              - (reboot_case_readiness.stdout | from_json).closed
+              - reboot_requested_identity_after is not changed
+              - >-
+                reboot_requested_identity_after.account.sid ==
+                reboot_expected_sid
+          no_log: true
+      always:
+        - name: Read the original connection identity after this case
+          sustainablelobster.legacy_windows.win_whoami:
+          register: reboot_case_identity_after
+          ignore_errors: true
+          ignore_unreachable: true
+          no_log: true
+
+        - name: Record staging after the reboot account case
+          ansible.builtin.raw: '{{ reboot_staging_command }}'
+          register: reboot_case_staging_after
+          changed_when: false
+          ignore_errors: true
+          ignore_unreachable: true
+
+        - name: Preserve available observations before cleanup assertions
+          ansible.builtin.copy:
+            content: >-
+              {{ {'case': reboot_case,
+                  'result': reboot_case_result | default(none),
+                  'boot_before': reboot_case_boot_before | default(none),
+                  'boot_after': reboot_case_boot_after | default(none),
+                  'readiness': reboot_case_readiness | default(none),
+                  'requested_identity_before':
+                  reboot_requested_identity_before | default(none),
+                  'requested_identity_after':
+                  reboot_requested_identity_after | default(none),
+                  'connection_identity_before': reboot_connection_identity,
+                  'connection_identity_after':
+                  reboot_case_identity_after | default(none),
+                  'staging_before': reboot_case_staging_before | default(none),
+                  'staging_after': reboot_case_staging_after | default(none)} |
+                  to_nice_json }}
+            dest: '{{ reboot_case_capture.path }}'
+            mode: '0600'
+          delegate_to: localhost
+          become: false
+          vars: *controller
+          changed_when: false
+          no_log: true
+
+        - name: Require the original connection account and staging recovery
+          ansible.builtin.assert:
+            that:
+              - >-
+                reboot_case_identity_after.account ==
+                reboot_connection_identity.account
+              - >-
+                (reboot_case_staging_after.stdout | from_json) ==
+                (reboot_case_staging_before.stdout | from_json)
+          no_log: true
+
+        - name: Close the reboot-case connection
+          ansible.builtin.meta: reset_connection
+
+- name: Reboot once using native SYSTEM runas without a password
+  tags: [reboot_system]
+  hosts: legacy_windows
+  gather_facts: false
+  become: false
+  vars:
+    reboot_staging_command: *staging_command
+    reboot_readiness_command: *readiness_command
+    reboot_case: system
+    reboot_account: 'NT AUTHORITY\SYSTEM'
+    reboot_password: null
+    reboot_expected_sid: 'S-1-5-18'
+  tasks: *reboot_case_tasks
+
+- name: Verify denied native SYSTEM acquisition cannot request a restart
+  tags: [never, reboot_system_denied]
+  hosts: legacy_windows
+  gather_facts: false
+  become: false
+  vars:
+    reboot_staging_command: *staging_command
+  tasks:
+    - name: Clear captures before the denied SYSTEM case can fail
+      ansible.builtin.set_fact:
+        reboot_system_denied_capture: null
+        reboot_system_denied_result: null
+        reboot_system_denied_boot_before: null
+        reboot_system_denied_boot_after: null
+        reboot_system_denied_identity_before: null
+        reboot_system_denied_identity_after: null
+        reboot_system_denied_staging_before: null
+        reboot_system_denied_staging_after: null
+      no_log: true
+
+    - name: Allocate private evidence for denied SYSTEM acquisition
+      ansible.builtin.tempfile:
+        state: file
+        path: >-
+          {{ evidence_dir |
+          default(playbook_dir + '/../../tmp/codex/evidence') }}
+        prefix: 'reboot-runas-system-denied-{{ inventory_hostname }}-'
+        suffix: .json
+      register: reboot_system_denied_capture
+      delegate_to: localhost
+      become: false
+      vars: *controller
+      changed_when: false
+
+    - name: Verify the acquisition failure with mandatory final observations
+      block:
+        - name: Require the target runtime and record original staging
+          ansible.builtin.raw: '{{ reboot_staging_command }}'
+          register: reboot_system_denied_staging_before
+          changed_when: false
+
+        - name: Read the original account before denied SYSTEM acquisition
+          sustainablelobster.legacy_windows.win_whoami:
+          register: reboot_system_denied_identity_before
+          no_log: true
+
+        - name: Read the boot before denied SYSTEM acquisition
+          sustainablelobster.legacy_windows.win_reboot_info:
+          register: reboot_system_denied_boot_before
+
+        - name: Attempt the public reboot with denied SYSTEM acquisition
+          sustainablelobster.legacy_windows.win_reboot:
+            reboot_timeout: 180
+          become: true
+          become_method: ansible.builtin.runas
+          become_user: 'NT AUTHORITY\SYSTEM'
+          vars:
+            ansible_become_password: null
+          register: reboot_system_denied_result
+          ignore_errors: true
+          no_log: true
+
+        - name: Independently read the boot after denied SYSTEM acquisition
+          sustainablelobster.legacy_windows.win_reboot_info:
+          register: reboot_system_denied_boot_after
+
+        - name: Require actionable denial without a restart or boot change
+          ansible.builtin.assert:
+            that:
+              - reboot_system_denied_result is failed
+              - reboot_system_denied_result is not changed
+              - not reboot_system_denied_result.rebooted
+              - reboot_system_denied_result.elapsed == 0
+              - >-
+                'Cannot acquire the SYSTEM token' in
+                reboot_system_denied_result.stderr
+              - >-
+                reboot_system_denied_boot_after.last_reboot.time_epoch ==
+                reboot_system_denied_boot_before.last_reboot.time_epoch
+          no_log: true
+      always:
+        - name: Read the original account after denied SYSTEM acquisition
+          sustainablelobster.legacy_windows.win_whoami:
+          register: reboot_system_denied_identity_after
+          ignore_errors: true
+          ignore_unreachable: true
+          no_log: true
+
+        - name: Record staging after denied SYSTEM acquisition
+          ansible.builtin.raw: '{{ reboot_staging_command }}'
+          register: reboot_system_denied_staging_after
+          changed_when: false
+          ignore_errors: true
+          ignore_unreachable: true
+
+        - name: Preserve denied SYSTEM acquisition and recovery observations
+          ansible.builtin.copy:
+            content: >-
+              {{ {'case': 'system_denied',
+                  'result': reboot_system_denied_result,
+                  'boot_before': reboot_system_denied_boot_before,
+                  'boot_after': reboot_system_denied_boot_after,
+                  'identity_before': reboot_system_denied_identity_before,
+                  'identity_after': reboot_system_denied_identity_after,
+                  'staging_before': reboot_system_denied_staging_before,
+                  'staging_after': reboot_system_denied_staging_after} |
+                  to_nice_json }}
+            dest: '{{ reboot_system_denied_capture.path }}'
+            mode: '0600'
+          delegate_to: localhost
+          become: false
+          vars: *controller
+          changed_when: false
+          no_log: true
+
+        - name: Require the original account and exact staging recovery
+          ansible.builtin.assert:
+            that:
+              - >-
+                reboot_system_denied_identity_after.account ==
+                reboot_system_denied_identity_before.account
+              - >-
+                (reboot_system_denied_staging_after.stdout | from_json) ==
+                (reboot_system_denied_staging_before.stdout | from_json)
+          no_log: true
+
+        - name: Close the denied SYSTEM connection
+          ansible.builtin.meta: reset_connection

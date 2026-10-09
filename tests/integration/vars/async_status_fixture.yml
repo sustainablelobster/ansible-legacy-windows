@@ -1,0 +1,117 @@
+---
+async_status_program: |
+  # SPDX-License-Identifier: GPL-3.0-or-later
+  import base64, binascii, ctypes, json, os, sys, tempfile
+  assert sys.version_info[:3] == (3, 4, 4)
+  workspace, operation = os.path.abspath(sys.argv[1]), sys.argv[2]
+  cache = os.path.join(workspace, 'cache')
+  journal_path = os.path.join(workspace, 'async-status-recovery.json')
+  sentinel = os.path.join(workspace, 'preserved.bin')
+
+  def attributes(path):
+      library = ctypes.WinDLL('kernel32', use_last_error=True)
+      function = library.GetFileAttributesW
+      function.argtypes, function.restype = [ctypes.c_wchar_p], ctypes.c_uint32
+      value = function(path)
+      if value == 0xffffffff:
+          raise ctypes.WinError(ctypes.get_last_error())
+      return value
+
+  def tree(path):
+      if not os.path.exists(path):
+          return None
+      flags = attributes(path)
+      if flags & 0x400:
+          raise ValueError('Unexpected reparse entry in owned job workspace')
+      if os.path.isdir(path):
+          return {'attributes': flags, 'children': {
+              name: tree(os.path.join(path, name))
+              for name in sorted(os.listdir(path))}}
+      with open(path, 'rb') as stream:
+          return {'attributes': flags,
+                  'hex': binascii.hexlify(stream.read()).decode('ascii')}
+
+  def erase_owned(path):
+      if attributes(path) & 0x400:
+          raise ValueError('Refusing to follow a fixture reparse entry')
+      if os.path.isdir(path):
+          for name in os.listdir(path):
+              erase_owned(os.path.join(path, name))
+          os.rmdir(path)
+      else:
+          os.remove(path)
+
+  def journal():
+      with open(journal_path, encoding='utf-8') as stream:
+          record = json.load(stream)
+      if record['workspace'] != workspace or record['cache'] != cache:
+          raise ValueError('Journal does not own this job workspace')
+      if tree(sentinel) != record['sentinel']:
+          raise ValueError('Protected sibling changed')
+      if set(os.listdir(workspace)) != {
+              'cache', 'preserved.bin', 'async-status-recovery.json'}:
+          raise ValueError('Unexpected workspace entries; journal retained')
+      return record
+
+  def clear_cache(record):
+      if not os.path.isdir(cache) or attributes(cache) & 0x400:
+          raise ValueError('Owned cache directory changed')
+      if not set(os.listdir(cache)).issubset(set(record['jobs'])):
+          raise ValueError('Unexpected job entries; journal retained')
+      for name in os.listdir(cache):
+          erase_owned(os.path.join(cache, name))
+
+  if operation == 'setup':
+      if os.listdir(workspace):
+          raise ValueError('Fixture workspace must initially be empty')
+      os.mkdir(cache)
+      with open(sentinel, 'wb') as stream:
+          stream.write(b'untouched sibling\x00\xff')
+      record = {'workspace': workspace, 'cache': cache,
+                'jobs': ['job', 'job[1]'], 'sentinel': tree(sentinel),
+                'initial_cache': tree(cache)}
+      with open(journal_path, 'w', encoding='utf-8') as stream:
+          json.dump(record, stream, sort_keys=True)
+          stream.flush()
+          os.fsync(stream.fileno())
+      result = {'journaled': True, 'cache': cache,
+                'python': list(sys.version_info[:3]),
+                'original_available': sys.getwindowsversion().major >= 6}
+  elif operation == 'seed':
+      record = journal()
+      clear_cache(record)
+      case = json.loads(base64.b64decode(sys.argv[3]).decode('utf-8'))
+      name = case.get('params', {}).get('jid', 'job')
+      name = name if isinstance(name, str) and name else 'job'
+      if name not in record['jobs']:
+          raise ValueError('Case does not own this job identifier')
+      path = os.path.join(cache, name)
+      if case.get('directory', False):
+          os.mkdir(path)
+          os.mkdir(os.path.join(path, 'nested'))
+          with open(os.path.join(path, 'nested', 'child'), 'wb') as stream:
+              stream.write(b'owned child')
+      elif 'contents' in case:
+          with open(path, 'wb') as stream:
+              contents = case['contents'].encode(case.get('encoding', 'ascii'))
+              stream.write(contents)
+      result = {'cache': tree(cache), 'sentinel': tree(sentinel)}
+  elif operation == 'observe':
+      journal()
+      result = {'cache': tree(cache), 'sentinel': tree(sentinel)}
+  elif operation == 'cleanup':
+      record = journal()
+      clear_cache(record)
+      if tree(cache) != record['initial_cache']:
+          raise ValueError('Original empty cache was not restored')
+      result = {'restored': True, 'cache': tree(cache),
+                'sentinel': tree(sentinel),
+                'python': list(sys.version_info[:3])}
+      os.rmdir(cache)
+      os.remove(sentinel)
+      os.remove(journal_path)
+      if os.listdir(workspace):
+          raise ValueError('Workspace is not empty after recovery')
+  else:
+      raise ValueError('Unknown fixture operation')
+  print(json.dumps(result, sort_keys=True))

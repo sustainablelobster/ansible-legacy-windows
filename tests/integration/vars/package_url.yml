@@ -1,0 +1,135 @@
+---
+package_compare: false
+package_url_controller_source: '{{ playbook_dir }}/../../tmp'
+package_url_product: '{48C49ACE-90CF-4161-9C6E-9162115A54DD}'
+package_url_http: '{{ (package_url_setup.stdout | from_json).http }}'
+package_url_selected_cases: >-
+  {{ package_url_case_indices |
+  default(range(package_url_cases | length) | list) |
+  map('extract', package_url_cases) | list }}
+package_url_cases:
+  - name: URL installation preview without identity downloads metadata
+    params: {path: '{{ package_url_http }}/patch.msi', use_proxy: false}
+    initial: absent
+    check: true
+    changed: true
+    expected: absent
+    requests: ['/patch.msi']
+  - name: URL installation without identity
+    params: {path: '{{ package_url_http }}/patch.msi', use_proxy: false}
+    initial: absent
+    changed: true
+    expected: base
+    requests: ['/patch.msi']
+  - name: URL installed package without identity still downloads metadata
+    params: {path: '{{ package_url_http }}/patch.msi', use_proxy: false}
+    initial: base
+    expected: base
+    requests: ['/patch.msi']
+  - name: Installed identity avoids downloading the error endpoint
+    params:
+      path: '{{ package_url_http }}/missing.msi'
+      product_id: '{{ package_url_product }}'
+      use_proxy: false
+    initial: base
+    expected: base
+    requests: []
+  - name: Installed identity preview avoids downloading the error endpoint
+    params:
+      path: '{{ package_url_http }}/missing.msi'
+      product_id: '{{ package_url_product }}'
+      use_proxy: false
+    initial: base
+    check: true
+    expected: base
+    requests: []
+  - name: Uninstalled identity downloads a redirect and installs
+    params:
+      path: '{{ package_url_http }}/redirect.msi'
+      product_id: '{{ package_url_product }}'
+      use_proxy: false
+    initial: absent
+    changed: true
+    expected: base
+    requests: ['/redirect.msi', '/patch.msi']
+  - name: Downloaded SHA256 verified installation
+    params:
+      path: '{{ package_url_http }}/patch.msi'
+      checksum_algorithm: SHA256
+      checksum: 27d065aa11c72c941300aca33dcbec1b96d6d032d540ac15d2b61070f0b6635f
+      use_proxy: false
+    initial: absent
+    changed: true
+    expected: base
+    requests: ['/patch.msi']
+  - name: URL removal with identity downloads before removal
+    params:
+      path: '{{ package_url_http }}/patch.msi'
+      product_id: '{{ package_url_product }}'
+      state: absent
+      use_proxy: false
+    initial: base
+    changed: true
+    expected: absent
+    requests: ['/patch.msi']
+  - name: URL removal preview still downloads metadata
+    params:
+      path: '{{ package_url_http }}/patch.msi'
+      product_id: '{{ package_url_product }}'
+      state: absent
+      use_proxy: false
+    initial: base
+    check: true
+    changed: true
+    expected: base
+    requests: ['/patch.msi']
+  - name: URL absence without identity fails after metadata inspection
+    params:
+      path: '{{ package_url_http }}/patch.msi'
+      state: absent
+      use_proxy: false
+    initial: absent
+    failed: true
+    expected: absent
+    requests: ['/patch.msi']
+  - name: URL absence without identity removes then reports failure
+    params:
+      path: '{{ package_url_http }}/patch.msi'
+      state: absent
+      use_proxy: false
+    initial: base
+    failed: true
+    expected: absent
+    requests: ['/patch.msi']
+  - name: URL404 returns the complete download failure
+    params: {path: '{{ package_url_http }}/missing.msi', use_proxy: false}
+    initial: absent
+    failed: true
+    expected: absent
+    requests: ['/missing.msi']
+    download_failure: true
+  - name: URL unauthorized returns the complete download failure
+    params: {path: '{{ package_url_http }}/auth.msi', use_proxy: false}
+    initial: absent
+    failed: true
+    expected: absent
+    requests: ['/auth.msi']
+    download_failure: true
+  - name: URL forced Basic credentials install with the recorded header
+    params:
+      path: '{{ package_url_http }}/auth.msi'
+      url_username: fixture
+      url_password: secret
+      force_basic_auth: true
+      use_proxy: false
+      headers: {X-Package-Fixture: owned}
+    initial: absent
+    changed: true
+    expected: base
+    requests: ['/auth.msi']
+  - name: ContentDisposition filename with spaces is used for installation
+    params: {path: '{{ package_url_http }}/disposition.bin', use_proxy: false}
+    initial: absent
+    changed: true
+    expected: base
+    requests: ['/disposition.bin']

@@ -1,0 +1,180 @@
+---
+# SPDX-License-Identifier: GPL-3.0-or-later
+- name: Smoke test the installed legacy Windows collection
+  hosts: legacy_windows
+  gather_facts: false
+  vars:
+    smoke_text: "Release smoke: Café 雪\r\n"
+    smoke_root: '{{ smoke_workspace.path }}'
+    smoke_text_path: '{{ smoke_root }}\Café 雪.txt'
+    smoke_binary_path: '{{ smoke_root }}\payload.bin'
+  tasks:
+    - name: Verify the installed Ping action and payload
+      # Public assertions validate the WANT_JSON module interface.
+      sustainablelobster.legacy_windows.win_ping:  # noqa: args[module]
+      register: smoke_ping
+
+    - name: Verify the actual target interpreter and fixture syntax
+      sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+        argv:
+          - '{{ ansible_python_interpreter }}'
+          - -c
+          - >-
+            import json, sys;
+            assert sys.version_info[:3] >= (3, 4, 4);
+            compile(sys.stdin.buffer.read().decode('utf-8'),
+            'package_children_fixture.py', 'exec');
+            print(json.dumps(list(sys.version_info[:3])))
+        stdin: >-
+          {{ lookup('ansible.builtin.file',
+          playbook_dir ~ '/fixtures/package_children_fixture.py') }}
+      register: smoke_runtime
+      changed_when: false
+
+    - name: Require the expected Ping response and runtime
+      ansible.builtin.assert:
+        that:
+          - smoke_ping.ping == 'pong'
+          - smoke_ping is not changed
+          - smoke_runtime.stdout | from_json >= [3, 4, 4]
+          - smoke_runtime.rc == 0
+
+    - name: Exercise files only inside owned workspaces
+      block:
+        - name: Allocate an owned guest directory
+          sustainablelobster.legacy_windows.win_tempfile:  # noqa: args[module]
+            state: directory
+            prefix: legacy-windows-release-smoke-
+          register: smoke_workspace
+
+        - name: Allocate an owned controller fixture directory
+          ansible.builtin.tempfile:
+            state: directory
+            prefix: legacy-windows-release-smoke-
+          register: smoke_controller
+          delegate_to: localhost
+          vars:
+            ansible_connection: local
+            ansible_shell_type: sh
+            ansible_python_interpreter: '{{ ansible_playbook_python }}'
+
+        - name: Generate a controller fixture containing every byte value
+          ansible.builtin.command:
+            argv:
+              - '{{ ansible_playbook_python }}'
+              - -c
+              - >-
+                import base64, os, sys;
+                data = bytes(bytearray(range(256)));
+                path = os.path.join(sys.argv[1], 'payload.bin');
+                open(path, 'wb').write(data);
+                print(base64.b64encode(data).decode('ascii'))
+              - '{{ smoke_controller.path }}'
+          register: smoke_binary_fixture
+          changed_when: true
+          delegate_to: localhost
+          vars:
+            ansible_connection: local
+            ansible_shell_type: sh
+            ansible_python_interpreter: '{{ ansible_playbook_python }}'
+
+        - name: Copy Unicode text into the guest directory
+          sustainablelobster.legacy_windows.win_copy:  # noqa: args[module]
+            content: '{{ smoke_text }}'
+            dest: '{{ smoke_text_path }}'
+          register: smoke_text_copy
+
+        - name: Copy binary bytes from the controller
+          sustainablelobster.legacy_windows.win_copy:  # noqa: args[module]
+            src: '{{ smoke_controller.path }}/payload.bin'
+            dest: '{{ smoke_binary_path }}'
+          register: smoke_binary_copy
+
+        - name: Repeat the binary copy without changing the file
+          sustainablelobster.legacy_windows.win_copy:  # noqa: args[module]
+            src: '{{ smoke_controller.path }}/payload.bin'
+            dest: '{{ smoke_binary_path }}'
+          register: smoke_copy_repeat
+
+        - name: Require existing files in normal and check mode
+          sustainablelobster.legacy_windows.win_file:  # noqa: args[module]
+            path: '{{ smoke_binary_path }}'
+            state: file
+          check_mode: '{{ item }}'
+          loop: [false, true]
+          register: smoke_existing
+
+        - name: Predict directory creation without making it
+          sustainablelobster.legacy_windows.win_file:  # noqa: args[module]
+            path: '{{ smoke_root }}\predicted'
+            state: directory
+          check_mode: true
+          register: smoke_prediction
+
+        - name: Inspect copied bytes and the predicted path
+          sustainablelobster.legacy_windows.win_stat:  # noqa: args[module]
+            path: '{{ item }}'
+          loop:
+            - '{{ smoke_text_path }}'
+            - '{{ smoke_binary_path }}'
+            - '{{ smoke_root }}\predicted'
+          register: smoke_metadata
+
+        - name: Read the transferred text and binary files
+          sustainablelobster.legacy_windows.slurp:  # noqa: args[module]
+            src: '{{ item }}'
+          loop:
+            - '{{ smoke_text_path }}'
+            - '{{ smoke_binary_path }}'
+          register: smoke_reads
+
+        - name: Verify results, bytes, idempotence, and check prediction
+          ansible.builtin.assert:
+            that:
+              - smoke_workspace is changed
+              - smoke_text_copy is changed
+              - smoke_binary_copy is changed
+              - smoke_copy_repeat is not changed
+              - smoke_existing.results | select('changed') | list | length == 0
+              - smoke_prediction is changed
+              - smoke_metadata.results[0].stat.exists
+              - smoke_metadata.results[0].stat.size > 0
+              - smoke_metadata.results[1].stat.exists
+              - smoke_metadata.results[1].stat.size == 256
+              - not smoke_metadata.results[2].stat.exists
+              - smoke_reads.results[0].encoding == 'base64'
+              - smoke_reads.results[0].content == smoke_text | b64encode
+              - smoke_reads.results[1].encoding == 'base64'
+              - >-
+                smoke_reads.results[1].content ==
+                smoke_binary_fixture.stdout | trim
+              - smoke_reads.results | select('changed') | list | length == 0
+      always:
+        - name: Remove only the allocated controller directory
+          ansible.builtin.file:
+            path: '{{ smoke_controller.path }}'
+            state: absent
+          when: smoke_controller is defined and smoke_controller.path is defined
+          delegate_to: localhost
+          vars:
+            ansible_connection: local
+            ansible_shell_type: sh
+            ansible_python_interpreter: '{{ ansible_playbook_python }}'
+
+        - name: Remove only the allocated guest directory
+          sustainablelobster.legacy_windows.win_file:  # noqa: args[module]
+            path: '{{ smoke_workspace.path }}'
+            state: absent
+          when: smoke_workspace is defined and smoke_workspace.path is defined
+
+        - name: Verify guest workspace absence
+          sustainablelobster.legacy_windows.win_stat:  # noqa: args[module]
+            path: '{{ smoke_workspace.path }}'
+          register: smoke_cleanup
+          when: smoke_workspace is defined and smoke_workspace.path is defined
+
+        - name: Require successful guest cleanup
+          ansible.builtin.assert:
+            that:
+              - not smoke_cleanup.stat.exists
+          when: smoke_workspace is defined and smoke_workspace.path is defined

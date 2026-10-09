@@ -1,0 +1,93 @@
+---
+- name: Prepare the bounded local record capture before guest mutation
+  hosts: localhost
+  gather_facts: false
+  connection: local
+  vars:
+    ansible_shell_type: sh
+    ansible_python_interpreter: '{{ ansible_playbook_python }}'
+  tasks:
+    - name: Create the private local capture directory
+      ansible.builtin.file:
+        path: '{{ playbook_dir }}/../../tmp/codex/evidence'
+        state: directory
+        mode: '0700'
+
+- name: Select only public legacy record workflows within maintained recovery
+  hosts: legacy_windows
+  gather_facts: false
+  vars_files:
+    - vars/dns_record_fixture.yml
+  tasks:
+    - name: Select native record cases without altering the source parity suite
+      ansible.builtin.set_fact:
+        dns_zone_case_tasks: tasks/win_dns_record_legacy_case.yml
+        dns_zone_cases: '{{ dns_record_cases + dns_record_legacy_extra_cases }}'
+        dns_zone_compare_released: false
+        dns_zone_capture: >-
+          {{ playbook_dir }}/../../tmp/codex/evidence/dns-record-classic-v5.json
+        dns_record_fixture_program: '{{ dns_record_fixture_program }}'
+        dns_zone_recovery_reboot_authorized: true
+        dns_record_expected_unchanged:
+          - repeat-a
+          - absent-missing
+          - repeat-cname
+          - repeat-txt
+          - repeat-unicode-txt
+          - repeat-dhcid
+          - repeat-aged-dhcid
+          - repeat-srv-nondefault-ttl
+          - repeat-aged-srv-nondefault-ttl
+  vars:
+    dns_record_legacy_extra_cases:
+      - id: repeat-srv-nondefault-ttl
+        seed: {type: SRV, value: ['target.example.test.'], port: 123, weight: 5,
+               priority: 7, ttl: 300}
+        args: {type: SRV, value: target.example.test, port: 123, weight: 5,
+               priority: 7, ttl: 300}
+      - id: create-aged-srv-nondefault-ttl
+        args: {type: SRV, value: target.example.test, port: 123, weight: 5,
+               priority: 7, ttl: 300, aging: true}
+      - id: repeat-aged-srv-nondefault-ttl
+        seed: {type: SRV, value: ['target.example.test.'], port: 123, weight: 5,
+               priority: 7, ttl: 300, aging: true}
+        args: {type: SRV, value: target.example.test, port: 123, weight: 5,
+               priority: 7, ttl: 300, aging: true}
+      - id: preview-aged-srv-nondefault-ttl
+        check: true
+        args: {type: SRV, value: target.example.test, port: 123, weight: 5,
+               priority: 7, ttl: 300, aging: true}
+      - id: repeat-unicode-txt
+        seed: {type: TXT, value: ['owned Unicode Ω record']}
+        args: {type: TXT, value: 'owned Unicode Ω record'}
+      - id: update-unicode-txt-ttl
+        seed: {type: TXT, value: ['owned Unicode Ω record'], ttl: 60}
+        args: {type: TXT, value: 'owned Unicode Ω record', ttl: 300}
+      - id: allow-any-update
+        args: {type: A, value: '192.0.2.1', allow_update_any: true}
+      - id: repeat-dhcid
+        seed: {type: DHCID, value: [AAEB]}
+        args: {type: DHCID, value: AAEB}
+      - id: update-dhcid-ttl
+        seed: {type: DHCID, value: [AAEB], ttl: 60}
+        args: {type: DHCID, value: AAEB, ttl: 300}
+      - id: repeat-aged-dhcid
+        seed: {type: DHCID, value: [AAEB], aging: true}
+        args: {type: DHCID, value: AAEB, aging: true}
+      - id: update-aged-dhcid-ttl
+        seed: {type: DHCID, value: [AAEB], aging: true, ttl: 60}
+        args: {type: DHCID, value: AAEB, aging: true, ttl: 300}
+      - id: remove-dhcid
+        seed: {type: DHCID, value: [AAEB]}
+        args: {type: DHCID, state: absent}
+      - id: explicit-local-server
+        args: {type: A, value: '192.0.2.1', computer_name: '127.0.0.1'}
+      - id: reject-unavailable-zone-scope
+        failed: true
+        args:
+          type: A
+          value: '192.0.2.1'
+          zone_scope: unavailable-owned-scope
+
+- name: Manage records and recover the owned DNS role
+  ansible.builtin.import_playbook: win_dns_zone.yml

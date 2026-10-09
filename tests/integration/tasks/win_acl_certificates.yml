@@ -1,0 +1,188 @@
+---
+- name: Create isolated CAPI and available CNG certificate keys
+  sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+    argv:
+      - '{{ ansible_python_interpreter }}'
+      - '-'
+      - '{{ acl_workspace.path }}'
+      - setup
+    stdin: '{{ acl_certificate_fixture }}'
+  register: acl_certificate_setup
+  changed_when: true
+  check_mode: false
+
+- name: Retain certificate identities and native starting permissions
+  ansible.builtin.set_fact:
+    acl_certificate_initial: '{{ acl_certificate_setup.stdout | from_json }}'
+    acl_certificate_previous: >-
+      {{ (acl_certificate_setup.stdout | from_json).snapshot }}
+    acl_certificate_cases:
+      - name: Predict certificate Read allow
+        rights: Read
+        check: true
+        changed: true
+        entries: {capi: [], cng: []}
+      - name: Add certificate Read allow
+        rights: Read
+        changed: true
+        entries: &certificate_read
+          capi: [[0, 0, 2147483648]]
+          cng: [[0, 0, 2148663433]]
+      - name: Repeat certificate Read allow
+        rights: Read
+        changed: false
+        entries: *certificate_read
+      - name: Predict upgrading certificate Read to FullControl
+        rights: FullControl
+        check: true
+        changed: true
+        entries: *certificate_read
+      - name: Upgrade certificate Read to FullControl
+        rights: FullControl
+        changed: true
+        entries: &certificate_full
+          capi: [[0, 0, 2415919104]]
+          cng: [[0, 0, 3491693055]]
+      - name: Repeat certificate FullControl allow
+        rights: FullControl
+        changed: false
+        entries: *certificate_full
+      - name: Recognize certificate Read within FullControl
+        rights: Read
+        changed: false
+        entries: *certificate_full
+      - name: Predict removing complete certificate FullControl allow
+        rights: FullControl
+        state: absent
+        check: true
+        changed: true
+        entries: *certificate_full
+      - name: Remove complete certificate FullControl allow
+        rights: FullControl
+        state: absent
+        changed: true
+        entries: &certificate_empty
+          capi: []
+          cng: []
+      - name: Repeat removing certificate FullControl allow
+        rights: FullControl
+        state: absent
+        changed: false
+        entries: *certificate_empty
+      - name: Add certificate Read for exact removal
+        rights: Read
+        changed: true
+        entries: *certificate_read
+      - name: Predict removing complete certificate Read allow
+        rights: Read
+        state: absent
+        check: true
+        changed: true
+        entries: *certificate_read
+      - name: Remove complete certificate Read allow
+        rights: Read
+        state: absent
+        changed: true
+        entries: *certificate_empty
+      - name: Repeat removing certificate Read allow
+        rights: Read
+        state: absent
+        changed: false
+        entries: *certificate_empty
+      - name: Predict certificate FullControl deny
+        rights: FullControl
+        type: deny
+        check: true
+        changed: true
+        entries: *certificate_empty
+      - name: Add certificate FullControl deny
+        rights: FullControl
+        type: deny
+        changed: true
+        entries: &certificate_deny
+          capi: [[1, 0, 2415919104]]
+          cng: [[1, 0, 3491693055]]
+      - name: Repeat certificate FullControl deny
+        rights: FullControl
+        type: deny
+        changed: false
+        entries: *certificate_deny
+      - name: Predict removing complete certificate FullControl deny
+        rights: FullControl
+        type: deny
+        state: absent
+        check: true
+        changed: true
+        entries: *certificate_deny
+      - name: Remove certificate FullControl deny
+        rights: FullControl
+        type: deny
+        state: absent
+        changed: true
+        entries: *certificate_empty
+      - name: Repeat removing certificate FullControl deny
+        rights: FullControl
+        type: deny
+        state: absent
+        changed: false
+        entries: *certificate_empty
+      - name: Add certificate FullControl for partial-removal testing
+        rights: FullControl
+        changed: true
+        entries: *certificate_full
+      - name: Predict partial Read removal or reject unsupported CAPI
+        rights: Read
+        state: absent
+        check: true
+        changed: true
+        capi_changed: false
+        capi_failure: true
+        entries: *certificate_full
+      - name: Reduce certificate FullControl or reject unsupported CAPI
+        rights: Read
+        state: absent
+        changed: true
+        capi_changed: false
+        capi_failure: true
+        entries: &certificate_partial
+          capi: [[0, 0, 2415919104]]
+          # CNG maps the remaining native rights to generic WRITE on readback.
+          cng: [[0, 0, 1074594166]]
+      - name: Repeat certificate partial Read removal or reject unsupported CAPI
+        rights: Read
+        state: absent
+        changed: false
+        capi_failure: true
+        entries: *certificate_partial
+
+- name: Require CAPI and explicitly report CNG availability
+  ansible.builtin.assert:
+    that:
+      - acl_certificate_initial.paths.capi is defined
+      - >-
+        ('cng' in acl_certificate_initial.paths) ==
+        acl_certificate_initial.cng_available
+
+- name: Record the unavailable CNG branch on legacy Windows
+  ansible.builtin.set_fact:
+    acl_results: >-
+      {{ acl_results | default([]) + [{
+        'target': 'certificate-cng', 'case': 'CNG availability',
+        'result': {'changed': false, 'skipped': true,
+                   'skip_reason': 'CNG is unavailable before Windows Vista'},
+        'snapshot': {}}] }}
+  when: not acl_certificate_initial.cng_available
+
+- name: Exercise the same certificate cases on every target
+  ansible.builtin.include_tasks: win_acl_certificate_case.yml
+  loop: '{{ range(2 * (acl_certificate_cases | length)) | list }}'
+  loop_control:
+    loop_var: acl_certificate_case_index
+  vars:
+    acl_certificate_kind: >-
+      {{ ['capi', 'cng'][acl_certificate_case_index //
+                         (acl_certificate_cases | length)] }}
+    acl_certificate_case: >-
+      {{ acl_certificate_cases[acl_certificate_case_index %
+                               (acl_certificate_cases | length)] }}
+  when: acl_certificate_kind in acl_certificate_initial.paths

@@ -1,0 +1,161 @@
+---
+- name: Verify native system audit policy and exact original-policy restoration
+  hosts: legacy_windows
+  gather_facts: false
+  vars_files:
+    - vars/audit_policy.yml
+    - vars/audit_policy_fixture.yml
+  tasks:
+    - name: Require Python 3.4.4 and record task directories before staging
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import glob, json, os, sys, tempfile;
+        assert sys.version_info[:3] == (3, 4, 4);
+        print(json.dumps(sorted(glob.glob(os.path.join(tempfile.gettempdir(),
+        'ansible-tmp-*')))))""
+      register: audit_policy_staging_before
+      changed_when: false
+
+    - name: Allocate a private controller evidence file
+      ansible.builtin.tempfile:
+        state: file
+        path: '{{ playbook_dir }}/../../tmp'
+        prefix: 'audit-policy-{{ inventory_hostname }}-'
+        suffix: .json
+      register: audit_policy_capture
+      delegate_to: localhost
+      changed_when: false
+      vars: &audit_policy_local
+        ansible_connection: local
+        ansible_shell_type: sh
+        ansible_python_interpreter: '{{ ansible_playbook_python }}'
+
+    - name: Initialize complete case evidence
+      ansible.builtin.set_fact:
+        audit_policy_results: []
+        audit_policy_restoration: null
+      no_log: true
+
+    - name: Exercise policy operations with a durable recovery journal
+      block:
+        - name: Allocate the uniquely named recovery workspace
+          sustainablelobster.legacy_windows.win_tempfile:  # noqa: args[module]
+            state: directory
+            prefix: legacy-windows-audit-policy-
+          register: audit_policy_workspace
+          check_mode: false
+
+        - name: Journal native policy before establishing controlled flags
+          sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - '-'
+              - '{{ audit_policy_workspace.path }}'
+              - setup
+            stdin: '{{ audit_policy_fixture }}'
+          register: audit_policy_setup
+          changed_when: (audit_policy_setup.stdout | from_json).available
+          check_mode: false
+          no_log: true
+
+        - name: Run each declared public case on advanced-policy targets
+          when: (audit_policy_setup.stdout | from_json).available
+          ansible.builtin.include_tasks: tasks/win_audit_policy_system_case.yml
+          loop: '{{ audit_policy_cases }}'
+          loop_control:
+            loop_var: audit_policy_case
+            label: '{{ audit_policy_case.name }}'
+
+        - name: Exercise the explicit legacy absent-feature boundary
+          when: not (audit_policy_setup.stdout | from_json).available
+          block:
+            # Native argument validation is exercised on Windows, not by lint.
+            - name: Request unavailable audit policy # noqa: args[module]
+              sustainablelobster.legacy_windows.win_audit_policy_system:
+                subcategory: File System
+                audit_type: none
+              register: audit_policy_legacy_result
+
+            - name: Reject unexpected success on a target without the feature
+              ansible.builtin.fail:
+                msg: Advanced audit policy unexpectedly succeeded
+          rescue:
+            - name: Require actionable feature rejection without changes
+              ansible.builtin.assert:
+                that:
+                  - audit_policy_legacy_result is failed
+                  - not audit_policy_legacy_result.changed
+                  - >-
+                    'Failed to retrieve audit policy categories'
+                    in audit_policy_legacy_result.msg
+      always:
+        - name: Restore full policy before discarding recovery files
+          when: audit_policy_workspace.path is defined
+          block:
+            # The native command uses the collection's staged JSON interface.
+            - name: Restore and verify policy # noqa: args[module]
+              sustainablelobster.legacy_windows.win_command:
+                argv:
+                  - '{{ ansible_python_interpreter }}'
+                  - '-'
+                  - '{{ audit_policy_workspace.path }}'
+                  - cleanup
+                stdin: '{{ audit_policy_fixture }}'
+              register: audit_policy_restoration
+              changed_when: >-
+                (audit_policy_setup.stdout | default('{}', true)
+                | from_json).available
+                | default(false)
+              check_mode: false
+              no_log: true
+
+            - name: Require exact restoration before removing the workspace
+              ansible.builtin.assert:
+                that: (audit_policy_restoration.stdout | from_json).restored
+              no_log: true
+
+            - name: Remove only the verified owned recovery workspace
+              sustainablelobster.legacy_windows.win_file:  # noqa: args[module]
+                path: '{{ audit_policy_workspace.path }}'
+                state: absent
+              check_mode: false
+
+        - name: Retain final complete public and recovery evidence
+          ansible.builtin.copy:
+            content: >-
+              {{ {'results': audit_policy_results,
+                  'legacy_result': audit_policy_legacy_result | default(none),
+                  'restoration': audit_policy_restoration} | to_nice_json }}
+            dest: '{{ audit_policy_capture.path }}'
+            mode: '0600'
+          delegate_to: localhost
+          changed_when: false
+          no_log: true
+          vars: *audit_policy_local
+
+        - name: Require workspace absence and record remaining task directories
+          ansible.builtin.raw: >-
+            cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+            "import glob, json, os, sys, tempfile;
+            assert not os.path.exists(sys.argv[1]);
+            print(json.dumps(sorted(glob.glob(os.path.join(tempfile.gettempdir(),
+            'ansible-tmp-*')))))" "{{ audit_policy_workspace.path }}""
+          when: audit_policy_workspace.path is defined
+          register: audit_policy_staging_after
+          changed_when: false
+          check_mode: false
+
+        - name: Verify all declared cases and unchanged task staging
+          ansible.builtin.assert:
+            that:
+              - >-
+                (audit_policy_staging_before.stdout | from_json)
+                == (audit_policy_staging_after.stdout | from_json)
+              - >-
+                not (audit_policy_setup.stdout | from_json).available or
+                audit_policy_results | length == audit_policy_cases | length
+              - >-
+                audit_policy_results | selectattr('validated', 'equalto', true)
+                | list | length
+                == audit_policy_results | length
+          when: audit_policy_workspace.path is defined

@@ -1,0 +1,204 @@
+---
+- name: Compare complete explicit fact-gathering actions with protected recovery
+  hosts: legacy_windows
+  gather_facts: false
+  module_defaults:
+    sustainablelobster.legacy_windows.setup:
+      gather_subset: ['!all', '!min', distribution]
+    ansible.windows.setup:
+      gather_subset: ['!all', '!min', distribution]
+  vars:
+    setup_gather_subset: ['!all', '!min', distribution]
+    setup_gather_readonly: |
+      import json,sys
+      assert sys.version_info[:3] == (3,4,4)
+      namespace = {'__name__':'setup_gather_readonly'}
+      source = {{ lookup('ansible.builtin.file',
+          playbook_dir + '/fixtures/setup.py', rstrip=false) | to_json }}
+      exec(compile(source, 'setup_gather_readonly', 'exec'), namespace)
+      print(json.dumps({'python':list(sys.version_info[:3]),
+                        'protected':namespace['_protected_state']()}))
+    setup_gather_staging: >-
+      import glob,json,os,sys,tempfile;
+      assert sys.version_info[:3]==(3,4,4);
+      print(json.dumps(sorted(glob.glob(os.path.join(tempfile.gettempdir(),
+      'ansible-tmp-*')))))
+  tasks:
+    - name: Retain the readonly observer for the subsequent implicit play
+      ansible.builtin.set_fact:
+        setup_gather_readonly_program: '{{ setup_gather_readonly }}'
+      no_log: true
+
+    - name: Allocate a private controller evidence file
+      ansible.builtin.tempfile:
+        state: file
+        path: '{{ playbook_dir }}/../../tmp'
+        prefix: 'setup-gather-{{ inventory_hostname }}-'
+        suffix: .json
+      register: setup_gather_capture
+      delegate_to: localhost
+
+    - name: Record original global staging through actual Python 3.4.4
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "{{ setup_gather_staging }}""
+      register: setup_gather_staging_before
+      changed_when: false
+
+    - name: Observe original protected configuration without target writes
+      sustainablelobster.legacy_windows.win_command:
+        argv: ['{{ ansible_python_interpreter }}', '-']
+        stdin: '{{ setup_gather_readonly }}'
+      register: setup_gather_before
+      changed_when: false
+      no_log: true
+
+    - name: Compare the two real serial gathering actions
+      block:
+        - name: Run native gathering through its existing Setup action
+          sustainablelobster.legacy_windows.gather_facts:
+            gather_subset: '{{ setup_gather_subset }}'
+            parallel: false
+          vars:
+            ansible_facts_modules: [sustainablelobster.legacy_windows.setup]
+          register: setup_gather_native
+          ignore_errors: true
+          no_log: true
+
+        - name: Run the untouched original through the core gathering action
+          ansible.builtin.gather_facts:
+            parallel: false
+          vars:
+            ansible_facts_modules: [ansible.windows.setup]
+          register: setup_gather_original
+          ignore_errors: true
+          no_log: true
+      always:
+        - name: Observe final protected configuration without target writes
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}', '-']
+            stdin: '{{ setup_gather_readonly }}'
+          register: setup_gather_after
+          changed_when: false
+          no_log: true
+
+        - name: Observe complete task staging after both public actions
+          ansible.builtin.raw: >-
+            cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+            "{{ setup_gather_staging }}""
+          register: setup_gather_staging_after
+          changed_when: false
+
+        - name: Retain complete public results before any parity assertion
+          ansible.builtin.copy:
+            dest: '{{ setup_gather_capture.path }}'
+            mode: '0600'
+            content: >-
+              {{ {'native':setup_gather_native | default({}),
+                  'original':setup_gather_original | default({}),
+                  'before':setup_gather_before,
+                  'after':setup_gather_after,
+                  'staging_before':setup_gather_staging_before,
+                  'staging_after':setup_gather_staging_after} | to_nice_json }}
+          delegate_to: localhost
+          no_log: true
+
+        - name: Require literal configuration and global staging recovery
+          ansible.builtin.assert:
+            that:
+              - >-
+                (setup_gather_before.stdout | from_json) ==
+                (setup_gather_after.stdout | from_json)
+              - >-
+                (setup_gather_staging_before.stdout | from_json) ==
+                (setup_gather_staging_after.stdout | from_json)
+          no_log: true
+
+    - name: Require complete literal source parity and usable native facts
+      ansible.builtin.assert:
+        that:
+          - setup_gather_native is not failed
+          - setup_gather_original is not failed
+          - setup_gather_native is not changed
+          - >-
+            (setup_gather_native | to_json(sort_keys=true)) ==
+            (setup_gather_original | to_json(sort_keys=true))
+          - setup_gather_native.ansible_facts.module_setup
+          - setup_gather_native.ansible_facts._ansible_facts_gathered
+          - >-
+            setup_gather_native.ansible_facts.ansible_distribution_version
+            | length > 0
+      no_log: true
+
+    - name: Clear controller facts before measuring implicit gathering
+      ansible.builtin.meta: clear_facts
+
+# Implicit gathering needs this collection's action lookup, not a task FQCN.
+- name: Gather native facts implicitly with play selectors # noqa: fqcn[keyword]
+  hosts: legacy_windows
+  collections:
+    - sustainablelobster.legacy_windows
+  gather_facts: true
+  gather_subset: ['!all', '!min', distribution]
+  vars:
+    ansible_facts_modules: [sustainablelobster.legacy_windows.setup]
+  tasks:
+    - name: Retain complete injected implicit facts separately
+      ansible.builtin.copy:
+        dest: '{{ setup_gather_capture.path }}.implicit.json'
+        mode: '0600'
+        content: '{{ ansible_facts | to_nice_json }}'
+      delegate_to: localhost
+      no_log: true
+
+    - name: Require the requested facts without silently gathering defaults
+      ansible.builtin.assert:
+        that:
+          - ansible_facts.module_setup
+          - ansible_facts._ansible_facts_gathered
+          - ansible_facts.gather_subset == ['!all', '!min', 'distribution']
+          - ansible_facts.distribution_version | length > 0
+          - ansible_facts.interfaces is not defined
+          - ansible_facts.memtotal_mb is not defined
+      no_log: true
+
+    - name: Observe exact final global staging after implicit gathering
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import glob,json,os,sys,tempfile;
+        assert sys.version_info[:3]==(3,4,4);
+        print(json.dumps(sorted(glob.glob(os.path.join(tempfile.gettempdir(),
+        'ansible-tmp-*')))))""
+      register: setup_gather_implicit_staging
+      changed_when: false
+
+    - name: Preserve raw final staging before its assertion
+      sustainablelobster.legacy_windows.win_command:
+        argv: ['{{ ansible_python_interpreter }}', '-']
+        stdin: '{{ setup_gather_readonly_program }}'
+      register: setup_gather_implicit_after
+      changed_when: false
+      no_log: true
+
+    - name: Preserve final protected observations and raw staging
+      ansible.builtin.copy:
+        dest: '{{ setup_gather_capture.path }}.implicit-staging.json'
+        mode: '0600'
+        content: >-
+          {{ {'before':setup_gather_staging_before,
+              'after':setup_gather_implicit_staging,
+              'protected_before':setup_gather_before,
+              'protected_after':setup_gather_implicit_after} | to_nice_json }}
+      delegate_to: localhost
+      no_log: true
+
+    - name: Require literal staging closure after implicit gathering
+      ansible.builtin.assert:
+        that:
+          - >-
+            (setup_gather_staging_before.stdout | from_json) ==
+            (setup_gather_implicit_staging.stdout | from_json)
+          - >-
+            (setup_gather_before.stdout | from_json) ==
+            (setup_gather_implicit_after.stdout | from_json)
+      no_log: true

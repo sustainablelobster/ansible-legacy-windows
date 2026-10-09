@@ -1,0 +1,111 @@
+---
+# SPDX-License-Identifier: GPL-3.0-or-later
+- name: Verify query parity when a service description resource is missing
+  hosts: legacy_windows
+  gather_facts: false
+  vars:
+    service_description_name: WaaSMedicSvc
+  tasks:
+    - name: Record original task staging
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import glob,json,os,sys,tempfile;assert sys.version_info[:3]==(3,4,4);
+        print(json.dumps(sorted(glob.glob(os.path.join(tempfile.gettempdir(),'ansible-tmp-*')))))""
+      register: service_description_staging_before
+      changed_when: false
+
+    - name: Allocate private controller capture
+      ansible.builtin.tempfile:
+        state: file
+        path: '{{ playbook_dir }}/../../tmp'
+        prefix: 'service-description-{{ inventory_hostname }}-'
+        suffix: .json
+      register: service_description_capture
+      delegate_to: localhost
+      vars: &controller
+        ansible_connection: local
+        ansible_shell_type: sh
+        ansible_python_interpreter: '{{ ansible_playbook_python }}'
+      changed_when: false
+
+    - name: Query both implementations with mandatory final observations
+      block:
+        - name: Establish the native description-resource failure
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - '-'
+              - '{{ service_description_name }}'
+            stdin: >-
+              {{ lookup('ansible.builtin.file',
+              playbook_dir + '/fixtures/service_description_observer.py',
+              rstrip=false) }}
+          register: service_description_oracle
+          changed_when: false
+
+        - name: Require an actually missing description resource
+          vars:
+            actual: '{{ service_description_oracle.stdout | from_json }}'
+          ansible.builtin.assert:
+            that:
+              - actual.python == [3, 4, 4]
+              - actual.probe_error == 2 and actual.query_error == 2
+
+        - name: Query the complete released public service result
+          ansible.windows.win_service:
+            name: '{{ service_description_name }}'
+          register: service_description_source
+
+        - name: Query the complete native public service result
+          sustainablelobster.legacy_windows.win_service:
+            name: '{{ service_description_name }}'
+          register: service_description_native
+
+        - name: Require complete typed public parity without changes
+          ansible.builtin.assert:
+            that:
+              - service_description_native is not changed
+              - service_description_source is not changed
+              - service_description_native.exists
+              - service_description_source.exists
+              - service_description_native.description is none
+              - >-
+                (service_description_native | dict2items |
+                rejectattr('key', 'in', ['invocation', 'exception']) |
+                items2dict | to_json(sort_keys=true)) ==
+                (service_description_source | dict2items |
+                rejectattr('key', 'in', ['invocation', 'exception']) |
+                items2dict | to_json(sort_keys=true))
+      always:
+        - name: Observe final task staging
+          ansible.builtin.raw: >-
+            cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+            "import glob,json,os,tempfile;
+            print(json.dumps(sorted(glob.glob(os.path.join(tempfile.gettempdir(),'ansible-tmp-*')))))""
+          register: service_description_staging_after
+          changed_when: false
+
+        - name: Preserve raw outcomes before cleanup assertions
+          ansible.builtin.copy:
+            content: >-
+              {{ {'source': service_description_source | default(none),
+              'native': service_description_native | default(none),
+              'oracle': service_description_oracle | default(none),
+              'staging_before': service_description_staging_before,
+              'staging_after': service_description_staging_after}
+              | to_nice_json }}
+            dest: '{{ service_description_capture.path }}'
+            mode: '0600'
+          delegate_to: localhost
+          vars: *controller
+          changed_when: false
+
+        - name: Require original staging literally
+          ansible.builtin.assert:
+            that:
+              - >-
+                (service_description_staging_before.stdout | from_json) ==
+                (service_description_staging_after.stdout | from_json)
+
+        - name: Close owner-scoped standard SSH connection
+          ansible.builtin.meta: reset_connection

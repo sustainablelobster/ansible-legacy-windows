@@ -1,0 +1,188 @@
+---
+timezone_fixture: |
+  # Copyright 2026 Joe Lustri
+  # SPDX-License-Identifier: GPL-3.0-or-later
+  """Journal native timezone state and verify exact restoration."""
+
+  import base64
+  import ctypes
+  import datetime
+  import json
+  import os
+  import sys
+  import types
+
+  assert sys.version_info[:3] == (3, 4, 4)
+  WORKSPACE, OPERATION = sys.argv[1:3]
+  BASELINE = sys.argv[3] if len(sys.argv) > 3 else None
+  JOURNAL = os.path.join(WORKSPACE, "timezone-recovery.json")
+  HELPER_SOURCES = json.loads({{ timezone_helper_sources | to_json | to_json }})
+  HELPER_NAMES = (
+      "legacy_windows_account", "legacy_windows_group", "legacy_windows_owner",
+      "legacy_windows_time", "legacy_windows_environment",
+      "legacy_windows_timezone",
+  )
+  KERNEL = ctypes.WinDLL("kernel32", use_last_error=True)
+  WORD, LONG = ctypes.c_uint16, ctypes.c_int32
+
+
+  class SystemTime(ctypes.Structure):
+      _fields_ = [(name, WORD) for name in (
+          "year", "month", "weekday", "day", "hour", "minute", "second",
+          "millisecond")]
+
+
+  class Zone(ctypes.Structure):
+      _fields_ = [
+          ("bias", LONG), ("standard_name", WORD * 32),
+          ("standard_date", SystemTime), ("standard_bias", LONG),
+          ("daylight_name", WORD * 32), ("daylight_date", SystemTime),
+          ("daylight_bias", LONG),
+      ]
+
+
+  class DynamicZone(Zone):
+      _fields_ = [("key_name", WORD * 128),
+                 ("daylight_disabled", ctypes.c_ubyte)]
+
+
+  def bind(name, result, arguments):
+      function = getattr(KERNEL, name)
+      function.restype, function.argtypes = result, arguments
+      return function
+
+
+  get_zone = bind("GetTimeZoneInformation", ctypes.c_uint32,
+                  [ctypes.POINTER(Zone)])
+  set_zone = bind("SetTimeZoneInformation", ctypes.c_int,
+                  [ctypes.POINTER(Zone)])
+  convert = bind("SystemTimeToTzSpecificLocalTime", ctypes.c_int,
+                 [ctypes.c_void_p, ctypes.POINTER(SystemTime),
+                  ctypes.POINTER(SystemTime)])
+  get_dynamic = None
+  if hasattr(KERNEL, "GetDynamicTimeZoneInformation"):
+      get_dynamic = bind("GetDynamicTimeZoneInformation", ctypes.c_uint32,
+                         [ctypes.POINTER(DynamicZone)])
+
+
+  def require(result):
+      if not result:
+          raise ctypes.WinError(ctypes.get_last_error())
+
+
+  def encoded(value):
+      return base64.b64encode(bytes(value)).decode("ascii")
+
+
+  def text(value):
+      return bytes(value).decode("utf-16-le").split("\0", 1)[0]
+
+
+  def transition(value):
+      return [getattr(value, name) for name, unused in SystemTime._fields_]
+
+
+  def observe(year):
+      zone = Zone()
+      if get_zone(ctypes.byref(zone)) == 0xffffffff:
+          raise ctypes.WinError(ctypes.get_last_error())
+      dynamic = None
+      if get_dynamic is not None:
+          value = DynamicZone()
+          if get_dynamic(ctypes.byref(value)) == 0xffffffff:
+              raise ctypes.WinError(ctypes.get_last_error())
+          dynamic = {"raw": encoded(value), "key_name": text(value.key_name),
+                     "daylight_disabled": bool(value.daylight_disabled)}
+      offsets = []
+      for month in (1, 7):
+          universal = SystemTime(year, month, 0, 15, 12, 0, 0, 0)
+          local = SystemTime()
+          require(convert(None, ctypes.byref(universal), ctypes.byref(local)))
+          before = datetime.datetime(year, month, 15, 12)
+          after = datetime.datetime(local.year, local.month, local.day,
+                                    local.hour, local.minute, local.second)
+          offsets.append(int((after - before).total_seconds() // 60))
+      return {
+          "raw": encoded(zone), "bias": zone.bias,
+          "standard_name": text(zone.standard_name),
+          "daylight_name": text(zone.daylight_name),
+          "standard_bias": zone.standard_bias,
+          "daylight_bias": zone.daylight_bias,
+          "standard_date": transition(zone.standard_date),
+          "daylight_date": transition(zone.daylight_date),
+          "dynamic": dynamic, "offsets": offsets,
+      }
+
+
+  def load_timezone_helper():
+      for name in HELPER_NAMES:
+          if name not in sys.modules:
+              module = types.ModuleType(name)
+              sys.modules[name] = module
+              exec(compile(HELPER_SOURCES[name], name + ".py", "exec"),
+                   module.__dict__)
+      return sys.modules["legacy_windows_timezone"]
+
+
+  def save_journal(state, mode):
+      with open(JOURNAL, mode) as stream:
+          json.dump(state, stream)
+          stream.flush()
+          os.fsync(stream.fileno())
+
+
+  def read_journal():
+      with open(JOURNAL) as stream:
+          return json.load(stream)
+
+
+  def backup():
+      assert not os.path.exists(JOURNAL), "Recovery journal already exists"
+      year = datetime.datetime.now(datetime.timezone.utc).year
+      state = {"timezone": load_timezone_helper().get_timezone(),
+               "native": observe(year), "year": year, "restored": False}
+      save_journal(state, "x")
+      assert read_journal() == state, "Recovery journal verification failed"
+      return state
+
+
+  def setup():
+      state = backup()
+      load_timezone_helper().set_timezone(BASELINE)
+      return state
+
+
+  def restore_native(state):
+      helper = load_timezone_helper()
+      if state["native"]["dynamic"] is not None:
+          helper.set_timezone(state["timezone"])
+      else:
+          zone = Zone.from_buffer_copy(base64.b64decode(state["native"]["raw"]))
+          owner = sys.modules["legacy_windows_owner"]
+          with owner.ownership_privileges(("SeSystemtimePrivilege",)):
+              require(set_zone(ctypes.byref(zone)))
+
+
+  def cleanup(state):
+      if observe(state["year"]) != state["native"]:
+          restore_native(state)
+      assert observe(state["year"]) == state["native"], (
+          "Restored native timezone differs from the original"
+      )
+      state["restored"] = True
+      save_journal(state, "w")
+
+
+  assert OPERATION in ("setup", "observe", "cleanup"), OPERATION
+  if OPERATION == "cleanup" and not os.path.exists(JOURNAL):
+      print(json.dumps({"restored": True, "backup_created": False}))
+      sys.exit(0)
+  if OPERATION == "setup":
+      state = setup()
+  else:
+      state = read_journal()
+  if OPERATION == "cleanup":
+      cleanup(state)
+      print(json.dumps({"restored": True, "backup_created": True}))
+  else:
+      print(json.dumps(observe(state["year"])))

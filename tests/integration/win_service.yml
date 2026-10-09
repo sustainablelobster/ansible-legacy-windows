@@ -1,0 +1,147 @@
+---
+- name: Verify real owned service dispatchers and recover original absence
+  hosts: legacy_windows
+  gather_facts: false
+  vars_files:
+    - vars/service.yml
+    - vars/service_fixture.yml
+  vars:
+    service_capture:
+      results: '{{ service_results }}'
+      workspace: '{{ service_workspace.path | default(none) }}'
+      setup: '{{ service_setup | default({}) }}'
+      cleanup: '{{ service_cleanup | default({}) }}'
+      staging_before: '{{ service_staging_before.stdout | default("") }}'
+      staging_after: '{{ service_staging_after.stdout | default("") }}'
+  tasks:
+    - name: Allocate a unique private evidence file
+      ansible.builtin.tempfile:
+        state: file
+        prefix: service-{{ inventory_hostname }}-
+        suffix: .json
+        path: '{{ playbook_dir }}/../../tmp'
+      register: service_capture_file
+      delegate_to: localhost
+      vars: &service_local
+        ansible_connection: local
+        ansible_shell_type: sh
+        ansible_python_interpreter: '{{ ansible_playbook_python }}'
+      changed_when: false
+      check_mode: false
+
+    - name: Report the private evidence location
+      ansible.builtin.debug:
+        msg: 'Service evidence: {{ service_capture_file.path }}'
+
+    - name: Initialize retained results
+      ansible.builtin.set_fact:
+        service_results: []
+
+    - name: Require Python 3.4.4 and record preexisting staging directories
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import glob, json, os, sys, tempfile;
+        assert sys.version_info[:3] == (3, 4, 4);
+        print(json.dumps(sorted(glob.glob(os.path.join(tempfile.gettempdir(),
+        'ansible-tmp-*')))))""
+      register: service_staging_before
+      changed_when: false
+
+    - name: Exercise only uniquely owned services
+      block:
+        - name: Allocate an owned recovery workspace
+          sustainablelobster.legacy_windows.win_tempfile:  # noqa: args[module]
+            state: directory
+            prefix: legacy-windows-service-
+          register: service_workspace
+          check_mode: false
+
+        - name: Verify absence and journal the dispatcher resources
+          sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - '-'
+              - '{{ service_workspace.path }}'
+              - setup
+            stdin: '{{ service_fixture }}'
+          register: service_setup
+          check_mode: false
+          no_log: true
+
+        - name: Retain names and exact owned command lines
+          ansible.builtin.set_fact:
+            service_names: '{{ (service_setup.stdout | from_json).names }}'
+            service_commands: >-
+              {{ (service_setup.stdout | from_json).commands }}
+            service_delayed_supported: >-
+              {{ (service_setup.stdout | from_json).windows_major >= 6 }}
+          no_log: true
+
+        - name: Exercise service behavior and recovery
+          ansible.builtin.include_tasks: tasks/win_service_case.yml
+          loop: >-
+            {{ service_cases + (service_legacy_cases
+               if not service_delayed_supported else []) }}
+          when: >-
+            service_delayed_supported
+            or not (service_case.modern_only | default(false))
+          loop_control:
+            loop_var: service_case
+            label: '{{ service_case.name }}'
+      always:
+        - name: Recover owned resources and preserve evidence
+          block:
+            - name: Remove only journaled services # noqa: args[module]
+              sustainablelobster.legacy_windows.win_command:
+                argv:
+                  - '{{ ansible_python_interpreter }}'
+                  - '-'
+                  - '{{ service_workspace.path }}'
+                  - cleanup
+                stdin: '{{ service_fixture }}'
+              when: service_workspace.path is defined
+              register: service_cleanup
+              check_mode: false
+              no_log: true
+
+            - name: Require verified service and process absence
+              ansible.builtin.assert:
+                that: (service_cleanup.stdout | from_json).restored
+              when: service_workspace.path is defined
+
+            - name: Remove the verified owned workspace
+              sustainablelobster.legacy_windows.win_file:  # noqa: args[module]
+                path: '{{ service_workspace.path }}'
+                state: absent
+              when: service_workspace.path is defined
+              check_mode: false
+
+            - name: Independently verify workspace and staging cleanup
+              ansible.builtin.raw: >-
+                cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+                "import glob, json, os, sys, tempfile;
+                assert not os.path.exists(sys.argv[1]);
+                print(json.dumps(sorted(glob.glob(os.path.join(
+                tempfile.gettempdir(), 'ansible-tmp-*')))))"
+                "{{ service_workspace.path }}""
+              when: service_workspace.path is defined
+              register: service_staging_after
+              changed_when: false
+              check_mode: false
+
+            - name: Require staging cleanup
+              ansible.builtin.assert:
+                that: >-
+                  (service_staging_before.stdout | from_json)
+                  == (service_staging_after.stdout | from_json)
+              when: service_workspace.path is defined
+          always:
+            - name: Preserve complete private evidence after cleanup
+              ansible.builtin.copy:
+                content: '{{ service_capture | to_nice_json }}'
+                dest: '{{ service_capture_file.path }}'
+                mode: '0600'
+              delegate_to: localhost
+              vars: *service_local
+              changed_when: false
+              no_log: true

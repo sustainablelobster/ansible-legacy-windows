@@ -1,0 +1,130 @@
+---
+capability_cases:
+  - name: Absent capability is already absent
+    params: {name: XPS.Viewer~~~~0.0.1.0, state: absent}
+    names: []
+    changed: false
+  - name: Empty list does not reach provider logging validation
+    params: {name: [], log_level: 3}
+    names: []
+    changed: false
+  - name: Explicit null list does not query or create a task
+    params: {name: null}
+    names: []
+    changed: false
+  - name: No match fails before writes
+    params: {name: LegacyWindowsAbsentCapability}
+    failed: true
+    changed: false
+  - name: Malformed provider wildcard fails before writes
+    params: {name: '[bad'}
+    failed: true
+    changed: false
+  - name: Reversed provider range fails before writes
+    params: {name: '[z-a]'}
+    failed: true
+    changed: false
+  - name: Regex punctuation remains literal
+    params: {name: 'XPS.(Viewer|Other)~~~~0.0.1.0'}
+    failed: true
+    changed: false
+  - name: Escaped digit class matches the absent XPS capability
+    params: {name: 'XPS.Viewer*[\d]*', state: absent}
+    check: true
+    names: []
+    changed: false
+  - name: Invalid logging enum fails before writes
+    params: {name: XPS.Viewer~~~~0.0.1.0, log_level: 4}
+    check: true
+    failed: true
+    changed: false
+  - name: Fractional integer fails in argument binding
+    params: {name: XPS.Viewer~~~~0.0.1.0, log_level: 1.5}
+    failed: true
+    changed: false
+  - name: Missing required argument fails in binding
+    params: {}
+    failed: true
+    changed: false
+  - name: Missing later name prevents any earlier install
+    params: {name: [XPS.Viewer~~~~0.0.1.0, LegacyWindowsAbsentCapability]}
+    failed: true
+    changed: false
+  - name: Null state checks names without servicing
+    params: {name: XPS.Viewer~~~~0.0.1.0, state: null}
+    names: []
+    changed: false
+  - name: Install prediction starts a same-user batch without servicing
+    params: {name: XPS.Viewer~~~~0.0.1.0}
+    check: true
+    names: [XPS.Viewer~~~~0.0.1.0]
+    changed: true
+  - name: Duplicate names retain prediction order
+    params: {name: [XPS.Viewer~~~~0.0.1.0, XPS.Viewer~~~~0.0.1.0]}
+    check: true
+    names: [XPS.Viewer~~~~0.0.1.0, XPS.Viewer~~~~0.0.1.0]
+    changed: true
+  - name: Modern debug logging predicts an addition without servicing
+    params: {name: XPS.Viewer~~~~0.0.1.0, log_level: 3}
+    check: true
+    names: [XPS.Viewer~~~~0.0.1.0]
+    changed: true
+  - name: Multi-match presence predicts every matching native name
+    params: {name: 'Microsoft.Windows.*'}
+    check: true
+    names: >-
+      {{ (capability_setup.stdout | from_json).before.capabilities.keys() |
+         select('match', '^Microsoft[.]Windows[.]') | list | sort }}
+    changed: true
+  - name: Mixed-state removal predicts all matches without touching connection
+    params: {name: 'OpenSSH.*', state: absent}
+    check: true
+    names: [OpenSSH.Client~~~~0.0.1.0, OpenSSH.Server~~~~0.0.1.0]
+    changed: true
+  - name: Actual native capability installation
+    params: {name: XPS.Viewer~~~~0.0.1.0}
+    names: [XPS.Viewer~~~~0.0.1.0]
+    changed: true
+    mutation: true
+    target_state: Installed
+  - name: Installed capability is idempotent
+    params: {name: XPS.Viewer~~~~0.0.1.0}
+    names: []
+    changed: false
+  - name: Installed duplicates remain idempotent
+    params: {name: [XPS.Viewer~~~~0.0.1.0, XPS.Viewer~~~~0.0.1.0]}
+    names: []
+    changed: false
+  - name: Removal prediction ignores installation source
+    params: {name: XPS.Viewer~~~~0.0.1.0, state: absent,
+             source: 'C:\LegacyWindowsMissingSource',
+             disable_windows_update: true}
+    check: true
+    names: [XPS.Viewer~~~~0.0.1.0]
+    changed: true
+  - name: Actual native capability removal
+    params: {name: XPS.Viewer~~~~0.0.1.0, state: absent,
+             source: 'C:\LegacyWindowsMissingSource',
+             disable_windows_update: true, log_level: 1}
+    names: [XPS.Viewer~~~~0.0.1.0]
+    changed: true
+    mutation: true
+    target_state: NotPresent
+  - name: Removed capability is idempotent
+    params: {name: XPS.Viewer~~~~0.0.1.0, state: absent}
+    names: []
+    changed: false
+capability_legacy_cases:
+  - name: Installation rejects unavailable capability provider before writes
+    params: {name: XPS.Viewer~~~~0.0.1.0}
+    failed: true
+    changed: false
+  - name: Removal rejects unavailable capability provider before writes
+    params: {name: XPS.Viewer~~~~0.0.1.0, state: absent}
+    failed: true
+    changed: false
+  - name: Check mode rejects unavailable provider without a batch task
+    params: {name: XPS.Viewer~~~~0.0.1.0}
+    check: true
+    failed: true
+    changed: false

@@ -1,0 +1,289 @@
+---
+# SPDX-License-Identifier: GPL-3.0-or-later
+- name: Verify read-only token and session information on Windows Python 3.4.4
+  hosts: legacy_windows
+  gather_facts: false
+  vars_files:
+    - vars/whoami_observation.yml
+  vars:
+    observations: '{{ native_before.stdout | from_json }}'
+    public_fields:
+      - account
+      - authentication_package
+      - dns_domain_name
+      - groups
+      - impersonation_level
+      - label
+      - login_domain
+      - login_time
+      - logon_id
+      - logon_server
+      - logon_type
+      - privileges
+      - rights
+      - token_type
+      - upn
+      - user_flags
+    account_fields: [account_name, domain_name, sid, type]
+    known_user_flags:
+      - Optimized
+      - Winlogon
+      - Pkinit
+      # Preserve the spelling produced by the pinned upstream enum.
+      - Not optmized  # codespell:ignore optmized
+  tasks:
+    - name: Require the target runtime and record initial task directories
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "import glob, json, os, sys, tempfile;
+        assert sys.version_info[:3] == (3, 4, 4);
+        print(json.dumps(sorted(glob.glob(os.path.join(tempfile.gettempdir(),
+        'ansible-tmp-*')))))""
+      register: task_directories_before
+      changed_when: false
+      check_mode: false
+
+    - name: Require a clean initial staging area
+      ansible.builtin.assert:
+        that:
+          - (task_directories_before.stdout | from_json) == []
+
+    - name: Exercise identity queries and validation recovery
+      block:
+        - name: Read the account token and session independently
+          # stdin keeps the native observer below CMD's command-line limit.
+          sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - import sys;exec(sys.stdin.read())
+            stdin: '{{ whoami_observation_code }}'
+          register: native_before
+          changed_when: false
+          check_mode: false
+
+        - name: Require the fixture's interactive session and known availability
+          # The SSH tasks must reuse this existing interactive authentication
+          # session. Exact IDs and timestamps below deliberately test that
+          # assumption; the fixture never logs on or changes session settings.
+          ansible.builtin.assert:
+            that:
+              - observations.python == [3, 4, 4]
+              - observations.expected.token_type == 'TokenPrimary'
+              - observations.expected.logon_type == 'Interactive'
+              - observations.integrity_error in [0, 87]
+              - observations.expected.login_time is not none
+
+        - name: Read identity information
+          sustainablelobster.legacy_windows.win_whoami:
+          register: identity
+
+        - name: Repeat the identity read
+          sustainablelobster.legacy_windows.win_whoami:
+          register: repeated
+
+        - name: Read identity in check mode
+          sustainablelobster.legacy_windows.win_whoami:
+          check_mode: true
+          diff: true
+          register: checked
+
+        - name: Verify complete unchanged results against native observations
+          ansible.builtin.assert:
+            that:
+              - item is not changed
+              - item is not skipped
+              - item.diff is not defined
+              - >-
+                item.keys() | difference(['changed', 'failed', 'warnings',
+                'invocation']) | sort == public_fields | sort
+              - >-
+                item | dict2items | selectattr('key', 'in', public_fields) |
+                items2dict == observations.expected
+              - item.account is mapping
+              - item.groups | type_debug == 'list'
+              - item.privileges is mapping
+              - item.rights | type_debug == 'list'
+              - item.logon_id | type_debug == 'int'
+              - item.logon_id > 0
+              - item.token_type is string
+              - item.impersonation_level is string
+              - item.logon_type is string
+              - item.login_time is string
+              - >-
+                item.login_time is match(
+                '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{7}[+-]\d{2}:\d{2}$')
+              - >-
+                item.warnings | default([]) ==
+                identity.warnings | default([])
+          loop: '{{ [identity, repeated, checked] }}'
+          loop_control:
+            index_var: result_index
+            label: '{{ ["normal", "repeated", "check"][result_index] }}'
+
+        - name: Check nullable session strings
+          ansible.builtin.assert:
+            that:
+              - identity[item] is string or identity[item] is none
+          loop:
+            - login_domain
+            - authentication_package
+            - logon_server
+            - dns_domain_name
+            - upn
+
+        - name: Check the account and available integrity label schemas
+          ansible.builtin.assert:
+            that:
+              - item.keys() | sort == account_fields | sort
+              - item.sid is string
+              - item.sid is match('^S-1-\d+(-\d+)+$')
+              - item.account_name is string or item.account_name is none
+              - item.domain_name is string or item.domain_name is none
+              - item.type is string
+          loop: >-
+            {{ [identity.account] +
+            ([] if identity.label is none else [identity.label]) }}
+          loop_control:
+            label: '{{ item.sid }}'
+
+        - name: Check token group schemas and exclude the logon SID
+          ansible.builtin.assert:
+            that:
+              - item.keys() | sort == (account_fields + ['attributes']) | sort
+              - item.sid is string
+              - item.sid is match('^S-1-\d+(-\d+)+$')
+              - not item.sid.startswith('S-1-5-5-')
+              - item.account_name is string or item.account_name is none
+              - item.domain_name is string or item.domain_name is none
+              - item.type is string
+              - item.attributes | type_debug == 'list'
+              - >-
+                item.attributes | difference(['Mandatory', 'Enabled by default',
+                'Enabled', 'Owner', 'Use for deny only', 'Integrity',
+                'Integrity enabled', 'Resource']) == []
+          loop: '{{ identity.groups }}'
+          loop_control:
+            label: '{{ item.sid }}'
+
+        - name: Check privilege names and states
+          ansible.builtin.assert:
+            that:
+              - item.key is string
+              - item.key is match('^Se.+Privilege$')
+              - item.value in ['disabled', 'enabled', 'enabled-by-default']
+          loop: '{{ identity.privileges | dict2items }}'
+          loop_control:
+            label: '{{ item.key }}'
+
+        - name: Check distinct logon rights and non-administrator behavior
+          ansible.builtin.assert:
+            that:
+              - identity.rights | unique | list == identity.rights
+              - observations.is_admin or identity.rights == []
+              - identity.rights | select('string') | list == identity.rights
+              - >-
+                identity.rights | select('search', 'Logon') | list ==
+                identity.rights
+
+        - name: Require named warnings only for unavailable native fields
+          ansible.builtin.assert:
+            that:
+              - (identity.label is none) == (observations.integrity_error == 87)
+              - >-
+                (identity.user_flags is none) ==
+                (observations.session_size < observations.flags_offset + 4)
+              - >-
+                identity.user_flags is none or
+                identity.user_flags | type_debug == 'list'
+              - >-
+                identity.user_flags is none or
+                identity.user_flags | difference(known_user_flags) == []
+              - >-
+                (identity.warnings | default([]) | length) ==
+                ((identity.label is none) | int) +
+                ((identity.user_flags is none) | int)
+              - >-
+                ('label' in (identity.warnings | default([]) | join(' '))) ==
+                (identity.label is none)
+              - >-
+                ('user_flags' in
+                (identity.warnings | default([]) | join(' '))) ==
+                (identity.user_flags is none)
+
+        - name: Verify unsupported arguments fail before returning identity
+          block:
+            - name: Submit an unsupported option  # noqa: args[module]
+              # Invalid input must reach the WANT_JSON payload's validation.
+              sustainablelobster.legacy_windows.win_whoami:
+                unexpected_option: true
+              register: invalid
+
+            - name: Reject unexpected success
+              ansible.builtin.fail:
+                msg: An unsupported identity argument unexpectedly succeeded
+          rescue:
+            - name: Assert the intended unchanged validation failure
+              ansible.builtin.assert:
+                that:
+                  - invalid is failed
+                  - invalid is not changed
+                  - invalid.msg is search('Unsupported parameters')
+                  - invalid.keys() | intersect(public_fields) == []
+
+        - name: Read identity after the validation failure
+          sustainablelobster.legacy_windows.win_whoami:
+          register: recovered
+
+        - name: Verify complete recovery
+          ansible.builtin.assert:
+            that:
+              - recovered is not changed
+              - >-
+                recovered.keys() | difference(
+                ['changed', 'failed', 'warnings', 'invocation']) | sort ==
+                public_fields | sort
+              - >-
+                recovered | dict2items |
+                selectattr('key', 'in', public_fields) | items2dict ==
+                observations.expected
+              - >-
+                recovered.warnings | default([]) ==
+                identity.warnings | default([])
+      always:
+        - name: Inspect the native token and session after all queries
+          block:
+            - name: Repeat the independent native observer  # noqa: args[module]
+              # stdin avoids CMD's limit; this command only reads native state.
+              sustainablelobster.legacy_windows.win_command:
+                argv:
+                  - '{{ ansible_python_interpreter }}'
+                  - -c
+                  - import sys;exec(sys.stdin.read())
+                stdin: '{{ whoami_observation_code }}'
+              register: native_after
+              changed_when: false
+              check_mode: false
+
+            - name: Verify unchanged observed account token and session
+              ansible.builtin.assert:
+                that:
+                  - (native_after.stdout | from_json) == observations
+          always:
+            - name: Inspect task directories after the observer has cleaned up
+              ansible.builtin.raw: >-
+                cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+                "import glob, json, os, tempfile;
+                print(json.dumps(sorted(glob.glob(os.path.join(
+                tempfile.gettempdir(), 'ansible-tmp-*')))))""
+              register: task_directories_after
+              changed_when: false
+              check_mode: false
+
+            - name: Verify successful and failed tasks removed all staged files
+              ansible.builtin.assert:
+                that:
+                  - (task_directories_after.stdout | from_json) == []
+                  - >-
+                    (task_directories_before.stdout | from_json) ==
+                    (task_directories_after.stdout | from_json)

@@ -1,0 +1,405 @@
+---
+- name: Capture Windows FTP source behavior using an owned controller server
+  hosts: legacy_windows
+  gather_facts: false
+  vars_files:
+    - vars/get_url_fixture.yml
+    - vars/get_url_ftp_fixture.yml
+    - vars/get_url_ftp.yml
+  vars:
+    get_url_ftp_mode: original
+    get_url_ftp_controller_parent: '{{ playbook_dir }}/../../tmp'
+    get_url_ftp_selected_cases: >-
+      {{ get_url_ftp_cases[get_url_ftp_case_start | default(0) | int:] }}
+  tasks:
+    - name: Require a single explicitly selected guest and supported test mode
+      ansible.builtin.assert:
+        that:
+          - ansible_play_hosts | length == 1
+          - get_url_ftp_mode in ['original', 'paired', 'native']
+
+    - name: Allocate private FTP evidence
+      ansible.builtin.tempfile:
+        state: file
+        path: '{{ get_url_ftp_controller_parent }}'
+        prefix: get-url-ftp-oracle-
+        suffix: .json
+      register: get_url_capture
+      delegate_to: localhost
+      vars: &local
+        ansible_connection: local
+        ansible_shell_type: sh
+        ansible_python_interpreter: '{{ ansible_playbook_python }}'
+      changed_when: false
+
+    - name: Initialize complete public evidence
+      ansible.builtin.set_fact:
+        get_url_results: []
+
+    - name: Load explicitly supplied original FTP public reference
+      when: get_url_reference_capture is defined
+      ansible.builtin.set_fact:
+        get_url_reference: >-
+          {{ lookup('ansible.builtin.file', get_url_reference_capture,
+                    rstrip=false) | from_json }}
+        get_url_reference_sha256: >-
+          {{ lookup('ansible.builtin.file', get_url_reference_capture,
+                    rstrip=false) | hash('sha256') }}
+      no_log: true
+
+    - name: Require unique validated source records for native reference mode
+      when: get_url_reference_capture is defined
+      ansible.builtin.assert:
+        that:
+          - get_url_ftp_mode == 'native'
+          - get_url_reference.results | length > 0
+          - >-
+            get_url_reference.results | map(attribute='name') | unique |
+            length == get_url_reference.results | length
+          - >-
+            get_url_reference.results |
+            rejectattr('validated', 'equalto', true) | list | length == 0
+
+    - name: Exercise FTP in owned controller and target workspaces
+      block:
+        - name: Prove actual Python 3.4.4, free guest ports and original staging
+          ansible.builtin.raw: >-
+            cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+            "import glob,json,os,socket,sys,tempfile;
+            assert sys.version_info[:3] == (3,4,4);
+            sockets=[socket.socket() for port in (2121,2122)];
+            [connection.bind(('127.0.0.1',port))
+            for connection,port in zip(sockets,(2121,2122))];
+            print(json.dumps({'python':sys.version,
+            'staging':sorted(glob.glob(os.path.join(
+            tempfile.gettempdir(),'ansible-tmp-*')))}))""
+          register: get_url_staging_before
+          changed_when: false
+
+        - name: Allocate empty owned controller FTP workspace
+          ansible.builtin.tempfile:
+            state: directory
+            path: '{{ get_url_ftp_controller_parent }}'
+            prefix: get-url-ftp-
+          register: get_url_ftp_workspace
+          delegate_to: localhost
+          vars: *local
+          changed_when: false
+
+        - name: Start the journaled controller-only FTP server
+          ansible.builtin.command:
+            argv: ['{{ ansible_playbook_python }}', '-',
+                   '{{ get_url_ftp_workspace.path }}', setup,
+                   '{{ get_url_ftp_controller_parent }}']
+            stdin: '{{ get_url_ftp_program }}'
+          register: get_url_ftp_setup
+          delegate_to: localhost
+          vars: *local
+          changed_when: false
+          no_log: true
+
+        - name: Bind controller FTP metadata
+          ansible.builtin.set_fact:
+            get_url_ftp_setup_data: '{{ get_url_ftp_setup.stdout | from_json }}'
+
+        - name: Allocate owned target file fixture  # noqa: args[module]
+          sustainablelobster.legacy_windows.win_tempfile:
+            state: directory
+            prefix: legacy-windows-get-url-
+          register: get_url_workspace
+
+        - name: Start unchanged target fixture  # noqa: args[module]
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}', '-',
+                   '{{ get_url_workspace.path }}', setup]
+            stdin: '{{ get_url_program }}'
+          register: get_url_setup
+          changed_when: false
+          no_log: true
+
+        - name: Bind unchanged target fixture metadata and SSH multiplex socket
+          ansible.builtin.set_fact:
+            get_url_setup_data: '{{ get_url_setup.stdout | from_json }}'
+            get_url_ftp_connection:
+              destination: '{{ ansible_host }}'
+              socket: >-
+                {{ (lookup('env', 'ANSIBLE_SSH_CONTROL_PATH_DIR') or
+                    lookup('env', 'HOME') + '/.ansible/cp') + '/' +
+                   ((ansible_host + '-' +
+                     (ansible_port | default('None') | string) +
+                     '-' + ansible_user) | hash('sha1'))[:10] }}
+          no_log: true
+
+        - name: Open only the two journaled SSH reverse forwards
+          ansible.builtin.command:
+            argv: ['{{ ansible_playbook_python }}', '-',
+                   '{{ get_url_ftp_workspace.path }}', forward,
+                   '{{ get_url_ftp_controller_parent }}',
+                   '{{ get_url_ftp_connection | to_json }}']
+            stdin: '{{ get_url_ftp_program }}'
+          register: get_url_ftp_forward
+          delegate_to: localhost
+          vars: *local
+          changed_when: false
+          no_log: true
+
+        - name: Capture every source case before result assertions
+          ansible.builtin.include_tasks: tasks/win_get_url_ftp_case.yml
+          loop: '{{ get_url_ftp_selected_cases }}'
+          loop_control:
+            loop_var: get_url_ftp_case
+            label: '{{ get_url_ftp_case.name }}'
+          vars:
+            get_url_case: '{{ get_url_ftp_case }}'
+      always:
+        - name: Retain complete raw public evidence before recovery
+          ansible.builtin.copy:
+            content: >-
+              {{ {'results': get_url_results,
+                  'controller_workspace': get_url_ftp_workspace | default(none),
+                  'controller_setup': get_url_ftp_setup | default(none),
+                  'forward': get_url_ftp_forward | default(none),
+                  'reference_capture':
+                    get_url_reference_capture | default(none),
+                  'reference_sha256': get_url_reference_sha256 | default(none),
+                  'setup': get_url_setup | default(none),
+                  'workspace': get_url_workspace | default(none),
+                  'staging_before': get_url_staging_before | default(none)} |
+                 to_nice_json }}
+            dest: '{{ get_url_capture.path }}'
+            mode: '0600'
+          delegate_to: localhost
+          vars: *local
+          changed_when: false
+          no_log: true
+
+        - name: Cancel only forwards associated with the recorded SSH master
+          when: get_url_ftp_workspace.path is defined
+          ansible.builtin.command:
+            argv: ['{{ ansible_playbook_python }}', '-',
+                   '{{ get_url_ftp_workspace.path }}', unforward,
+                   '{{ get_url_ftp_controller_parent }}']
+            stdin: '{{ get_url_ftp_program }}'
+          register: get_url_ftp_unforward
+          delegate_to: localhost
+          vars: *local
+          changed_when: false
+          no_log: true
+
+        - name: Independently prove both guest reverse listeners are closed
+          when: get_url_ftp_workspace.path is defined
+          ansible.builtin.raw: >-
+            cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+            "import json,socket;
+            connections=[socket.socket() for port in (2121,2122)];
+            assert all(connection.connect_ex(('127.0.0.1',port)) != 0
+            for connection,port in zip(connections,(2121,2122)));
+            print(json.dumps({'guest_forward_ports_closed':True}))""
+          register: get_url_ftp_guest_closed
+          changed_when: false
+
+        - name: Recover unchanged target file fixture  # noqa: args[module]
+          when: get_url_workspace.path is defined
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}', '-',
+                   '{{ get_url_workspace.path }}', cleanup]
+            stdin: '{{ get_url_program }}'
+          register: get_url_recovery
+          changed_when: false
+          no_log: true
+
+        - name: Require target recovery before deleting any owned target files
+          when: get_url_workspace.path is defined
+          ansible.builtin.assert:
+            that:
+              - (get_url_recovery.stdout | from_json).restored
+              - (get_url_recovery.stdout | from_json).server_stopped
+
+        - name: Finalize unchanged target journal  # noqa: args[module]
+          when: get_url_workspace.path is defined
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}', '-',
+                   '{{ get_url_workspace.path }}', finalize]
+            stdin: '{{ get_url_program }}'
+          changed_when: false
+          no_log: true
+
+        - name: Remove verified target workspace  # noqa: args[module]
+          when: get_url_workspace.path is defined
+          sustainablelobster.legacy_windows.win_file:
+            path: '{{ get_url_workspace.path }}'
+            state: absent
+
+        - name: Independently prove target absence and unchanged global staging
+          when: get_url_workspace.path is defined
+          ansible.builtin.raw: >-
+            cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+            "import glob,json,os,sys,tempfile;
+            assert not os.path.exists(sys.argv[1]);
+            print(json.dumps({'staging':sorted(glob.glob(os.path.join(
+            tempfile.gettempdir(),'ansible-tmp-*'))),
+            'workspace_absent':True}))" "{{ get_url_workspace.path }}""
+          register: get_url_staging_after
+          changed_when: false
+
+        - name: Require original global staging
+          when: get_url_workspace.path is defined
+          ansible.builtin.assert:
+            that:
+              - >-
+                (get_url_staging_before.stdout | from_json).staging ==
+                (get_url_staging_after.stdout | from_json).staging
+
+        - name: Stop exact controller process and verify protected materials
+          when: get_url_ftp_workspace.path is defined
+          ansible.builtin.command:
+            argv: ['{{ ansible_playbook_python }}', '-',
+                   '{{ get_url_ftp_workspace.path }}', cleanup,
+                   '{{ get_url_ftp_controller_parent }}']
+            stdin: '{{ get_url_ftp_program }}'
+          register: get_url_ftp_recovery
+          delegate_to: localhost
+          vars: *local
+          changed_when: false
+          no_log: true
+
+        - name: Require controller restoration and process termination
+          when: get_url_ftp_workspace.path is defined
+          ansible.builtin.assert:
+            that:
+              - (get_url_ftp_recovery.stdout | from_json).restored
+              - (get_url_ftp_recovery.stdout | from_json).server_stopped
+
+        - name: Verify the exact allowed controller workspace entries
+          when: get_url_ftp_workspace.path is defined
+          ansible.builtin.command:
+            argv: ['{{ ansible_playbook_python }}', '-',
+                   '{{ get_url_ftp_workspace.path }}', finalize,
+                   '{{ get_url_ftp_controller_parent }}']
+            stdin: '{{ get_url_ftp_program }}'
+          delegate_to: localhost
+          vars: *local
+          changed_when: false
+          no_log: true
+
+        - name: Remove only the verified owned controller workspace
+          when: get_url_ftp_workspace.path is defined
+          ansible.builtin.file:
+            path: '{{ get_url_ftp_workspace.path }}'
+            state: absent
+          delegate_to: localhost
+          vars: *local
+          changed_when: false
+
+        - name: Independently prove controller workspace absence
+          when: get_url_ftp_workspace.path is defined
+          ansible.builtin.stat:
+            path: '{{ get_url_ftp_workspace.path }}'
+          register: get_url_ftp_absence
+          delegate_to: localhost
+          vars: *local
+
+        - name: Retain full public, protocol and cleanup evidence
+          ansible.builtin.copy:
+            content: >-
+              {{ {'results': get_url_results,
+                  'controller_setup': get_url_ftp_setup | default(none),
+                  'forward': get_url_ftp_forward | default(none),
+                  'reference_capture':
+                    get_url_reference_capture | default(none),
+                  'reference_sha256': get_url_reference_sha256 | default(none),
+                  'setup': get_url_setup | default(none),
+                  'workspace': get_url_workspace | default(none),
+                  'controller_workspace': get_url_ftp_workspace | default(none),
+                  'recovery': get_url_recovery | default(none),
+                  'controller_recovery': get_url_ftp_recovery | default(none),
+                  'unforward': get_url_ftp_unforward | default(none),
+                  'guest_closed': get_url_ftp_guest_closed | default(none),
+                  'controller_absence': get_url_ftp_absence | default(none),
+                  'staging_before': get_url_staging_before | default(none),
+                  'staging_after': get_url_staging_after | default(none)} |
+                 to_nice_json }}
+            dest: '{{ get_url_capture.path }}'
+            mode: '0600'
+          delegate_to: localhost
+          vars: *local
+          changed_when: false
+          no_log: true
+
+    - name: Require complete source captures after recovery
+      ansible.builtin.assert:
+        that:
+          - get_url_results | length == get_url_ftp_selected_cases | length
+          - >-
+            get_url_results | map(attribute='name') | sort ==
+            get_url_ftp_selected_cases | map(attribute='name') | sort
+          - not get_url_ftp_absence.stat.exists
+          - >-
+            get_url_ftp_mode == 'original' or
+            get_url_results | rejectattr('validated', 'equalto', true) |
+            list | length == 0
+
+    - name: Validate source observations only after retaining all raw cases
+      when: get_url_ftp_mode == 'original'
+      vars:
+        before: '{{ item.before_original.stdout | from_json }}'
+        after: '{{ item.after_original.stdout | from_json }}'
+      ansible.builtin.assert:
+        that:
+          - item.original.changed == (item.case.changed | default(false))
+          - (item.original is failed) == (item.case.failed | default(false))
+          - >-
+            item.case.setter_failure | default(false) or
+            item.original.elapsed is number
+          - >-
+            item.case.setter_failure | default(false) or
+            item.original.elapsed >= 0
+          - >-
+            item.case.setter_failure | default(false) or
+            item.original.elapsed < 120
+          - >-
+            not item.case.setter_failure | default(false) or
+            (item.original | dict2items |
+             rejectattr('key', 'in', ['invocation', 'exception', 'warnings']) |
+             map(attribute='key') | sort == ['changed', 'failed', 'msg'])
+          - >-
+            not item.case.setter_failure | default(false) or
+            item.ftp.wire == []
+          - >-
+            (not item.case.check | default(false) and item.original.changed) or
+            before.output == after.output
+          - >-
+            item.case.check | default(false) or not item.original.changed or
+            after.modified_in_request
+      loop: '{{ get_url_results }}'
+      loop_control:
+        label: '{{ item.name }}'
+
+    - name: Mark source records validated after all source and recovery gates
+      when: get_url_ftp_mode == 'original'
+      ansible.builtin.set_fact:
+        get_url_results: >-
+          {{ get_url_results | map('combine', {'validated': true}) | list }}
+
+    - name: Read retained final evidence before adding validated source flags
+      when: get_url_ftp_mode == 'original'
+      ansible.builtin.slurp:
+        src: '{{ get_url_capture.path }}'
+      register: get_url_ftp_final_evidence
+      delegate_to: localhost
+      vars: *local
+      changed_when: false
+      no_log: true
+
+    - name: Preserve raw results and recovery with validated source flags
+      when: get_url_ftp_mode == 'original'
+      ansible.builtin.copy:
+        content: >-
+          {{ (get_url_ftp_final_evidence.content | b64decode | from_json) |
+             combine({'results': get_url_results}) | to_nice_json }}
+        dest: '{{ get_url_capture.path }}'
+        mode: '0600'
+      delegate_to: localhost
+      vars: *local
+      changed_when: false
+      no_log: true

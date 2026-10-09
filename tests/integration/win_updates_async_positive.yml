@@ -1,0 +1,329 @@
+---
+# SPDX-License-Identifier: GPL-3.0-or-later
+- name: Exercise one selected async WUA operation inside an owned snapshot
+  hosts: legacy_windows
+  gather_facts: false
+  vars_files:
+    - vars/native_async.yml
+  vars:
+    updates_positive_program: |
+      WMI_SOURCE = {{ lookup('ansible.builtin.file', playbook_dir +
+        '/../../plugins/module_utils/legacy_windows_wmi.py') | to_json }}
+      BASE_ASYNC_SOURCE = {{ lookup('ansible.builtin.file', playbook_dir +
+        '/fixtures/native_async.py').split('if __name__ ==')[0] | to_json }}
+      SERVICING_STATE = {{ updates_positive_state | to_json }}
+      {{ lookup('ansible.builtin.file', playbook_dir +
+         '/fixtures/win_updates_servicing.py') }}
+    updates_async_positive_capture: >-
+      {{ playbook_dir + '/../../tmp/codex/evidence/' +
+         'win-updates-async-positive-' +
+         updates_positive_state + '-' + updates_positive_phase + '-v1.json' }}
+    updates_positive_cache_baseline: >-
+      {{ ((lookup('ansible.builtin.file', playbook_dir +
+        '/../../tmp/codex/evidence/' +
+        'win-updates-async-snapshot-stable-v1.json') | from_json).cache.stdout |
+        from_json).identity }}
+    updates_async_global_program: >-
+      import glob,json,os,sys,tempfile;
+      assert sys.version_info[:3]==(3,4,4);
+      print(json.dumps({name:sorted(glob.glob(os.path.join(
+      tempfile.gettempdir(),pattern))) for name,pattern in
+      [('staging','ansible-tmp-*'),('workers','legacy-windows-updates-*')]}))
+  tasks:
+    - name: Capture exact original global staging and detached workers
+      ansible.builtin.raw: >-
+        cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+        "{{ updates_async_global_program }}""
+      register: updates_positive_global_before
+      changed_when: false
+
+    - name: Move the exact quiesced cache only for genuine fresh download
+      sustainablelobster.legacy_windows.win_command:
+        argv:
+          - '{{ ansible_python_interpreter }}'
+          - '-'
+          - prepare
+          - >-
+            {{ {'identity': updates_positive_cache_baseline,
+                'backup': updates_positive_cache_baseline.path +
+                  '.legacy-updates-public-v2-110'} | to_json }}
+        stdin: >-
+          {{ lookup('ansible.builtin.file',
+             playbook_dir + '/fixtures/win_updates_cache.py') }}
+      register: updates_positive_cache_preparation
+      when: updates_positive_state == 'downloaded'
+      failed_when: false
+      no_log: true
+
+    - name: Retain complete exact cache preparation or native failure
+      ansible.builtin.copy:
+        content: '{{ updates_positive_cache_preparation | to_nice_json }}'
+        dest: >-
+          {{ playbook_dir + '/../../tmp/codex/evidence/' +
+             'win-updates-async-cache-' +
+             updates_positive_phase + '-v1.json' }}
+        mode: '0600'
+      delegate_to: localhost
+      vars:
+        ansible_connection: local
+        ansible_shell_type: sh
+        ansible_python_interpreter: '{{ ansible_playbook_python }}'
+      when: updates_positive_state == 'downloaded'
+      no_log: true
+
+    - name: Require exact owned cache move before fresh public download
+      ansible.builtin.assert:
+        that:
+          - updates_positive_cache_preparation.rc == 0
+          - >-
+            (updates_positive_cache_preparation.stdout | from_json).
+            backup.file_id == updates_positive_cache_baseline.file_id
+      when: updates_positive_state == 'downloaded'
+      no_log: true
+
+    - name: Allocate one uniquely owned positive operation workspace
+      sustainablelobster.legacy_windows.win_tempfile:
+        prefix: legacy-windows-native-async-updates-positive-
+        state: directory
+      register: updates_positive_workspace
+
+    - name: Exercise and retain complete selected operation and recovery
+      block:
+        - name: Journal protected configuration and sentinel before servicing
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}', '-',
+                   '{{ updates_positive_workspace.path }}', setup]
+            stdin: '{{ updates_positive_program }}'
+          register: updates_positive_setup
+          changed_when: false
+          no_log: true
+
+        - name: Launch native selected servicing through public async
+          sustainablelobster.legacy_windows.win_updates:
+            state: '{{ updates_positive_state }}'
+            category_names: ['*']
+            accept_list: ['{{ updates_positive_kb }}']
+            log_path: '{{ updates_positive_workspace.path }}\progress.log'
+          async: 1800
+          poll: 0
+          vars: &native
+            ansible_remote_tmp: '{{ updates_positive_workspace.path }}\staging'
+            ansible_async_dir: '{{ updates_positive_workspace.path }}\cache'
+          register: updates_positive_native_launch
+          when: updates_positive_phase == 'native'
+          no_log: true
+
+        - name: Launch identical released servicing through public async
+          ansible.windows.win_updates:
+            state: '{{ updates_positive_state }}'
+            category_names: ['*']
+            accept_list: ['{{ updates_positive_kb }}']
+            log_path: '{{ updates_positive_workspace.path }}\progress.log'
+          async: 1800
+          poll: 0
+          vars: &original
+            ansible_remote_tmp: '{{ updates_positive_workspace.path }}\staging'
+            ansible_async_dir: '{{ updates_positive_workspace.path }}\cache'
+            ansible_shell_type: cmd
+          register: updates_positive_original_launch
+          when: updates_positive_phase == 'original'
+          no_log: true
+
+        - name: Select the literal phase launch without projecting public fields
+          ansible.builtin.set_fact:
+            updates_positive_launch: >-
+              {{ updates_positive_native_launch if
+                updates_positive_phase == 'native' else
+                updates_positive_original_launch }}
+          no_log: true
+
+        - name: Pin the live public watchdog creation time before disconnect
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}', '-',
+                   '{{ updates_positive_workspace.path }}', record,
+                   '{{ updates_positive_launch | to_json | b64encode }}']
+            stdin: '{{ updates_positive_program }}'
+          register: updates_positive_identity
+          changed_when: false
+          no_log: true
+
+        - name: Disconnect the launching SSH connection before status polling
+          ansible.builtin.meta: reset_connection
+
+        - name: Poll native selected operation to actual WUA completion
+          sustainablelobster.legacy_windows.async_status:
+            jid: '{{ updates_positive_launch.ansible_job_id }}'
+          vars: *native
+          register: updates_positive_native_status
+          until: updates_positive_native_status.finished
+          retries: 29
+          delay: 45
+          when: updates_positive_phase == 'native'
+          failed_when: false
+          no_log: true
+
+        - name: Poll released selected operation through unchanged core Status
+          ansible.builtin.async_status:
+            jid: '{{ updates_positive_launch.ansible_job_id }}'
+          vars: *original
+          register: updates_positive_original_status
+          until: updates_positive_original_status.finished
+          retries: 29
+          delay: 45
+          when: updates_positive_phase == 'original'
+          failed_when: false
+          no_log: true
+
+        - name: Retain the literal completed public status
+          ansible.builtin.set_fact:
+            updates_positive_status: >-
+              {{ updates_positive_native_status if
+                updates_positive_phase == 'native' else
+                updates_positive_original_status }}
+          no_log: true
+
+        - name: Capture full completed cache bytes and protected observations
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}', '-',
+                   '{{ updates_positive_workspace.path }}', observe]
+            stdin: '{{ updates_positive_program }}'
+          register: updates_positive_observation
+          changed_when: false
+          no_log: true
+
+        - name: Capture exact native or released servicing log bytes
+          sustainablelobster.legacy_windows.slurp:
+            src: '{{ updates_positive_workspace.path }}\progress.log'
+          register: updates_positive_log
+          failed_when: false
+          no_log: true
+
+        - name: Erase only the completed native public async cache
+          sustainablelobster.legacy_windows.async_status:
+            jid: '{{ updates_positive_launch.ansible_job_id }}'
+            mode: cleanup
+          vars: *native
+          when: updates_positive_phase == 'native'
+
+        - name: Erase only the completed released public async cache
+          ansible.builtin.async_status:
+            jid: '{{ updates_positive_launch.ansible_job_id }}'
+            mode: cleanup
+          vars: *original
+          when: updates_positive_phase == 'original'
+      always:
+        - name: Observe dedicated WUA worker absence without terminating service
+          ansible.builtin.raw: >-
+            cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+            "import glob,os,tempfile;
+            assert not glob.glob(os.path.join(tempfile.gettempdir(),
+            'legacy-windows-updates-*'))""
+          register: updates_positive_worker_absence
+          changed_when: false
+          failed_when: false
+
+        - name: Clean only pinned generic jobs after WUA resources have closed
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}', '-',
+                   '{{ updates_positive_workspace.path }}', cleanup]
+            stdin: '{{ updates_positive_program }}'
+          register: updates_positive_recovery
+          when: updates_positive_worker_absence.rc == 0
+          changed_when: false
+          failed_when: false
+          no_log: true
+
+        - name: Retain full service configuration and runtime after servicing
+          sustainablelobster.legacy_windows.win_service_info:
+          register: updates_positive_services
+          no_log: true
+
+        - name: Preserve all successful failed or partial public observations
+          ansible.builtin.copy:
+            content: >-
+              {{ {'phase': updates_positive_phase,
+                  'state': updates_positive_state,
+                  'kb': updates_positive_kb,
+                  'workspace': updates_positive_workspace.path,
+                  'launch': updates_positive_launch | default(none),
+                  'status': updates_positive_status | default(none),
+                  'identity': updates_positive_identity | default(none),
+                  'observation': updates_positive_observation | default(none),
+                  'log': updates_positive_log | default(none),
+                  'services': updates_positive_services,
+                  'setup': updates_positive_setup | default(none),
+                  'worker_absence': updates_positive_worker_absence,
+                  'recovery': updates_positive_recovery,
+                  'global_before': updates_positive_global_before} |
+                  to_nice_json }}
+            dest: '{{ updates_async_positive_capture | trim }}'
+            mode: '0600'
+          delegate_to: localhost
+          vars: &local
+            ansible_connection: local
+            ansible_shell_type: sh
+            ansible_python_interpreter: '{{ ansible_playbook_python }}'
+          changed_when: false
+          no_log: true
+
+        - name: Require actual worker completion and protected owned closure
+          ansible.builtin.assert:
+            that:
+              - updates_positive_worker_absence.rc == 0
+              - updates_positive_recovery.rc | default(-1) == 0
+              - (updates_positive_recovery.stdout | from_json).restored
+
+        - name: Remove exactly the verified operation workspace
+          sustainablelobster.legacy_windows.win_file:
+            path: '{{ updates_positive_workspace.path }}'
+            state: absent
+
+        - name: Verify workspace and literal global staging closure
+          ansible.builtin.raw: >-
+            cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
+            "{{ updates_async_global_program }};
+            assert not os.path.exists(sys.argv[1])"
+            "{{ updates_positive_workspace.path }}""
+          register: updates_positive_global_after
+          changed_when: false
+
+        - name: Retain final global and workspace absence without projection
+          ansible.builtin.copy:
+            content: >-
+              {{ (lookup('ansible.builtin.file',
+                updates_async_positive_capture | trim) | from_json) |
+                combine({'global_after': updates_positive_global_after,
+                         'workspace_absent': true}) | to_nice_json }}
+            dest: '{{ updates_async_positive_capture | trim }}'
+            mode: '0600'
+          delegate_to: localhost
+          vars: *local
+          changed_when: false
+          no_log: true
+
+        - name: Require exact original global staging and worker absence
+          ansible.builtin.assert:
+            that:
+              - >-
+                (updates_positive_global_after.stdout | from_json) ==
+                (updates_positive_global_before.stdout | from_json)
+
+        - name: Close the operation SSH connection before snapshot rollback
+          ansible.builtin.meta: reset_connection
+
+    - name: Require genuine successful selected servicing not an access test
+      ansible.builtin.assert:
+        that:
+          - updates_positive_status.finished
+          - not updates_positive_status.failed | default(false)
+          - updates_positive_status.changed
+          - updates_positive_status.found_update_count == 1
+          - updates_positive_status.failed_update_count == 0
+          - >-
+            updates_positive_state != 'downloaded' or
+            (updates_positive_status.updates.values() | first).downloaded
+          - >-
+            (updates_positive_status.updates.values() | first).installed ==
+            (updates_positive_state == 'installed')
+          - not updates_positive_status.rebooted
+      no_log: true

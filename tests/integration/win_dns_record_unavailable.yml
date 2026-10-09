@@ -1,0 +1,6 @@
+---
+- name: Verify DNS record provider absence with literal configuration recovery
+  ansible.builtin.import_playbook: win_dns_zone_unavailable.yml
+  vars:
+    dns_zone_boundary_case_tasks: tasks/win_dns_record_unavailable_case.yml
+    dns_zone_boundary_capture_prefix: dns-record-boundary-

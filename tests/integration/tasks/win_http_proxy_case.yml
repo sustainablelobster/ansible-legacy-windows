@@ -1,0 +1,107 @@
+---
+- name: Prepare the controlled IE settings for this import case
+  when: http_proxy_case.prepare_ie is defined
+  block:
+    - name: Change only journaled IE settings  # noqa: args[module]
+      sustainablelobster.legacy_windows.win_command:
+        argv:
+          - '{{ ansible_python_interpreter }}'
+          - '-'
+          - '{{ http_proxy_workspace.path }}'
+          - '{{ http_proxy_case.prepare_ie }}'
+        stdin: '{{ http_proxy_fixture }}'
+      register: http_proxy_preparation
+      changed_when: true
+      check_mode: false
+
+    - name: Retain the independently observed pre-import settings
+      ansible.builtin.set_fact:
+        http_proxy_previous: '{{ http_proxy_preparation.stdout | from_json }}'
+
+- name: '{{ http_proxy_case.name }}'
+  block:
+    - name: Apply or predict the requested proxy settings  # noqa: args[module]
+      sustainablelobster.legacy_windows.win_http_proxy:
+        proxy: '{{ http_proxy_case.params.proxy | default(omit) }}'
+        bypass: '{{ http_proxy_case.params.bypass | default(omit) }}'
+        source: '{{ http_proxy_case.params.source | default(omit) }}'
+      register: http_proxy_result
+      check_mode: '{{ http_proxy_case.check | default(false) }}'
+      diff: true
+  rescue:
+    - name: Require the declared proxy failure
+      ansible.builtin.assert:
+        that:
+          - http_proxy_case.error is defined
+          - http_proxy_result is failed
+          - http_proxy_result.msg == http_proxy_case.error
+          - not http_proxy_result.changed
+
+- name: Read native WinHTTP IE and raw registry settings independently
+  sustainablelobster.legacy_windows.win_command:  # noqa: args[module]
+    argv:
+      - '{{ ansible_python_interpreter }}'
+      - '-'
+      - '{{ http_proxy_workspace.path }}'
+      - observe
+    stdin: '{{ http_proxy_fixture }}'
+  register: http_proxy_observation
+  changed_when: false
+  check_mode: false
+
+- name: Verify public results diffs and independent native state
+  vars:
+    observation: '{{ http_proxy_observation.stdout | from_json }}'
+    before:
+      proxy: '{{ http_proxy_previous.winhttp.proxy }}'
+      bypass: '{{ http_proxy_previous.winhttp.bypass }}'
+    writes: >-
+      {{ http_proxy_case.changed and not
+         (http_proxy_case.check | default(false)) }}
+  ansible.builtin.assert:
+    that:
+      - http_proxy_result.changed == http_proxy_case.changed
+      - (http_proxy_case.error is defined) == (http_proxy_result is failed)
+      - http_proxy_result.warnings | default([]) == []
+      - http_proxy_result.stdout is not defined
+      - http_proxy_result.stderr is not defined
+      - http_proxy_result.rc is not defined
+      - http_proxy_case.error is defined or http_proxy_result.msg is not defined
+      - >-
+        (http_proxy_case.error is defined and not
+         (http_proxy_case.diff_before_only | default(false))) or
+        http_proxy_result.diff.before == before
+      - >-
+        http_proxy_case.error is defined or
+        http_proxy_result.diff.after == http_proxy_case.expected
+      - >-
+        http_proxy_case.error is not defined or
+        http_proxy_case.diff_before_only | default(false) or
+        http_proxy_result.diff is not defined
+      - >-
+        not (http_proxy_case.diff_before_only | default(false)) or
+        http_proxy_result.diff.after is not defined
+      - observation.ie == http_proxy_previous.ie
+      - observation.lan == http_proxy_previous.lan
+      - observation.registry == http_proxy_previous.registry
+      - writes or observation == http_proxy_previous
+      - >-
+        not writes or
+        observation.winhttp.proxy == http_proxy_case.expected.proxy
+      - >-
+        not writes or
+        observation.winhttp.bypass == http_proxy_case.expected.bypass
+      - >-
+        not writes or observation.winhttp.access_type ==
+        (1 if http_proxy_case.expected.proxy is none else 3)
+
+- name: Retain the entire public result and independent before and after states
+  vars:
+    record:
+      case: '{{ http_proxy_case.name }}'
+      result: '{{ http_proxy_result }}'
+      before: '{{ http_proxy_previous }}'
+      snapshot: '{{ http_proxy_observation.stdout | from_json }}'
+  ansible.builtin.set_fact:
+    http_proxy_previous: '{{ record.snapshot }}'
+    http_proxy_results: '{{ http_proxy_results | default([]) + [record] }}'

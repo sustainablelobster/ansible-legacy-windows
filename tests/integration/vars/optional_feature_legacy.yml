@@ -1,0 +1,118 @@
+---
+optional_feature_legacy_cases:
+  - name: Empty feature list performs no servicing
+    params: {name: []}
+    changed: false
+  - name: Null feature list performs no servicing
+    params: {name: null}
+    changed: false
+  - name: Explicit null state preserves staged Telnet
+    params: {name: TelnetClient, state: null}
+    changed: false
+  - name: Reject an unknown installed feature name
+    params: {name: LegacyWindowsOptionalMissing_12345}
+    failed: true
+    changed: false
+    message: "Failed to find feature 'LegacyWindowsOptionalMissing_12345'"
+  - name: Precheck a later unknown feature before enabling the earlier name
+    params: {name: [TelnetClient, LegacyWindowsOptionalMissing_12345]}
+    failed: true
+    changed: false
+  - name: Preview staged Telnet enable without servicing
+    params: {name: TelnetClient}
+    check: true
+    changed: true
+  - name: Reject unavailable parent option before servicing
+    params: {name: TelnetClient, include_parent: true}
+    failed: true
+    changed: false
+    message: does not support /All
+  - name: Reject unavailable parent option in check mode
+    params: {name: TelnetClient, include_parent: true}
+    check: true
+    failed: true
+    changed: false
+    message: does not support /All
+  - name: Reject missing source before predicted servicing
+    params:
+      name: TelnetClient
+      source: '{{ optional_feature_names.missing_source }}'
+    check: true
+    failed: true
+    changed: false
+    message: Path could not be found
+  - name: Reject unavailable source option before servicing
+    params:
+      name: TelnetClient
+      source: '{{ optional_feature_names.source }}'
+    failed: true
+    changed: false
+    message: does not support /Source
+  - name: Reject unavailable source option in check mode
+    params:
+      name: TelnetClient
+      source: '{{ optional_feature_names.source_file }}'
+    check: true
+    failed: true
+    changed: false
+    message: does not support /Source
+  - name: Enable staged Telnet without newer optional switches
+    params: {name: TelnetClient, include_parent: null}
+    changed: true
+    expected: {TelnetClient: Enabled}
+  - name: Repeat case-insensitive Telnet and ignore unnecessary source
+    params: {name: telnetclient, state: PRESENT,
+             source: '{{ optional_feature_names.missing_source }}'}
+    changed: false
+  - name: Enable staged TFTP without newer parent switch
+    params: {name: TFTP}
+    changed: true
+    expected: {TFTP: Enabled}
+  - name: Repeat ordered duplicate enabled features
+    params: {name: 'TFTP,TelnetClient,TFTP'}
+    changed: false
+  - name: Preview disabling both and ignore unnecessary newer switches
+    params: &remove
+      name: [TFTP, TelnetClient]
+      state: absent
+      include_parent: true
+      source: '{{ optional_feature_names.missing_source }}'
+    check: true
+    changed: true
+  - name: Disable both and ignore unnecessary newer switches
+    params: *remove
+    changed: true
+    expected: {TelnetClient: Disabled, TFTP: Disabled}
+  - name: Repeat both absent features
+    params: *remove
+    changed: false
+  - name: Enable an ordered duplicate batch without newer source switch
+    params: &duplicate
+      name: [TFTP, TelnetClient, TFTP]
+    changed: true
+    expected: {TelnetClient: Enabled, TFTP: Enabled}
+  - name: Repeat the enabled duplicate batch
+    params: *duplicate
+    changed: false
+  - name: Later missing name prevents an earlier enabled feature being disabled
+    params: {name: [TFTP, LegacyWindowsOptionalMissing_12345], state: absent}
+    failed: true
+    changed: false
+  - name: Preview disabling Telnet only
+    params: {name: TelnetClient, state: absent}
+    check: true
+    changed: true
+  - name: Disable Telnet only
+    params: {name: TelnetClient, state: absent}
+    changed: true
+    expected: {TelnetClient: Disabled}
+  - name: Repeat disabled Telnet
+    params: {name: TelnetClient, state: absent}
+    changed: false
+  - name: Leave installed TFTP unchanged
+    params: {name: TFTP}
+    changed: false
+  - name: Resolve lowercase TFTP before real disable servicing
+    params: {name: tftp, state: absent}
+    changed: true
+    expected: {TFTP: Disabled}

@@ -1,0 +1,12 @@
+---
+http_zero_cases:
+  - {name: URI zero reserved DNS failure, module: uri, connection_failure: dns}
+  - {name: GetURL zero reserved DNS failure, module: get_url,
+     connection_failure: dns}
+  - {name: Package zero reserved DNS preview, module: package,
+     connection_failure: dns, check: true}
+  - {name: URI zero refused loopback, module: uri, connection_failure: refused}
+  - {name: GetURL zero refused loopback, module: get_url,
+     connection_failure: refused}
+  - {name: Package zero refused loopback preview, module: package,
+     connection_failure: refused, check: true}
