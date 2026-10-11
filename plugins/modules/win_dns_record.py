@@ -1,6 +1,6 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
-# Copyright 2026 Joe Lustri
+# Copyright 2026 sustainablelobster
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 """Manage records in an existing Windows DNS Server zone."""
@@ -90,13 +90,14 @@ requirements:
   - An available native Windows DNS Server management provider.
   - Classic DHCID records, aging, update permissions and Unicode TXT creation require installed C(dnscmd.exe) DNS management tools.
 notes:
+  - Unlike C(ansible.windows) 3.8.0, SRV creation applies O(ttl) immediately rather than requiring an identical repeat to correct a nondefault lifetime.
   - Classic DNS has no zone scopes; O(zone_scope) requests fail before any record mutation.
   - DHCID support is detected from the installed administration tool, not the Windows version.
   - Classic DHCID and UTF-8 TXT lifetime edits use the native tool and refresh an aged record's timestamp.
   - If an installed DNS tool crashes after a DHCID write, success requires a fresh native confirmation of the exact requested value, lifetime and aging, or its removal.
   - Classic TXT records use UTF-8 where valid; existing non-UTF-8 provider text is retained.
 author:
-  - Joe Lustri
+  - sustainablelobster
 """
 
 EXAMPLES = r"""

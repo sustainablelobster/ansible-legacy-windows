@@ -1,6 +1,6 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
-# Copyright 2026 Joe Lustri
+# Copyright 2026 sustainablelobster
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 """Inspect Windows filesystem entries through native APIs."""
@@ -68,7 +68,7 @@ notes:
   - Hard-link name enumeration requires Windows Vista or Windows Server 2008 or newer.
   - On older systems, file link inspection warns and retains RV(stat.nlink=1) and an empty RV(stat.hlnk_targets).
 author:
-  - Joe Lustri
+  - sustainablelobster
 """
 
 EXAMPLES = r"""

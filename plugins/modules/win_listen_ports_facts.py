@@ -1,6 +1,6 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
-# Copyright 2026 Joe Lustri
+# Copyright 2026 sustainablelobster
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 """Read TCP and UDP endpoint facts with a Python 3.4.4 payload."""
@@ -64,7 +64,7 @@ notes:
   - Process start time and owner can be null when Windows does not provide them.
   - Custom composite date formats can require locale fields unavailable on older Windows. Such requests fail with the missing field's name rather than substituting a pattern or culture.
 author:
-  - Joe Lustri
+  - sustainablelobster
 """
 
 EXAMPLES = r"""

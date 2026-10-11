@@ -1,6 +1,6 @@
 ---
 computer_description_fixture: |
-  # Copyright 2026 Joe Lustri
+  # Copyright 2026 sustainablelobster
   # SPDX-License-Identifier: GPL-3.0-or-later
   """Journal and restore the real registration and WMI description values."""
 

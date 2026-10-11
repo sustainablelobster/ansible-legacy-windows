@@ -1,6 +1,6 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
-# Copyright 2026 Joe Lustri
+# Copyright 2026 sustainablelobster
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 """Manage existing Windows certificates with a Python 3.4.4 payload."""
@@ -104,7 +104,7 @@ notes:
   - Export may remove the existing destination before a later serialization or file-write failure.
   - Native provider availability and private-key permissions can prevent PKCS12 operations.
 author:
-  - Joe Lustri
+  - sustainablelobster
 """
 
 EXAMPLES = r"""

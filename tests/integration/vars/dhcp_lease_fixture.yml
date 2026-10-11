@@ -3,7 +3,7 @@ dhcp_lease_wmi_source: >-
   {{ lookup('file', playbook_dir +
      '/../../plugins/module_utils/legacy_windows_wmi.py') }}
 dhcp_lease_fixture: |
-  # Copyright 2026 Joe Lustri
+  # Copyright 2026 sustainablelobster
   # SPDX-License-Identifier: GPL-3.0-or-later
   """Observe and recover only a journal-owned inactive DHCP scope."""
 

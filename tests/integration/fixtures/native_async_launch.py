@@ -1,6 +1,6 @@
 """Exercise real detached watchdogs inside owned permissive and restricted jobs."""
 
-# Copyright 2026 Joe Lustri
+# Copyright 2026 sustainablelobster
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 import ctypes

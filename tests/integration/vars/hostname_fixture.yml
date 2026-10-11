@@ -1,6 +1,6 @@
 ---
 hostname_fixture: |
-  # Copyright 2026 Joe Lustri
+  # Copyright 2026 sustainablelobster
   # SPDX-License-Identifier: GPL-3.0-or-later
   """Keep the original active and pending hostnames across test reboots."""
 

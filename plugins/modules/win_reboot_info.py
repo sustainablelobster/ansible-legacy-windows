@@ -1,6 +1,6 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
-# Copyright 2026 Joe Lustri
+# Copyright 2026 sustainablelobster
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 """Read boot history and pending-reboot reasons with Python 3.4.4."""
@@ -45,7 +45,7 @@ notes:
   - Uses the classic event-log API on XP and Server 2003 and the Windows Event Log API on newer systems.
   - A terminating event-query or formatting failure retains the pinned upstream failure caused by its invalid two-argument warning call.
 author:
-  - Joe Lustri
+  - sustainablelobster
 """
 
 EXAMPLES = r"""

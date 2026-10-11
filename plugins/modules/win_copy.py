@@ -1,6 +1,6 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
-# Copyright 2026 Joe Lustri
+# Copyright 2026 sustainablelobster
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 """Copy controller or target-local files using a Python 3.4.4 Windows payload."""
@@ -80,7 +80,7 @@ notes:
   - Source symbolic links are not preserved as symbolic links.
   - Archive extraction rejects traversal and destination reparse points.
 author:
-  - Joe Lustri
+  - sustainablelobster
 """
 
 EXAMPLES = r"""

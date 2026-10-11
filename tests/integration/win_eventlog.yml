@@ -18,18 +18,35 @@
       staging_before: '{{ eventlog_staging_before.stdout | default("") }}'
       staging_after: '{{ eventlog_staging_after.stdout | default("") }}'
   tasks:
-    - name: Allocate a unique private controller evidence file
-      ansible.builtin.tempfile:
-        state: file
-        prefix: eventlog-{{ inventory_hostname }}-
-        suffix: .json
-        path: "{{ playbook_dir }}/../../tmp"
-      register: eventlog_capture_file
+    - name: Ensure the private controller evidence directory exists
+      when:
+        - eventlog_evidence_dir is defined
+        - >-
+          (eventlog_evidence_dir | realpath) not in [('/tmp' | realpath),
+          (lookup('env', 'TMPDIR') | default('/tmp', true) | realpath)]
+      ansible.builtin.file:
+        path: "{{ eventlog_evidence_dir }}"
+        state: directory
+        mode: "0700"
       delegate_to: localhost
       vars: &local
         ansible_connection: local
         ansible_shell_type: sh
         ansible_python_interpreter: "{{ ansible_playbook_python }}"
+      changed_when: false
+      check_mode: false
+
+    - name: Allocate a unique private controller evidence file
+      ansible.builtin.tempfile:
+        state: file
+        prefix: eventlog-{{ inventory_hostname }}-
+        suffix: .json
+        path: >-
+          {{ eventlog_evidence_dir | default(lookup('env', 'TMPDIR') |
+          default('/tmp', true)) }}
+      register: eventlog_capture_file
+      delegate_to: localhost
+      vars: *local
       changed_when: false
       check_mode: false
 

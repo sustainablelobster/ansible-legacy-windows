@@ -60,14 +60,15 @@ actual Python 3.4.4 runtime on an authorized Windows host before claiming it.
   ansible.windows baseline. Preserve required upstream and compatible
   third-party notices, copyrights, and license files. Do not add notices for tools
   merely installed as development dependencies.
-- Use Joe Lustri for project-owned author and copyright attribution.
-  `sustainablelobster` is the GitHub handle and collection namespace, not an
-  organization or a collective author. Preserve third-party attribution.
+- Use `sustainablelobster` for project-owned author and copyright attribution.
+  This handle identifies the individual author, not an organization or a
+  collective. Preserve third-party attribution.
 - Do not echo credentials gratuitously. Keep private inventories and local
   connection settings out of version control and collection artifacts.
 - Keep agent-created logs, captures, inventories, snapshots and working files
-  under `tmp/codex/`. Preserve historical evidence there; do not scatter agent
-  outputs directly under `tmp/` or move user inputs without authorization.
+  in the designated ignored workspace for the current session. Preserve
+  historical evidence there; do not hardcode session-specific paths in maintained
+  files or move user inputs without authorization.
 
 ## Command-first work
 

@@ -19,6 +19,7 @@ class ActionModule(PythonModuleAction):  # pylint: disable=too-many-ancestors
         "legacy_windows_time.py",
         "legacy_windows_copy.py",
         "legacy_windows_certificate_store.py",
+        "legacy_windows_http_certificate.py",
         "legacy_windows_get_url_ftp.py",
         "legacy_windows_get_url_http.py",
         "legacy_windows_get_url.py",

@@ -98,7 +98,7 @@ def test_quality_jobs_are_parallel_and_use_the_locked_linux_toolchain() -> None:
 
 def test_ci_workflow_keeps_runner_files_outside_the_checkout() -> None:
     source = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
-    assert "tmp/codex" not in source
+    assert not re.search(r"\btmp[/\\]", source)
     assert "PRE_COMMIT_HOME" not in _workflow().get("env", {})
 
 

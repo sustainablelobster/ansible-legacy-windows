@@ -19,7 +19,9 @@
 
     - name: Allocate private controller capture
       ansible.builtin.tempfile:
-        path: '{{ playbook_dir }}/../../tmp/codex/evidence'
+        path: >-
+          {{ evidence_dir | default(lookup('env', 'TMPDIR') |
+          default('/tmp', true)) }}
         prefix: 'native-async-poll-{{ inventory_hostname }}-'
         suffix: .json
       register: native_async_poll_capture

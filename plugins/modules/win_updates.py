@@ -1,6 +1,6 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
-# Copyright 2026 Joe Lustri
+# Copyright 2026 sustainablelobster
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 """Run a native Windows Update Agent round with an owned background worker."""
@@ -122,7 +122,7 @@ notes:
   - Modern reboot readiness uses AutoLogonChecked; XP and Server 2003 use SCM auto-start completion, not GINA readiness.
   - Updates reboot readiness additionally waits while CBS reports active servicing.
 author:
-  - Joe Lustri
+  - sustainablelobster
 """
 
 EXAMPLES = r"""

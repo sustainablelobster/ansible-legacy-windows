@@ -1,6 +1,6 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
-# Copyright 2026 Joe Lustri
+# Copyright 2026 sustainablelobster
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 """Manage local Windows users with a Python 3.4.4 payload."""
@@ -124,7 +124,7 @@ seealso:
   - module: sustainablelobster.legacy_windows.win_group
   - module: sustainablelobster.legacy_windows.win_group_membership
 author:
-  - Joe Lustri
+  - sustainablelobster
 """
 
 EXAMPLES = r"""

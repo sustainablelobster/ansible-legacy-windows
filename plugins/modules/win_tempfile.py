@@ -1,6 +1,6 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
-# Copyright 2026 Joe Lustri
+# Copyright 2026 sustainablelobster
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 """Create a uniquely named Windows file or directory through native Python."""
@@ -64,7 +64,7 @@ notes:
   - Path, prefix, and suffix expand Windows percent-delimited environment variables.
   - The caller is responsible for removing the created file or directory.
 author:
-  - Joe Lustri
+  - sustainablelobster
 """
 
 EXAMPLES = r"""

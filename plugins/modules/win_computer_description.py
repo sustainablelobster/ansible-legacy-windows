@@ -1,6 +1,6 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
-# Copyright 2026 Joe Lustri
+# Copyright 2026 sustainablelobster
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 """Set Windows description and registration labels using Python 3.4.4."""
@@ -52,7 +52,7 @@ notes:
   - Existing registration values are read before writing. A missing requested owner or organization value causes failure.
   - Changes are applied in description, owner, organization order. A later failure can leave earlier writes applied.
 author:
-  - Joe Lustri
+  - sustainablelobster
 """
 
 EXAMPLES = r"""

@@ -1,6 +1,6 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
-# Copyright 2026 Joe Lustri
+# Copyright 2026 sustainablelobster
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 """Manage installed Windows Firewall profile settings through native APIs."""
@@ -66,7 +66,7 @@ notes:
   - Classic Standard cannot be selected through this module's upstream profile choices and is not an alias for Private/Public. Unavailable profile objects are omitted from results.
   - Changing active firewall settings can affect connectivity.
 author:
-  - Joe Lustri
+  - sustainablelobster
 """
 
 EXAMPLES = r"""

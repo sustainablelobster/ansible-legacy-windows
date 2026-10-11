@@ -1,15 +1,12 @@
 ---
 namespace: sustainablelobster
 name: legacy_windows
-version: 1.0.0
+version: 1.0.1
 readme: README.md
 authors:
-  - Joe Lustri
+  - sustainablelobster
 description: Python 3.4.4-compatible payloads for Windows automation.
-license:
-  - GPL-3.0-or-later
-  - MIT
-  - Unicode-3.0
+license_file: LICENSE
 tags:
   - windows
 dependencies: {}

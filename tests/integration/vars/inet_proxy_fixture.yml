@@ -1,6 +1,6 @@
 ---
 inet_proxy_fixture: |
-  # Copyright 2026 Joe Lustri
+  # Copyright 2026 sustainablelobster
   # SPDX-License-Identifier: GPL-3.0-or-later
   """Independently journal and recover LAN and owned connection settings."""
 

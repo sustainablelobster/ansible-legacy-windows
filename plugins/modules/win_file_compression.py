@@ -1,6 +1,6 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
-# Copyright 2026 Joe Lustri
+# Copyright 2026 sustainablelobster
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 """Manage filesystem compression with native Windows WMI and Python 3.4.4."""
@@ -67,7 +67,7 @@ notes:
   - Recursive changes are not transactional. A failure can leave some entries changed.
   - WMI and the target filesystem must provide the requested operation.
 author:
-  - Joe Lustri
+  - sustainablelobster
 """
 
 EXAMPLES = r"""

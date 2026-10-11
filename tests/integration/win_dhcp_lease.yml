@@ -9,8 +9,13 @@
     - vars/dhcp_lease_classic_fixture.yml
   tasks:
     - name: Create the private local evidence directory before guest mutation
+      when:
+        - evidence_dir is defined
+        - >-
+          (evidence_dir | realpath) not in [('/tmp' | realpath),
+          (lookup('env', 'TMPDIR') | default('/tmp', true) | realpath)]
       ansible.builtin.file:
-        path: '{{ playbook_dir }}/../../tmp/codex/evidence'
+        path: '{{ evidence_dir }}'
         state: directory
         mode: '0700'
       delegate_to: localhost
@@ -32,7 +37,9 @@
     - name: Allocate unique private evidence capture before guest writes
       ansible.builtin.tempfile:
         state: file
-        path: "{{ playbook_dir }}/../../tmp/codex/evidence"
+        path: >-
+          {{ evidence_dir | default(lookup('env', 'TMPDIR') |
+          default('/tmp', true)) }}
         prefix: "dhcp-{{ inventory_hostname }}-"
         suffix: .json
       register: dhcp_capture

@@ -21,6 +21,38 @@ from tests.unit.test_get_url_native import native_download, native_http
 # pylint: enable=unused-import
 
 
+@pytest.mark.parametrize("code", [0x80090326, -2146893018])
+def test_high_bit_native_errors_preserve_the_hresult_without_format_overflow(
+    native: Any, monkeypatch: pytest.MonkeyPatch, code: int
+) -> None:
+    helper, _options, _request = native
+    errors = load_module(
+        ROOT / "plugins/module_utils/legacy_windows_get_url.py", "tested_hresult_errors"
+    )
+    formatted: list[int] = []
+
+    def format_error(value: int) -> str:
+        """Model Python 3.4's signed native argument.
+
+        :param value: Native signed long passed to FormatError.
+        :returns: The Windows message for the supplied HRESULT.
+        :raises OverflowError: If the unsigned integer cannot fit in a C long.
+        """
+        if not -(2**31) <= value < 2**31:
+            raise OverflowError("Python int too large to convert to C long")
+        formatted.append(value)
+        return "The message received was unexpected or badly formatted.\r\n"
+
+    monkeypatch.setattr(helper.ctypes, "FormatError", format_error, raising=False)
+    error = errors._error(code)
+    assert formatted == [-2146893018]
+    assert error.errno == 0x80090326
+    assert error.strerror == (
+        "The message received was unexpected or badly formatted "
+        "(Windows error 2148074278 / 0x80090326)"
+    )
+
+
 def protocol_boundary(
     http: Any, monkeypatch: pytest.MonkeyPatch, supported: set[int]
 ) -> tuple[list[tuple[int, int]], list[str]]:

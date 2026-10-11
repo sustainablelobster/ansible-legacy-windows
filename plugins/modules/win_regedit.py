@@ -1,6 +1,6 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
-# Copyright 2026 Joe Lustri
+# Copyright 2026 sustainablelobster
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 """Edit Windows registry keys and values with a Python 3.4.4 payload."""
@@ -99,7 +99,7 @@ notes:
   - Changes are not transactional. A key created before a value-write failure remains present.
   - Do not run offline-hive tasks concurrently, because the reference interface uses a fixed mount point.
 author:
-  - Joe Lustri
+  - sustainablelobster
 """
 
 # pylint: enable=duplicate-code

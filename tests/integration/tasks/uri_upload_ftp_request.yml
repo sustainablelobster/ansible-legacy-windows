@@ -1,5 +1,5 @@
 ---
-# Copyright 2026 Joe Lustri
+# Copyright 2026 sustainablelobster
 # SPDX-License-Identifier: GPL-3.0-or-later
 - name: Prepare identical upload bytes through the existing ownership journal
   ansible.builtin.command:

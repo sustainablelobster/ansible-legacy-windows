@@ -1,6 +1,6 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
-# Copyright 2026 Joe Lustri
+# Copyright 2026 sustainablelobster
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 """Manage Windows environment variables with a Python 3.4.4 payload."""
@@ -82,7 +82,7 @@ notes:
   - A notification failure can occur after a value has already been written.
   - Native Windows Unicode comparison tables vary by Windows version.
 author:
-  - Joe Lustri
+  - sustainablelobster
 """
 
 EXAMPLES = r"""

@@ -1,6 +1,6 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
-# Copyright 2026 Joe Lustri
+# Copyright 2026 sustainablelobster
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 """Manage SMB shares and their access rules with native Python APIs."""
@@ -94,7 +94,7 @@ notes:
   - Access-based enumeration requires Windows Server 2003 SP1 or later. On Windows XP, set O(list=true); the default access-based listing request fails before writing.
   - Encryption requires Windows 8 or Windows Server 2012 or later. BranchCache requires Windows 7 or Windows Server 2008 R2 or later. Unsupported requests fail in both normal and check mode.
 author:
-  - Joe Lustri
+  - sustainablelobster
 """
 
 EXAMPLES = r"""

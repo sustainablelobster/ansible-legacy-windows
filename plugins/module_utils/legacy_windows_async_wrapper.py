@@ -1,7 +1,7 @@
 #!/usr/bin/python
 # WANT_JSON
 # -*- coding: utf-8 -*-
-# Copyright 2026 Joe Lustri
+# Copyright 2026 sustainablelobster
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 """Implement ansible-core's private async-wrapper argv ABI for Windows Python."""

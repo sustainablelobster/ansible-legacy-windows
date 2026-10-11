@@ -1,6 +1,6 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
-# Copyright 2026 Joe Lustri
+# Copyright 2026 sustainablelobster
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 """Manage classic Windows event logs with Python 3.4.4 and native APIs."""
@@ -78,6 +78,7 @@ attributes:
   diff_mode:
     support: none
 notes:
+  - Configured creation is predicted without requiring the new log to exist. This differs from the missing-log failure in C(ansible.windows) 3.8.0 check mode.
   - Changing a resource path removes and recreates that source. Omitted resource paths reset to creation defaults.
   - The default source has the same name as its log. Remove the whole log to remove or change that source.
   - Changes happen in source order before maximum-size validation; earlier writes can remain after a later failure.
@@ -85,7 +86,7 @@ notes:
   - Default message-resource paths are registered without loading managed code. On legacy hosts without the resource DLL, supply O(message_file) for event-message rendering.
   - This module manages classic logs, not manifest event channels.
 author:
-  - Joe Lustri
+  - sustainablelobster
 """
 
 EXAMPLES = r"""

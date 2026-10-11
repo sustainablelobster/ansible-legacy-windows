@@ -53,7 +53,7 @@ notes:
   - Windows DSC can retain resource script text and diagnostics in its own history. Do not put secrets in scripts or emit them from resources.
   - This module does not install an engine, alter listeners, or change Local Configuration Manager settings.
 author:
-  - Joe Lustri
+  - sustainablelobster
 """
 
 EXAMPLES = r"""

@@ -7,7 +7,8 @@
     - vars/http_auth_fixture.yml
     - vars/http_default_proxy_fixture.yml
   vars:
-    http_auth_evidence_dir: "{{ playbook_dir }}/../../tmp/codex/evidence"
+    http_auth_evidence_dir: >-
+      {{ lookup('env', 'TMPDIR') | default('/tmp', true) }}
     http_auth_compare: false
     http_auth_password: >-
       {{ ansible_password | default(ansible_ssh_pass | default('')) }}

@@ -97,7 +97,7 @@ notes:
   - Automatic polling requires the collection's explicitly enabled polling adapter.
   - Controller script files are loaded before async launch, retaining the original task arguments.
 author:
-  - Joe Lustri
+  - sustainablelobster
 """
 
 EXAMPLES = r"""

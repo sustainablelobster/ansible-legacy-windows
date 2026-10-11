@@ -1,5 +1,5 @@
 ---
-# Copyright 2026 Joe Lustri
+# Copyright 2026 sustainablelobster
 # SPDX-License-Identifier: GPL-3.0-or-later
 - name: Exercise URI uploads with owned files and journaled FTP forwards
   hosts: legacy_windows
@@ -9,7 +9,7 @@
     - vars/uri_upload_ftp_fixture.yml
   vars:
     get_url_ftp_controller_parent: >-
-      {{ playbook_dir }}/../../tmp/codex/work
+      {{ lookup('env', 'TMPDIR') | default('/tmp', true) }}
     uri_upload_include_upstream: false
     uri_upload_run_native: true
     uri_upload_results: []
@@ -49,8 +49,8 @@
       ansible.builtin.tempfile:
         state: file
         path: >-
-          {{ evidence_dir | default(playbook_dir +
-             '/../../tmp/codex/evidence') }}
+          {{ evidence_dir | default(lookup('env', 'TMPDIR') |
+             default('/tmp', true)) }}
         prefix: uri-upload-bodies-
         suffix: .json
       register: uri_upload_capture

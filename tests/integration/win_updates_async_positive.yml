@@ -15,12 +15,12 @@
       {{ lookup('ansible.builtin.file', playbook_dir +
          '/fixtures/win_updates_servicing.py') }}
     updates_async_positive_capture: >-
-      {{ playbook_dir + '/../../tmp/codex/evidence/' +
+      {{ (lookup('env', 'TMPDIR') | default('/tmp', true)) + '/' +
          'win-updates-async-positive-' +
          updates_positive_state + '-' + updates_positive_phase + '-v1.json' }}
     updates_positive_cache_baseline: >-
-      {{ ((lookup('ansible.builtin.file', playbook_dir +
-        '/../../tmp/codex/evidence/' +
+      {{ ((lookup('ansible.builtin.file',
+        (lookup('env', 'TMPDIR') | default('/tmp', true)) + '/' +
         'win-updates-async-snapshot-stable-v1.json') | from_json).cache.stdout |
         from_json).identity }}
     updates_async_global_program: >-
@@ -59,7 +59,7 @@
       ansible.builtin.copy:
         content: '{{ updates_positive_cache_preparation | to_nice_json }}'
         dest: >-
-          {{ playbook_dir + '/../../tmp/codex/evidence/' +
+          {{ (lookup('env', 'TMPDIR') | default('/tmp', true)) + '/' +
              'win-updates-async-cache-' +
              updates_positive_phase + '-v1.json' }}
         mode: '0600'

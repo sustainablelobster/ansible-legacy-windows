@@ -197,8 +197,8 @@
               'lifecycle': updates_launch_lifecycle | default(none)}
               | to_nice_json }}
             dest: >-
-              {{ playbook_dir }}/../../tmp/codex/evidence/updates-launch-{{
-              inventory_hostname }}.partial.json
+              {{ lookup('env', 'TMPDIR') | default('/tmp', true)
+              }}/updates-launch-{{ inventory_hostname }}.partial.json
             mode: '0600'
           delegate_to: localhost
           vars:
@@ -246,8 +246,8 @@
               'image_restored': updates_launch_restored | default(none)}
               | to_nice_json }}
             dest: >-
-              {{ playbook_dir }}/../../tmp/codex/evidence/updates-launch-{{
-              inventory_hostname }}.json
+              {{ lookup('env', 'TMPDIR') | default('/tmp', true)
+              }}/updates-launch-{{ inventory_hostname }}.json
             mode: '0600'
           delegate_to: localhost
           vars:

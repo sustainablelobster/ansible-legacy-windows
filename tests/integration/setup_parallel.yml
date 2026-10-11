@@ -42,7 +42,7 @@
       ansible.builtin.tempfile:
         path: >-
           {{ setup_parallel_evidence_dir |
-             default(playbook_dir + '/../../tmp/codex/evidence') }}
+             default(lookup('env', 'TMPDIR') | default('/tmp', true)) }}
         prefix: 'setup-parallel-{{ inventory_hostname }}-'
         suffix: .json
       delegate_to: localhost

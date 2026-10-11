@@ -7,7 +7,7 @@
     - vars/native_async.yml
   vars:
     updates_async_search_capture_path: >-
-      {{ playbook_dir + '/../../tmp/codex/evidence/' +
+      {{ (lookup('env', 'TMPDIR') | default('/tmp', true)) + '/' +
          'win-updates-async-search-v1.json' }}
     updates_async_search_cases:
       - {name: real-searched-reject-all, state: searched, check: false}

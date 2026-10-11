@@ -1,6 +1,6 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
-# Copyright 2026 Joe Lustri
+# Copyright 2026 sustainablelobster
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 """Select the Windows timezone using Python 3.4.4 and native interfaces."""
@@ -50,7 +50,7 @@ notes:
   - An explicit null counts as a supplied argument and remains null in RV(timezone).
   - The native utility's full catalogue is used for validation where available. Some values accepted in check mode are rejected when setting the timezone.
 author:
-  - Joe Lustri
+  - sustainablelobster
 """
 
 EXAMPLES = r"""

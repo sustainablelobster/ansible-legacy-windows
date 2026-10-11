@@ -7,20 +7,23 @@
     - vars/http_trust_fixture.yml
     - vars/acl_certificate_fixture.yml
   vars:
-    http_trust_evidence_dir: "{{ playbook_dir }}/../../tmp/codex/evidence"
+    http_trust_evidence_dir: >-
+      {{ lookup('env', 'TMPDIR') | default('/tmp', true) }}
     http_trust_legacy_tls: false
     http_trust_store_certificate: false
+    http_trust_include_ca: true
+    http_trust_client_ec: false
     http_trust_timeout: 30
   tasks:
     - name: Record actual runtime operating system and network identity
       ansible.builtin.raw: >-
         cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c
-        "import ctypes,glob,json,os,struct,sys,tempfile;
+        "import ctypes,glob,json,os,struct,sys,tempfile,time;
         assert sys.version_info[:3] == (3,4,4);
         version=ctypes.create_string_buffer(284);
         struct.pack_into('I',version,0,284);
         assert ctypes.WinDLL('ntdll').RtlGetVersion(ctypes.byref(version))==0;
-        print(json.dumps(dict(python=sys.version,
+        print(json.dumps(dict(python=sys.version,clock=time.time(),
         windows=list(struct.unpack_from('III',version,4)),
         staging=sorted(path for prefix in
         ('ansible-tmp-','legacy-windows-package-url-') for path in
@@ -58,9 +61,28 @@
 
     - name: Exercise only disposable trust and client credentials
       block:
+        - name: Cover both guest and controller clocks in test certificates
+          ansible.builtin.set_fact:
+            http_trust_valid_from: >-
+              {{ '%Y%m%d%H%M%SZ' | strftime(
+                 ([lookup('pipe', 'date +%s') | int,
+                   (trust_runtime.stdout | from_json).clock | int] | min)
+                 - 86400, utc=true) }}
+            http_trust_valid_until: >-
+              {{ '%Y%m%d%H%M%SZ' | strftime(
+                 ([lookup('pipe', 'date +%s') | int,
+                   (trust_runtime.stdout | from_json).clock | int] | max)
+                 + 86400, utc=true) }}
+
         - name: Generate an owned CA and correctly constrained leaf certificates
           ansible.builtin.command:
-            argv: "{{ item }}"
+            argv: >-
+              {{ item + (['-certfile', 'ca.pem']
+                 if item[1] == 'pkcs12' and http_trust_include_ca | bool
+                 else []) + (['-pkeyopt', 'ec_paramgen_curve:P-256']
+                 if item[1] == 'req' and 'client-key.pem' in item
+                 and http_trust_client_ec | bool
+                 else []) }}
             chdir: "{{ trust_controller.path }}"
           loop:
             - - openssl
@@ -71,6 +93,10 @@
               - -nodes
               - -days
               - "1"
+              - -not_before
+              - "{{ http_trust_valid_from }}"
+              - -not_after
+              - "{{ http_trust_valid_until }}"
               - -subj
               - "/CN=legacy-windows-owned-test-CA"
               - -addext
@@ -107,6 +133,10 @@
               - -CAcreateserial
               - -days
               - "1"
+              - -not_before
+              - "{{ http_trust_valid_from }}"
+              - -not_after
+              - "{{ http_trust_valid_until }}"
               - -copy_extensions
               - copy
               - -out
@@ -115,7 +145,7 @@
               - req
               - -new
               - -newkey
-              - "rsa:2048"
+              - "{{ 'ec' if http_trust_client_ec | bool else 'rsa:2048' }}"
               - -nodes
               - -subj
               - "/CN=legacy-windows-owned-client"
@@ -137,6 +167,10 @@
               - -CAcreateserial
               - -days
               - "1"
+              - -not_before
+              - "{{ http_trust_valid_from }}"
+              - -not_after
+              - "{{ http_trust_valid_until }}"
               - -copy_extensions
               - copy
               - -out
@@ -376,6 +410,19 @@
             stdin: "{{ get_url_program }}"
           changed_when: false
 
+        - name: Record key state before requests # noqa: args[module]
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - "{{ ansible_python_interpreter }}"
+              - "-"
+              - "{{ trust_workspace.path }}"
+              - observe
+              - "{{ trust_ca_thumb }}"
+            stdin: "{{ http_trust_program }}"
+          register: trust_before_requests
+          changed_when: false
+          no_log: true
+
         - name: Download with client credentials # noqa: args[module]
           sustainablelobster.legacy_windows.win_get_url:
             url: "{{ trust_endpoint }}/client"
@@ -411,10 +458,61 @@
           register: trust_wrong_password
           failed_when: false
 
-        - name: Preview a trusted package # noqa: args[module]
+        - name: Fail after client credential creation # noqa: args[module]
+          sustainablelobster.legacy_windows.win_uri:
+            url: "{{ trust_endpoint }}/status/503"
+            client_cert: >-
+              {{ trust_store_path | default(
+                 get_url_workspace.path + '\\client.pfx') }}
+            client_cert_password: fixture-secret
+            use_proxy: false
+            url_timeout: '{{ http_trust_timeout }}'
+          register: trust_failed_request
+          failed_when: false
+
+        - name: Recover after a connection failure # noqa: args[module]
+          sustainablelobster.legacy_windows.win_uri:
+            url: https://127.0.0.1:1/client
+            client_cert: >-
+              {{ trust_store_path | default(
+                 get_url_workspace.path + '\\client.pfx') }}
+            client_cert_password: fixture-secret
+            validate_certs: false
+            use_proxy: false
+            url_timeout: 5
+          register: trust_connection_failure
+          failed_when: false
+
+        - name: Observe key state after requests # noqa: args[module]
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - "{{ ansible_python_interpreter }}"
+              - "-"
+              - "{{ trust_workspace.path }}"
+              - observe
+              - "{{ trust_ca_thumb }}"
+            stdin: "{{ http_trust_program }}"
+          register: trust_after_requests
+          changed_when: false
+          no_log: true
+
+        - name: Require unchanged existing keys and certificates
+          ansible.builtin.assert:
+            that:
+              - before.user_key_files == after.user_key_files
+              - before.user_personal_store == after.user_personal_store
+          vars:
+            before: "{{ (trust_before_requests.stdout | from_json).state }}"
+            after: "{{ (trust_after_requests.stdout | from_json).state }}"
+          no_log: true
+
+        - name: Preview a client-authenticated package # noqa: args[module]
           sustainablelobster.legacy_windows.win_package:
-            path: "{{ trust_endpoint }}/payload.bin"
-            client_cert: "{{ trust_store_path | default(omit) }}"
+            path: "{{ trust_endpoint }}/client"
+            client_cert: >-
+              {{ trust_store_path | default(
+                 get_url_workspace.path + '\\client.pfx') }}
+            client_cert_password: fixture-secret
             provider: registry
             product_id: >-
               legacy-windows-trust-{{
@@ -453,6 +551,11 @@
                  not trust_wrong_password.changed and
                  'deliberately-wrong' not in trust_wrong_password.msg)
               - trust_package.status_code == 200 and trust_package.changed
+              - trust_failed_request.status_code == 503
+              - not trust_failed_request.changed
+              - "'503' in trust_failed_request.msg"
+              - trust_connection_failure.status_code == none
+              - not trust_connection_failure.changed
               - >-
                 (trust_observed.stdout | from_json).requests |
                 selectattr('path', 'equalto', '/client') |
@@ -474,6 +577,12 @@
                   'store_path': trust_store_path | default(none),
                   'repeat': trust_repeat | default(none),
                   'wrong_password': trust_wrong_password | default(none),
+                  'failed_request': trust_failed_request | default(none),
+                  'connection_failure':
+                    trust_connection_failure | default(none),
+                  'before_requests': trust_before_requests | default(none),
+                  'after_requests': trust_after_requests | default(none),
+                  'client_includes_ca': http_trust_include_ca | bool,
                   'package': trust_package | default(none),
                   'observed': trust_observed | default(none),
                   'ca_thumb': trust_ca_thumb | default(none),

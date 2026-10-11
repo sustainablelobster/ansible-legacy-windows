@@ -1,6 +1,6 @@
 """Verify native package service guards without contacting Windows."""
 
-# Copyright 2026 Joe Lustri
+# Copyright 2026 sustainablelobster
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Tests exercise the private native boundary through public guard decisions.
 # pylint: disable=protected-access

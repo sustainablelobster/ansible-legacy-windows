@@ -105,6 +105,28 @@ def test_check_mode_binding_validates_range_but_skips_overflow_compatibility(
     )
 
 
+def test_limit_check_mode_does_not_require_an_existing_log(
+    helper: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    missing_log = Mock(side_effect=FileNotFoundError(2, "Log is absent"))
+    monkeypatch.setattr(helper, "_log_key", missing_log)
+    helper.validate_limit("Owned", "OverwriteAsNeeded", None, True)
+    missing_log.assert_not_called()
+
+
+def test_limit_missing_log_failure_is_preserved_outside_check_mode(
+    helper: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        helper, "_log_key", Mock(side_effect=FileNotFoundError(2, "Log is absent"))
+    )
+    with pytest.raises(ValueError) as failure:
+        helper.validate_limit("Owned", "OverwriteAsNeeded", None, False)
+    assert str(failure.value) == (
+        'The Log name "Owned" does not exist in the computer "localhost".'
+    )
+
+
 def test_source_resource_values_use_expandable_strings_and_zero_categories(
     helper: ModuleType, monkeypatch: pytest.MonkeyPatch
 ) -> None:

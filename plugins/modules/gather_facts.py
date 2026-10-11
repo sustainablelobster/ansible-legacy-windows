@@ -47,7 +47,7 @@ notes:
   - An explicitly selected C(ansible.builtin.gather_facts) action does not use this adapter.
   - Native Setup retains its documented transport, interpreter and script prerequisites.
 author:
-  - Joe Lustri
+  - sustainablelobster
 """
 
 EXAMPLES = r"""

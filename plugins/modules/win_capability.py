@@ -1,6 +1,6 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
-# Copyright 2026 Joe Lustri
+# Copyright 2026 sustainablelobster
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 """Manage Windows capabilities through native Python 3.4.4 servicing calls."""
@@ -74,7 +74,7 @@ notes:
   - Removal ignores source and logging options after the preflight query, matching the pinned source.
   - Multi-match patterns select every matching capability, including already-desired states.
 author:
-  - Joe Lustri
+  - sustainablelobster
 """
 
 EXAMPLES = r"""

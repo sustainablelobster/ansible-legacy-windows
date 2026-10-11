@@ -27,7 +27,9 @@ def test_client_certificate_context_remains_owned_until_native_request_closes(
     options.update(client_cert=r"Cert:\CurrentUser\My\thumbprint")
     collection = Mock()
     collection.__enter__ = Mock(
-        return_value=SimpleNamespace(records=[{"context": 501}])
+        return_value=SimpleNamespace(
+            records=[{"context": 501, "has_private_key": True}]
+        )
     )
     events: list[Any] = []
     collection.__exit__ = Mock(side_effect=lambda *_args: events.append("certificate"))
@@ -65,36 +67,66 @@ def test_client_certificate_context_remains_owned_until_native_request_closes(
     assert collection.__exit__.call_args.args[-3:] == (None, None, None)
 
 
-@pytest.mark.parametrize("has_certificate", [False, True])
-def test_client_certificate_file_import_is_nonpersistent_and_always_released(
+@pytest.mark.parametrize("records", [[], [{"context": 500, "has_private_key": False}]])
+def test_client_certificate_file_requires_a_private_key(
     http: Any,
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
-    has_certificate: bool,
+    records: list[dict[str, Any]],
 ) -> None:
     helper, _options, _library = http
     path = tmp_path / "owned.pfx"
     path.write_bytes(b"substituted cryptographic boundary")
     collection = Mock()
-    collection.__enter__ = Mock(
-        return_value=SimpleNamespace(
-            records=[{"context": 501}] if has_certificate else []
-        )
-    )
+    collection.__enter__ = Mock(return_value=SimpleNamespace(records=records))
     collection.__exit__ = Mock(return_value=False)
     imported = Mock(return_value=collection)
     monkeypatch.setattr(helper.certificates, "read_file", imported)
     with ExitStack() as stack:
-        if has_certificate:
-            assert helper._client_certificate(stack, str(path), "fixture") == 501
-        else:
-            with pytest.raises(ValueError, match="does not exist"):
-                helper._client_certificate(stack, str(path), "fixture")
+        with pytest.raises(ValueError, match="private key|does not exist"):
+            helper._client_certificate(stack, str(path), "fixture")
         collection.__exit__.assert_not_called()
     imported.assert_called_once_with(
-        str(path), "fixture", False, "default", persist=False
+        str(path), "fixture", True, "default", persist=False
     )
     collection.__exit__.assert_called_once()
+
+
+def test_client_certificate_bundle_owns_the_selected_key_until_request_cleanup(
+    http: Any, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    helper, _options, _library = http
+    path = tmp_path / "bundle.pfx"
+    path.write_bytes(b"substituted cryptographic boundary")
+    leaf = {"context": 501, "has_private_key": True}
+    collection = Mock(
+        __enter__=Mock(
+            return_value=SimpleNamespace(
+                records=[{"context": 500, "has_private_key": False}, leaf]
+            )
+        ),
+        __exit__=Mock(return_value=False),
+    )
+    imported = Mock(return_value=collection)
+    monkeypatch.setattr(helper.certificates, "read_file", imported)
+    events = []
+    credential = Mock(
+        __enter__=Mock(return_value=601),
+        __exit__=Mock(side_effect=lambda *_args: events.append("key")),
+    )
+    copied = Mock(return_value=credential)
+    monkeypatch.setattr(helper.http_certificate, "temporary_certificate", copied)
+    collection.__exit__.side_effect = lambda *_args: events.append("collection")
+    with ExitStack() as stack:
+        assert helper._client_certificate(stack, str(path), "fixture") == 601
+        imported.assert_called_once_with(
+            str(path), "fixture", True, "default", persist=False
+        )
+        copied.assert_called_once_with(collection.__enter__.return_value, leaf)
+        credential.__exit__.assert_not_called()
+        collection.__exit__.assert_not_called()
+    collection.__exit__.assert_called_once()
+    assert events == ["key", "collection"]
 
 
 @pytest.mark.parametrize("boundary", ["WinHttpSendRequest", "WinHttpReceiveResponse"])

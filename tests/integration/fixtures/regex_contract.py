@@ -1,6 +1,6 @@
 """Own inert files and inspect real regex/update-selection helpers on Windows."""
 
-# Copyright 2026 Joe Lustri
+# Copyright 2026 sustainablelobster
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 import hashlib

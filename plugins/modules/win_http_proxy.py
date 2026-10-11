@@ -1,6 +1,6 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
-# Copyright 2026 Joe Lustri
+# Copyright 2026 sustainablelobster
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 """Manage the system WinHTTP proxy using Python 3.4.4 and native APIs."""
@@ -61,7 +61,7 @@ notes:
   - A real write is read back. If Windows stores different values, the previous configuration is requested again and the module fails.
   - Importing from Internet Explorer is a one-time copy, not ongoing synchronization.
 author:
-  - Joe Lustri
+  - sustainablelobster
 """
 
 EXAMPLES = r"""

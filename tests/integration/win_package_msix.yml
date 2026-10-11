@@ -6,8 +6,13 @@
     - vars/package_msix.yml
   vars:
     package_msix_results: []
+    integration_artifact_dir: >-
+      {{ lookup('env', 'LEGACY_WINDOWS_TEST_ARTIFACTS') |
+      default(undef(hint='Set integration_artifact_dir to the ' +
+      'external fixture directory'), true) }}
     package_msix_capture_prefix: >-
-      {{ playbook_dir + '/../../tmp/codex/evidence/package-msix-public-v41' }}
+      {{ (lookup('env', 'TMPDIR') | default('/tmp', true)) +
+      '/package-msix-public-v41' }}
     package_msix_staging: >-
       import glob,json,os,sys,tempfile;assert sys.version_info[:3]==(3,4,4);
       print(json.dumps(sorted(glob.glob(os.path.join(tempfile.gettempdir(),'ansible-tmp-*')))))
@@ -56,15 +61,15 @@
             - source: ../../plugins/module_utils/legacy_windows_module.py
               name: legacy_windows_module.py
             - source: >-
-                {{ playbook_dir + '/../../tmp/codex/artifacts/' +
+                {{ integration_artifact_dir + '/' +
                    'package-msix-sdk-native-subset-v43.zip' }}
               name: sdk.zip
             - source: >-
-                {{ playbook_dir + '/../../tmp/codex/artifacts/' +
+                {{ integration_artifact_dir + '/' +
                    'package-msix-inputs-v41/cert.der' }}
               name: cert.der
             - source: >-
-                {{ playbook_dir + '/../../tmp/codex/artifacts/' +
+                {{ integration_artifact_dir + '/' +
                    'package-msix-inputs-v41/cert.pfx' }}
               name: cert.pfx
           no_log: true

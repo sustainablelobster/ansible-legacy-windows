@@ -22,8 +22,8 @@
         prefix: firewall-{{ inventory_hostname }}-
         suffix: .json
         path: >-
-          {{ firewall_evidence_dir | default(playbook_dir +
-          '/../../tmp/codex/evidence') }}
+          {{ firewall_evidence_dir | default(lookup('env', 'TMPDIR') |
+          default('/tmp', true)) }}
       register: firewall_capture_file
       delegate_to: localhost
       vars: &local

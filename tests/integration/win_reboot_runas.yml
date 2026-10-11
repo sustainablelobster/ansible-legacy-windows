@@ -1,5 +1,5 @@
 ---
-# Copyright 2026 Joe Lustri
+# Copyright 2026 sustainablelobster
 # SPDX-License-Identifier: GPL-3.0-or-later
 - name: Verify reboot prediction and failed native runas credentials
   tags: [reboot_failure]
@@ -21,7 +21,7 @@
         state: file
         path: >-
           {{ evidence_dir |
-          default(playbook_dir + '/../../tmp/codex/evidence') }}
+          default(lookup('env', 'TMPDIR') | default('/tmp', true)) }}
         prefix: 'reboot-runas-failure-{{ inventory_hostname }}-'
         suffix: .json
       register: reboot_failure_capture
@@ -230,7 +230,7 @@
         state: file
         path: >-
           {{ evidence_dir |
-          default(playbook_dir + '/../../tmp/codex/evidence') }}
+          default(lookup('env', 'TMPDIR') | default('/tmp', true)) }}
         prefix: 'reboot-runas-{{ reboot_case }}-{{ inventory_hostname }}-'
         suffix: .json
       register: reboot_case_capture
@@ -432,7 +432,7 @@
         state: file
         path: >-
           {{ evidence_dir |
-          default(playbook_dir + '/../../tmp/codex/evidence') }}
+          default(lookup('env', 'TMPDIR') | default('/tmp', true)) }}
         prefix: 'reboot-runas-system-denied-{{ inventory_hostname }}-'
         suffix: .json
       register: reboot_system_denied_capture

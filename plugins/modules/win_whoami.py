@@ -1,6 +1,6 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
-# Copyright 2026 Joe Lustri
+# Copyright 2026 sustainablelobster
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 """Read current Windows token and logon information using Python 3.4.4."""
@@ -41,7 +41,7 @@ notes:
   - Passwordless named-account runas requires permission to impersonate an accessible SYSTEM token. It reuses a matching non-network token, or requests a native S4U logon when no eligible process token exists.
   - A fresh S4U logon uses Batch unless runas requests Network; it supplies no password-derived outbound network credentials. Existing-token reuse retains that token's logon context. Systems without the required S4U authentication package need an eligible existing token or a become password.
 author:
-  - Joe Lustri
+  - sustainablelobster
 """
 
 EXAMPLES = r"""

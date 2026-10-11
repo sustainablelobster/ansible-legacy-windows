@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# Copyright 2026 Joe Lustri
+# Copyright 2026 sustainablelobster
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 """Download resources with the target's WinHTTP, CryptoAPI and Python library."""
@@ -34,6 +34,7 @@ import legacy_windows_certificate_store as certificates  # pylint: disable=impor
 import legacy_windows_copy as copying  # pylint: disable=import-error
 import legacy_windows_get_url_ftp as ftp  # pylint: disable=import-error
 import legacy_windows_get_url_http as plain_http  # pylint: disable=import-error
+import legacy_windows_http_certificate as http_certificate  # pylint: disable=import-error
 from legacy_windows_module import DOTNET_WHITESPACE  # pylint: disable=import-error
 
 _DWORD = ctypes.c_uint32
@@ -126,6 +127,7 @@ def _winhttp():
 
 def _error(code=None, secure_failure=0):
     code = ctypes.get_last_error() if code is None else code
+    code &= 0xFFFFFFFF
     if code in (12002, 12029, 12175):
         message = {
             12002: "The operation has timed out",
@@ -150,7 +152,9 @@ def _error(code=None, secure_failure=0):
             details = "; ".join(reasons) or "unrecognized secure-failure flags"
             message += ": {0} (WinHTTP flags 0x{1:08X})".format(details, secure_failure)
     else:
-        message = ctypes.FormatError(code).rstrip("\r\n .")
+        # Python 3.4's FormatError accepts a signed Windows long, even for HRESULTs.
+        message = ctypes.FormatError(ctypes.c_int32(code).value).rstrip("\r\n .")
+        message += " (Windows error {0} / 0x{0:08X})".format(code)
     return OSError(code, message)
 
 
@@ -279,7 +283,8 @@ def _proxy(library, session, request, url, options):
 
 
 def _client_certificate(stack, path, password):
-    if path.lower().startswith("cert:\\"):
+    installed = path.lower().startswith("cert:\\")
+    if installed:
         parts = path.split("\\")
         if len(parts) != 4 or parts[1].lower() not in ("currentuser", "localmachine"):
             raise ValueError("Client certificate '{0}' does not exist".format(path))
@@ -291,12 +296,19 @@ def _client_certificate(stack, path, password):
         if not os.path.exists(path):
             raise ValueError("Client certificate '{0}' does not exist".format(path))
         collection = stack.enter_context(
-            certificates.read_file(path, password, False, "default", persist=False)
+            certificates.read_file(path, password, True, "default", persist=False)
         )
         records = collection.records
     if not records:
         raise ValueError("Client certificate '{0}' does not exist".format(path))
-    return records[0]["context"]
+    for record in records:
+        if record["has_private_key"]:
+            if installed:
+                return record["context"]
+            return stack.enter_context(
+                http_certificate.temporary_certificate(collection, record)
+            )
+    raise ValueError("Client certificate '{0}' has no private key".format(path))
 
 
 # Native handles, completion events and callback state share one owned lifetime.

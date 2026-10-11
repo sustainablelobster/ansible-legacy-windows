@@ -1,9 +1,9 @@
 """Coordinate native restart, reconnection, boot verification and readiness."""
 
 # Copyright 2021 Ansible Project
-# Copyright 2026 Joe Lustri
+# Copyright 2026 sustainablelobster
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Derived from ansible.windows 3.8.0; modified by Joe Lustri on 2026-10-09.
+# Derived from ansible.windows 3.8.0; modified by sustainablelobster on 2026-10-09.
 
 import random
 import time

@@ -1,6 +1,6 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
-# Copyright 2026 Joe Lustri
+# Copyright 2026 sustainablelobster
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 """Manage persistent Windows network drives using Python 3.4.4."""
@@ -64,7 +64,7 @@ notes:
   - A changed mapping with explicit credentials clears its saved username so future logons can use cached credentials.
   - Replacing a target disconnects the old mapping first. A failed new connection does not restore the old target.
 author:
-  - Joe Lustri
+  - sustainablelobster
 """
 
 EXAMPLES = r"""

@@ -1,6 +1,6 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
-# Copyright 2026 Joe Lustri
+# Copyright 2026 sustainablelobster
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 """Manage Windows file ownership through native APIs on Python 3.4.4."""
@@ -66,7 +66,7 @@ seealso:
   - module: sustainablelobster.legacy_windows.win_file
   - module: sustainablelobster.legacy_windows.win_stat
 author:
-  - Joe Lustri
+  - sustainablelobster
 """
 
 EXAMPLES = r"""

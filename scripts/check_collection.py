@@ -89,11 +89,10 @@ def _validate_manifest(manifest: bytes) -> None:
     info = json.loads(manifest)["collection_info"]
     if (info["namespace"], info["name"]) != IDENTITY:
         raise SystemExit("Artifact has the wrong collection identity")
-    for license_name in ("GPL-3.0-or-later", "MIT", "Unicode-3.0"):
-        if license_name not in info["license"]:
-            raise SystemExit(
-                "Artifact does not declare its " + license_name + " material"
-            )
+    if info.get("license_file") != "LICENSE" or info.get("license"):
+        raise SystemExit(
+            "Artifact must declare license_file: LICENSE without a license list"
+        )
 
 
 def _inspect_archive(artifact: Path, plugins: dict[str, bytes] | None = None) -> bytes:

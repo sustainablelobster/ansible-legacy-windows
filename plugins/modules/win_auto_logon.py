@@ -1,6 +1,6 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
-# Copyright 2026 Joe Lustri
+# Copyright 2026 sustainablelobster
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 """Configure automatic Windows logon with registry and native LSA calls."""
@@ -64,7 +64,7 @@ notes:
   - Registry updates precede the LSA update. A later failure can leave earlier changes applied.
   - Does not validate the supplied password or restart the machine.
 author:
-  - Joe Lustri
+  - sustainablelobster
 """
 
 EXAMPLES = r"""

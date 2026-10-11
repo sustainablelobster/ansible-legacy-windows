@@ -8,8 +8,13 @@
     ansible_python_interpreter: '{{ ansible_playbook_python }}'
   tasks:
     - name: Create the bounded local capture directory
+      when:
+        - evidence_dir is defined
+        - >-
+          (evidence_dir | realpath) not in [('/tmp' | realpath),
+          (lookup('env', 'TMPDIR') | default('/tmp', true) | realpath)]
       ansible.builtin.file:
-        path: '{{ playbook_dir }}/../../tmp/codex/evidence'
+        path: '{{ evidence_dir }}'
         state: directory
         mode: '0700'
 
@@ -22,7 +27,8 @@
     dns_zone_second_master: '192.0.2.54'
     dns_zone_recovery_reboot_authorized: true
     dns_zone_capture: >-
-      {{ playbook_dir }}/../../tmp/codex/evidence/dns-zone-classic-v2.json
+      {{ evidence_dir | default(lookup('env', 'TMPDIR') |
+      default('/tmp', true)) }}/dns-zone-classic-v2.json
     dns_zone_expected_failures:
       - update-primary
       - require-secondary-servers

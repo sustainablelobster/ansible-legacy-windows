@@ -19,7 +19,7 @@
       ansible.builtin.tempfile:
         path: >-
           {{ evidence_dir |
-          default(playbook_dir + '/../../tmp/codex/evidence') }}
+          default(lookup('env', 'TMPDIR') | default('/tmp', true)) }}
         state: file
         prefix: "native-async-{{ inventory_hostname }}-"
         suffix: .json

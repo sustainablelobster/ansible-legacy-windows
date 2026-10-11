@@ -11,8 +11,8 @@
         dns_zone_case_tasks: tasks/win_dns_record_case.yml
         dns_zone_cases: '{{ dns_record_cases }}'
         dns_zone_capture: >-
-          {{ dns_record_capture | default(playbook_dir +
-          '/../../tmp/codex/evidence/dns-record-' +
+          {{ dns_record_capture | default((lookup('env', 'TMPDIR') |
+          default('/tmp', true)) + '/dns-record-' +
           inventory_hostname + '.json') }}
         dns_record_fixture_program: '{{ dns_record_fixture_program }}'
         dns_zone_recovery_reboot_authorized: true

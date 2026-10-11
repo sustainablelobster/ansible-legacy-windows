@@ -1,5 +1,5 @@
 ---
-# Copyright 2026 Joe Lustri
+# Copyright 2026 sustainablelobster
 # SPDX-License-Identifier: GPL-3.0-or-later
 # This server and journal adapter run only on the Nix controller. The original
 # FTP fixture still owns process identity, protected inputs and SSH forwards.

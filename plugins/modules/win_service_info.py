@@ -1,6 +1,6 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
-# Copyright 2026 Joe Lustri
+# Copyright 2026 sustainablelobster
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 """Read Windows service information with a Python 3.4.4 payload."""
@@ -51,7 +51,7 @@ notes:
   - Fatal errors discard partial service results; the module never changes service configuration.
   - Matching and sorting use native language tables, which can differ across Windows versions. Equal sort keys retain enumeration order.
 author:
-  - Joe Lustri
+  - sustainablelobster
 """
 
 EXAMPLES = r"""

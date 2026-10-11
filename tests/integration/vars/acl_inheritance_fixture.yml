@@ -1,6 +1,6 @@
 ---
 acl_inheritance_fixture: |
-  # Copyright 2026 Joe Lustri
+  # Copyright 2026 sustainablelobster
   # SPDX-License-Identifier: GPL-3.0-or-later
   """Create and inspect isolated inheritance fixtures on Python 3.4.4."""
 

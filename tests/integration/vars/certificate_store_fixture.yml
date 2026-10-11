@@ -1,6 +1,6 @@
 ---
 certificate_store_fixture: |
-  # Copyright 2026 Joe Lustri
+  # Copyright 2026 sustainablelobster
   # SPDX-License-Identifier: GPL-3.0-or-later
   """Journal owned certificates, provider keys, stores and export files."""
 

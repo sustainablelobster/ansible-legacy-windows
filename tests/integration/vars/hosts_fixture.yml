@@ -1,6 +1,6 @@
 ---
 hosts_fixture: |
-  # Copyright 2026 Joe Lustri
+  # Copyright 2026 sustainablelobster
   # SPDX-License-Identifier: GPL-3.0-or-later
   """Back up the real hosts file and verify its exact restoration."""
 

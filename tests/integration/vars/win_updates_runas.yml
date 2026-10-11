@@ -2,7 +2,8 @@
 updates_runas_mode: paired
 updates_runas_system_account: 'NT AUTHORITY\SYSTEM'
 updates_runas_capture: >-
-  {{ playbook_dir }}/../../tmp/codex/evidence/win-updates-runas-result.json
+  {{ lookup('env', 'TMPDIR') | default('/tmp', true)
+  }}/win-updates-runas-result.json
 updates_runas_cases:
   - {actor: administrator, check: false, state: searched}
   - {actor: administrator, check: true, state: installed}

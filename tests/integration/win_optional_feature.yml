@@ -31,8 +31,13 @@
       staging_after: '{{ optional_feature_staging_after.stdout | default("") }}'
   tasks:
     - name: Prepare private local evidence directory before guest changes
+      when:
+        - evidence_dir is defined
+        - >-
+          (evidence_dir | realpath) not in [('/tmp' | realpath),
+          (lookup('env', 'TMPDIR') | default('/tmp', true) | realpath)]
       ansible.builtin.file:
-        path: '{{ playbook_dir }}/../../tmp/codex/evidence'
+        path: '{{ evidence_dir }}'
         state: directory
         mode: '0700'
       delegate_to: localhost
@@ -46,7 +51,9 @@
         state: file
         prefix: optional-feature-{{ inventory_hostname }}-
         suffix: .json
-        path: '{{ playbook_dir }}/../../tmp/codex/evidence'
+        path: >-
+          {{ evidence_dir | default(lookup('env', 'TMPDIR') |
+          default('/tmp', true)) }}
       register: optional_feature_capture_file
       delegate_to: localhost
       vars: &local

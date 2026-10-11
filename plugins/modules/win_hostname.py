@@ -1,6 +1,6 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
-# Copyright 2026 Joe Lustri
+# Copyright 2026 sustainablelobster
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 """Request a Windows computer rename using Python 3.4.4 and native WMI."""
@@ -47,7 +47,7 @@ notes:
   - A pending rename does not change RV(old_name). Repeating the request before reboot can report another change.
   - This module does not restart the machine.
 author:
-  - Joe Lustri
+  - sustainablelobster
 """
 
 EXAMPLES = r"""

@@ -1,6 +1,6 @@
 ---
 audit_policy_fixture: |
-  # Copyright 2026 Joe Lustri
+  # Copyright 2026 sustainablelobster
   # SPDX-License-Identifier: GPL-3.0-or-later
   """Journal system audit policy and verify restoration through native APIs."""
   import ctypes

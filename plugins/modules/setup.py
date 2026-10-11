@@ -1,6 +1,6 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
-# Copyright 2026 Joe Lustri
+# Copyright 2026 sustainablelobster
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 """Collect Windows facts with Python 3.4.4 and native interfaces."""
@@ -62,7 +62,7 @@ notes:
   - The PowerShell version fact reads the installed Windows PowerShell engine version without starting it.
   - WinRM certificate facts read the local WSMan configuration and machine certificate store without configuring listeners.
 author:
-  - Joe Lustri
+  - sustainablelobster
 """
 
 # pylint: enable=duplicate-code

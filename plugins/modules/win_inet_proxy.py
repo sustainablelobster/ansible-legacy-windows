@@ -1,6 +1,6 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
-# Copyright 2026 Joe Lustri
+# Copyright 2026 sustainablelobster
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 """Manage WinINet proxy settings using Python 3.4.4 and native APIs."""
@@ -72,7 +72,7 @@ notes:
   - Comparisons ignore case, while diffs retain previous and requested spelling.
   - Real writes are read back. A mismatch requests restoration of all previous settings before reporting failure.
 author:
-  - Joe Lustri
+  - sustainablelobster
 """
 
 EXAMPLES = r"""

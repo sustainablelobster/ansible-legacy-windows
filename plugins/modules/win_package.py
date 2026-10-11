@@ -1,6 +1,6 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
-# Copyright 2026 Joe Lustri
+# Copyright 2026 sustainablelobster
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 """Install and remove Windows Installer products, patches and executables."""
@@ -192,7 +192,7 @@ notes:
     If no file is found, the registry command is used unchanged. An explicit O(path) bypasses registry command recovery.
   - MSI installation adds a best-effort SYSTEM read permission to the package file.
 author:
-  - Joe Lustri
+  - sustainablelobster
 """
 
 EXAMPLES = r"""

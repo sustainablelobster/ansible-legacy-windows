@@ -60,7 +60,7 @@ attributes:
   async:
     support: none
 author:
-  - Joe Lustri
+  - sustainablelobster
 """
 
 EXAMPLES = r"""

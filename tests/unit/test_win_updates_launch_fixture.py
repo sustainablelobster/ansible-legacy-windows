@@ -266,8 +266,9 @@ def test_native_startup_arguments_select_scripts_without_python_argv(
 def test_startup_gate_works_before_sys_argv_exists(
     site_fixture: ModuleType,
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
-    image = str(_ROOT / "tmp/codex/python.exe")
+    image = str(tmp_path / "python.exe")
     config = {
         "sid": "S-1-5-21-1000",
         "image": image,
@@ -315,8 +316,9 @@ def test_only_selected_already_running_frontends_can_deny_the_owned_image(
     site_fixture: ModuleType,
     script: str,
     eligible: bool,
+    tmp_path: Path,
 ) -> None:
-    image = str(_ROOT / "tmp/codex/owned-python.exe")
+    image = str(tmp_path / "owned-python.exe")
     config = {"image": image, "sid": "S-1-5-21-1000"}
     assert site_fixture._should_deny(image, script, config["sid"], config) is eligible
     assert not site_fixture._should_deny(image, script, "S-1-5-18", config)

@@ -34,7 +34,9 @@
 
     - name: Allocate private evidence before target writes
       ansible.builtin.tempfile:
-        path: '{{ playbook_dir }}/../../tmp/codex/evidence'
+        path: >-
+          {{ evidence_dir | default(lookup('env', 'TMPDIR') |
+          default('/tmp', true)) }}
         prefix: 'regex-contract-{{ inventory_hostname }}-'
         suffix: .json
       register: regex_contract_capture

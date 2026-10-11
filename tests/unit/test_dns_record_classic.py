@@ -25,24 +25,57 @@ def classic_server(monkeypatch: pytest.MonkeyPatch) -> Any:
         ROOT / "plugins/module_utils/legacy_windows_dns_record.py",
         "classic_records_test",
     )
-    state: dict[str, Any] = {"rows": [], "writes": []}
+    state: dict[str, Any] = {
+        "rows": [],
+        "writes": [],
+        "srv_property": "SRVDomainName",
+        "srv_input": "SRVDomainName",
+    }
     connection = MagicMock()
+    connection._method_inputs.return_value = "srv-creation-inputs"
+    monkeypatch.setattr(helper.wmi, "_get_object", lambda *_args: "srv-class")
+    monkeypatch.setattr(
+        helper.wmi,
+        "_read_embedded_object",
+        lambda _automation, instance: {
+            state["srv_property" if instance == "srv-class" else "srv_input"]: None
+        },
+    )
 
-    def _query(query: str, _fields: list[str]) -> list[dict[str, Any]]:
+    def _query(query: str, fields: list[str]) -> list[dict[str, Any]]:
         if "meta_class" in query:
             return [{"__CLASS": "MicrosoftDNS_AType"}]
         if "MicrosoftDNS_Zone" in query:
             return [{"Name": "owned.invalid"}]
+        if "MicrosoftDNS_SRVType" in query and state["rows"]:
+            if any(field not in state["rows"][0] for field in fields):
+                raise OSError("The SRV class does not expose that property.")
         return copy.deepcopy(state["rows"])
 
     connection.query.side_effect = _query
     monkeypatch.setattr(helper, "_dns_tool", lambda: None)
+
+    def _srv_update_path(row: dict[str, Any]) -> str:
+        path = str(row["__PATH"])
+        if state["srv_property"] == "DomainName":
+            return path.replace(
+                ',DomainName="' + row["DomainName"] + '"',
+                ',DomainName="' + row["OwnerName"] + '"',
+                1,
+            )
+        return path
 
     def _call(
         _connection: Any, path: str, method: str, inputs: dict[str, Any]
     ) -> dict[str, Any]:
         state["writes"].append((path, method, copy.deepcopy(inputs)))
         if method == "CreateInstanceFromPropertyData":
+            if path == "MicrosoftDNS_SRVType":
+                target = state["srv_input"]
+                if target not in inputs:
+                    raise OSError("The SRV creation signature requires " + target)
+                inputs = dict(inputs)
+                inputs[state["srv_property"]] = inputs.pop(target)
             state["rows"].append(
                 {
                     "__PATH": "native-record-" + str(len(state["rows"])),
@@ -63,9 +96,26 @@ def classic_server(monkeypatch: pytest.MonkeyPatch) -> Any:
                     },
                 }
             )
+            if path == "MicrosoftDNS_SRVType":
+                state["rows"][-1]["__PATH"] = (
+                    'MicrosoftDNS_SRVType.ContainerName="owned.invalid",'
+                    'DomainName="' + inputs[state["srv_property"]] + '",'
+                    'OwnerName="' + inputs["OwnerName"] + '"'
+                )
         else:
             assert method == "Modify"
-            selected = [row for row in state["rows"] if row["__PATH"] == path]
+            selected = [
+                row
+                for row in state["rows"]
+                if (
+                    _srv_update_path(row)
+                    if "MicrosoftDNS_SRVType" in row["__PATH"]
+                    else row["__PATH"]
+                )
+                == path
+            ]
+            if not selected:
+                raise OSError("The provider cannot look up that SRV path.")
             assert len(selected) == 1
             selected[0].update(inputs)
         return {}
@@ -128,6 +178,69 @@ def test_public_classic_create_edit_repeat_preview_remove(
     assert helper._manage(provider, removed, False, True)["changed"]
     assert state["rows"] == []
     assert helper._manage(provider, removed, False, True)["changed"] is False
+
+
+@pytest.mark.parametrize("target_field", ["DomainName", "SRVDomainName"])
+def test_srv_lifecycle_uses_the_installed_class_and_creation_signature(
+    server: Any, target_field: str
+) -> None:
+    helper, connection, state = server
+    state["srv_property"] = target_field
+    state["srv_input"] = target_field
+    options = _options("SRV", value=["target.example.test."], ttl=600)
+    provider = helper._ClassicRecords(connection, options)
+    preview = copy.deepcopy(state)
+    assert helper._manage(provider, options, True, True)["changed"]
+    assert state == preview
+    result = helper._manage(provider, options, False, True)
+    assert not result.get("failed"), result
+    assert result["changed"]
+    assert state["rows"][0][target_field] == "target.example.test."
+    assert state["rows"][0]["TTL"] == 600
+    for _repeat in range(2):
+        assert helper._manage(provider, options, False, True)["changed"] is False
+    edited = dict(options, ttl=900, port=23456, priority=11, weight=21)
+    assert helper._manage(provider, edited, False, True)["changed"]
+    assert provider.read()[0]["RecordData"] == {
+        "DomainName": "target.example.test.",
+        "Port": 23456,
+        "Priority": 11,
+        "Weight": 21,
+    }
+    assert state["rows"][0]["TTL"] == 900
+    assert helper._manage(provider, edited, False, True)["changed"] is False
+    absent = dict(edited, state="absent", value=[])
+    assert helper._manage(provider, absent, False, True)["changed"]
+    assert not state["rows"]
+    assert helper._manage(provider, absent, False, True)["changed"] is False
+
+
+@pytest.mark.parametrize("contract", ["srv_property", "srv_input"])
+def test_unrecognized_srv_schema_fails_before_mutation(
+    server: Any, contract: str
+) -> None:
+    helper, connection, state = server
+    state[contract] = "UnrecognizedTarget"
+    with pytest.raises(ValueError, match="SRV .* schema has no supported target"):
+        helper._ClassicRecords(connection, _options("SRV", value=["target.test."]))
+    assert not state["writes"]
+
+
+def test_srv_domain_name_edit_keeps_exact_other_path_keys(server: Any) -> None:
+    helper, connection, state = server
+    state["srv_property"] = state["srv_input"] = "DomainName"
+    options = _options("SRV", value=["target.example.test."], ttl=600)
+    provider = helper._ClassicRecords(connection, options)
+    assert helper._manage(provider, options, False, True)["changed"]
+    original = state["rows"][0]["__PATH"]
+    assert helper._manage(provider, dict(options, ttl=900), False, True)["changed"]
+    assert state["writes"][-1] == (
+        original.replace(
+            ',DomainName="target.example.test."', ',DomainName="record.owned.invalid"'
+        ),
+        "Modify",
+        {"TTL": 900, "Port": 123, "Priority": 7, "Weight": 5},
+    )
 
 
 @pytest.mark.parametrize("aging,open_acl", [(True, False), (False, True)])

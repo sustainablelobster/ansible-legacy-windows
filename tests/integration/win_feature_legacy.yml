@@ -21,7 +21,9 @@
     - name: Allocate a private durable feature capture
       ansible.builtin.tempfile:
         state: file
-        path: '{{ playbook_dir }}/../../tmp/codex/evidence'
+        path: >-
+          {{ evidence_dir | default(lookup('env', 'TMPDIR') |
+          default('/tmp', true)) }}
         prefix: feature-legacy-
         suffix: .json
       delegate_to: localhost

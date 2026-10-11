@@ -1,6 +1,6 @@
 """Deny execution of only an owned test interpreter after its frontend starts."""
 
-# Copyright 2026 Joe Lustri
+# Copyright 2026 sustainablelobster
 # SPDX-License-Identifier: GPL-3.0-or-later
 # This fixture never changes the installed interpreter, WUA, or production code.
 

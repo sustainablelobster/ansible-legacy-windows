@@ -1,6 +1,6 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
-# Copyright 2026 Joe Lustri
+# Copyright 2026 sustainablelobster
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 """Read a Windows file and return its bytes as an unchanged base64 response."""
@@ -50,7 +50,7 @@ notes:
   - Allow additional memory for base64 encoding and the JSON response.
   - The read handle allows other readers but excludes concurrent writers.
 author:
-  - Joe Lustri
+  - sustainablelobster
 """
 
 EXAMPLES = r"""

@@ -404,3 +404,54 @@ def test_srv_preview_includes_source_ordered_numeric_fields(dns: Any) -> None:
         },
     }
     assert not provider.updated
+
+
+def test_modern_srv_creation_honors_ttl_before_identical_repeats(
+    dns: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    rows: list[dict[str, Any]] = []
+
+    def _call(
+        _connection: Any,
+        method: str,
+        arguments: dict[str, Any],
+        output: bool = False,
+    ) -> Any:
+        if method == "Get":
+            assert output
+            return copy.deepcopy(rows)
+        if method == "AddBySrv":
+            observed = record(dns, arguments["DomainName"], kind="SRV")
+            observed["TimeToLive"] = arguments.get("TimeToLive", dns._interval(3600))
+            observed["RecordData"].update(
+                {name: arguments[name] for name in ("Port", "Priority", "Weight")}
+            )
+            rows.append(observed)
+            return None
+        if method == "RemoveByInputObject":
+            rows.remove(arguments["InputObject"])
+            return None
+        raise AssertionError("An identical SRV request must not edit the created row.")
+
+    monkeypatch.setattr(dns, "_call", _call)
+    request = options(
+        type="SRV",
+        value=["target.example.test"],
+        ttl=600,
+        port=12345,
+        priority=10,
+        weight=20,
+    )
+    provider = dns._Records(None, request)
+    assert dns._manage(provider, request, True, True)["changed"]
+    assert not rows
+    assert dns._manage(provider, request, False, True)["changed"]
+    assert dns._seconds(rows[0]["TimeToLive"]) == 600
+    assert rows[0]["RecordData"]["DomainName"] == "target.example.test."
+    for _repeat in range(2):
+        assert dns._manage(provider, request, False, True)["changed"] is False
+    assert dns._manage(provider, request, True, True)["changed"] is False
+    absent = dict(request, state="absent", value=[])
+    assert dns._manage(provider, absent, False, True)["changed"]
+    assert not rows
+    assert dns._manage(provider, absent, False, True)["changed"] is False

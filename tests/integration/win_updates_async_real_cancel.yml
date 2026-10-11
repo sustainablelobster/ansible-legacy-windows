@@ -7,14 +7,13 @@
     - vars/native_async.yml
   vars:
     updates_cancel_capture: >-
-      {{ playbook_dir + '/../../tmp/codex/evidence/' +
+      {{ (lookup('env', 'TMPDIR') | default('/tmp', true)) + '/' +
          'win-updates-async-real-cancel-v1.json' }}
     updates_cancel_cache_identity: >-
       {{ ((lookup('ansible.builtin.file', updates_cancel_snapshot_journal) |
         from_json).cache.stdout | from_json).identity }}
     updates_cancel_snapshot_journal: >-
-      {{ playbook_dir + '/../../tmp/codex/evidence/' +
-         'win-updates-async-servicing-runtime-v3/tmp/' +
+      {{ (lookup('env', 'TMPDIR') | default('/tmp', true)) + '/' +
          'win-updates-async-snapshot-stable-v1.json' }}
     updates_cancel_global_program: >-
       import glob,json,os,sys,tempfile;

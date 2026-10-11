@@ -1,6 +1,6 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
-# Copyright 2026 Joe Lustri
+# Copyright 2026 sustainablelobster
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 """Read Windows product and license facts using Python 3.4.4."""
@@ -42,7 +42,7 @@ notes:
   - Permission and service failures while enumerating licenses fail the task without returning partial facts; they are not treated as unsupported fields.
   - This implementation only reads product and license information; it does not activate Windows or change its license.
 author:
-  - Joe Lustri
+  - sustainablelobster
 """
 
 EXAMPLES = r"""

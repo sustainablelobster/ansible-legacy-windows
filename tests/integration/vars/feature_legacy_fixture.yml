@@ -1,6 +1,6 @@
 ---
 feature_legacy_fixture: |
-  # Copyright 2026 Joe Lustri
+  # Copyright 2026 sustainablelobster
   # SPDX-License-Identifier: GPL-3.0-or-later
   """Journal the older server catalogue before owned feature changes."""
   import hashlib

@@ -166,58 +166,85 @@ that selection without modifying Ansible core.
 
 ## Prerequisites and known issues
 
-A module cannot manage a feature absent from its operating system: for example,
-DISM servicing, advanced audit policy,
-DNS/DHCP server management, and modern service settings need their corresponding
-Windows facilities. Unsupported requests fail rather than report success.
+### Windows features and engines
 
-Additional module requirements:
+A module needs the Windows facilities it manages, such as DISM servicing,
+advanced audit policy, DNS/DHCP server management or modern service settings.
+Unsupported requests fail rather than report success.
+
+Some modules also need an installed execution engine:
 
 - `win_powershell`: PowerShell 5.1 or newer.
 - `win_dsc`: Windows PowerShell 5.0 or newer, the requested DSC resources,
   and the default HTTP WSMan listener.
 - `dsc3`: the DSC v3 executable and requested resources.
 
-DHCP management can use the installed classic server RPC API when the modern
-provider is unavailable. That API does not expose per-lease DNS registration
-controls: default `aptr` leaves server DNS policy unchanged; changes requesting
-`a` or `noreg` fail before writes, including in check mode.
+Other capability-specific limits:
 
-Optional-feature management uses the installed DISM command's capabilities.
-If its enable command lacks `/All` or `/Source`, an enable request needing
-`include_parent: true` or `source` fails before servicing, including check mode.
-Already-satisfied and absent requests do not need those switches. Feature names
-are resolved against the installed catalogue when the tool requires exact casing.
+- **DHCP:** the classic server RPC API can be used when the modern provider is
+  unavailable. It lacks per-lease DNS registration controls: default `aptr`
+  leaves server DNS policy unchanged; `a` or `noreg` changes fail before writes,
+  including in check mode.
+- **Optional features:** enabling a feature with `include_parent: true` or
+  `source` needs DISM's `/All` or `/Source` switch respectively. If the installed
+  command lacks a required switch, the request fails before servicing, including
+  in check mode. Already-satisfied and absent requests do not need the switches.
+  Names are resolved against the installed catalogue when exact casing is needed.
 
-HTTP/HTTPS requests require a positive `url_timeout` (default 30 seconds).
-Nonpositive values fail before networking. File and FTP requests have their
-own documented behavior. FTP uploads commonly need `status_code: [226]`.
-File URI requests fail status validation like upstream. Requests with a body
-are rejected before writing, including in check mode; use `win_copy` to write
-files. URI dictionary/list bodies use
-standard JSON and preserve case-distinct keys such as `name` and `Name`;
-upstream's PowerShell argument parser can reject those keys.
-Object key order is not guaranteed;
-use a string body when an endpoint requires an exact representation.
+### Event logs and DNS
+
+Configured event-log creation supports check mode without creating the log or
+its sources. Unlike `ansible.windows` 3.8.0, prediction does not fail because
+the new log is absent. Normal execution can still leave earlier source changes
+in place if later configuration validation fails, as described in `win_eventlog`.
+
+DNS SRV creation applies the requested `ttl` immediately. Unlike
+`ansible.windows` 3.8.0, a nondefault lifetime does not need an identical repeat
+to correct it. Classic DNS providers can expose the SRV target as either
+`DomainName` or `SRVDomainName`; the collection uses the installed provider's
+metadata for both reading and creation.
+
+### HTTP requests
+
+- **Timeouts:** HTTP/HTTPS requires a positive `url_timeout` (default 30 seconds).
+  Nonpositive values fail before networking.
+- **File and FTP URLs:** FTP uploads commonly need `status_code: [226]`. File
+  URI requests fail status validation like upstream; requests with a body are
+  rejected before writing, including in check mode. Use `win_copy` to write files.
+- **JSON bodies:** dictionary/list bodies preserve case-distinct keys such as
+  `name` and `Name`, which upstream's PowerShell parser can reject. Object key
+  order is not guaranteed; use a string body for an exact representation.
+
+#### TLS and client certificates
+
 HTTPS enables available TLS 1.1/1.2 on older WinHTTP implementations without
 changing machine-wide settings. Modern protocol defaults and explicitly
 configured `DefaultSecureProtocols` settings are left unchanged. Windows
 security policy and cipher support still apply; `validate_certs: false` skips
 certificate checks, not protocol negotiation.
 
-Proxy-only authentication rejects localhost and IP-address destinations before
-connecting, including redirected requests. WinHTTP cannot reliably prevent
-those destinations from using the current login as unsolicited origin
-credentials. Use a DNS machine name or fully qualified hostname, or explicitly
-provide the intended origin credentials.
-
 PFX-file client certificates require Windows Vista or newer for temporary
-private-key inspection. An installed `Cert:\CurrentUser\My\thumbprint`
-certificate is not a verified XP workaround. The tested TLS 1.0 endpoint
-accepted the client certificate, but collection and native synchronous WinHTTP
-requests both timed out receiving HTTP. This does not establish that every XP
-HTTPS endpoint fails; installed-certificate authentication on Server 2003
-also remains unverified.
+private-key inspection and writable current-user key storage. The collection
+selects a certificate with a private key from the bundle and keeps it usable
+through an owned temporary key container. The container is removed after native
+request handles close, including on failure. Existing keys and system
+certificate stores are unchanged.
+
+An installed `Cert:\CurrentUser\My\thumbprint` certificate is **not a verified
+XP workaround**. The tested TLS 1.0 endpoint accepted the certificate, but both
+collection and native synchronous WinHTTP requests timed out receiving HTTP.
+This does not establish that every XP HTTPS endpoint fails. Installed-certificate
+authentication on Server 2003 also remains unverified.
+
+#### Proxy authentication
+
+Proxy-only authentication rejects localhost and IP-address destinations before
+connecting, including redirects. WinHTTP cannot reliably prevent those
+destinations from using the current login as unsolicited origin credentials.
+Use a DNS machine name or fully qualified hostname, or explicitly provide the
+intended origin credentials.
+
+### Package uninstallation
 
 For registry package removal without an explicit `path`, `win_package` prefers
 `QuietUninstallString`, expands a leading environment-variable reference, and
@@ -227,47 +254,61 @@ command uses normal executable resolution, including PATH and the working
 directory. Unresolved executables still fail to launch. An explicit `path`
 bypasses this registry-command recovery.
 
-Ordinary `win_acl` insertion preserves unrelated object and callback permission
-entries and their canonical ordering. File, registry and certificate requests
-match common callback allow/deny entries, including conditional entries, by
-their ordinary rule fields. An existing match prevents an unconditional grant
-from being inserted. Removal subtracts matched rights from overlapping entries;
-remaining callback entries retain their conditions, and inherited entries are
-unchanged.
-Certificate matching includes the requested native rights: an existing Read
-grant does not satisfy FullControl, unlike upstream's rights-blind comparison.
-CAPI supports complete Read and FullControl rules; partial removals that it
-would round back to FullControl are rejected before writing. CNG supports
-granular removal. Remaining rules keep their conditions and GUID data.
-Object and callback-object access entries remain stored but do not match
-ordinary rules. Inserting an ordinary rule for their principal and allow/deny
-type is rejected before writing, rather than bypassing their restrictions.
-Unmatched conditional certificate rules receive the same protection. Use a
-condition-aware tool to change those restricted rules.
-`win_audit_rule` reports and matches common callback audit entries without
-exposing or rebuilding their conditions.
-Object and callback-object audit entries remain stored but are omitted from
-the returned rules, like upstream. When removal finds a matching explicit audit
-rule, it purges that identity's explicit audit entries, including opaque entries,
-but leaves inherited entries unchanged. Neither module constructs or edits
-object GUID restrictions or callback conditions. Unsafe unknown explicit types
-and malformed entries are rejected before writes.
+### Permissions and audit rules
+
+Neither `win_acl` nor `win_audit_rule` constructs or edits object GUID
+restrictions or callback conditions. Unsafe unknown explicit types and malformed
+entries are rejected before writes. Inherited entries are unchanged.
+
+#### Access permissions (`win_acl`)
+
+- **Existing rules:** ordinary insertion preserves unrelated object and callback
+  entries and canonical ordering. File, registry and certificate requests match
+  common callback allow/deny entries, including conditional entries, by ordinary
+  rule fields. A match prevents an unconditional grant from being inserted.
+  Removal subtracts matched rights from overlapping entries; remaining callback
+  entries retain their conditions.
+- **Certificate rights:** an existing Read grant does not satisfy FullControl,
+  unlike upstream's rights-blind comparison. CAPI supports complete Read and
+  FullControl rules; partial removals that would round back to FullControl are
+  rejected before writing. CNG supports granular removal. Remaining rules keep
+  their conditions and GUID data.
+- **Restricted rules:** object and callback-object access entries remain stored
+  but do not match ordinary rules. Inserting an ordinary rule for their principal
+  and allow/deny type fails before writing. Unmatched conditional certificate
+  rules receive the same protection. Use a condition-aware tool to change them.
+
+#### Audit permissions (`win_audit_rule`)
+
+- Common callback audit entries are reported and matched without exposing or
+  rebuilding their conditions. Object and callback-object entries remain stored
+  but are omitted from returned rules, like upstream.
+- When removal finds a matching explicit rule, it purges that identity's explicit
+  audit entries, including opaque entries, but leaves inherited entries unchanged.
+
+### Regular expressions and text handling
 
 Find, Wait and Updates regex searches use Python's `re` engine with limited
-.NET syntax translations. Matching operates on UTF-16 code units: a dot can
-consume one surrogate of an emoji. Unicode category escapes, word/digit/space
-classes and word boundaries use fixed Unicode 8 data; case-insensitive
-matching uses Python's rules and can differ from .NET culture-dependent matching.
-Atomic or balancing groups, class subtraction, scoped inline options and
-variable-width lookbehind are unsupported. Put inline options at the pattern
-prefix; options later in a pattern are rejected because Python 3.4 applies
-them differently. `\Z` matches at the end or before one final LF; `\z` requires
-the strict end. Numeric backreferences combined with named groups are
-unsupported; use named references such as `\k<name>` instead. Unicode general
-categories such as `\p{L}` are supported, but Unicode block names such as
-`\p{IsBasicLatin}` are not.
+.NET syntax translations:
+
+- **Unicode:** matching operates on UTF-16 code units; a dot can consume one
+  surrogate of an emoji. Category escapes, word/digit/space classes and word
+  boundaries use fixed Unicode 8 data. Case-insensitive matching uses Python's
+  rules and can differ from .NET culture-dependent matching. General categories
+  such as `\p{L}` work; block names such as `\p{IsBasicLatin}` do not.
+- **Unsupported syntax:** atomic or balancing groups, class subtraction, scoped
+  inline options and variable-width lookbehind.
+- **Inline options:** put them at the pattern prefix. Options later in a pattern
+  are rejected because Python 3.4 applies them differently.
+- **End matching:** `\Z` matches at the end or before one final LF; `\z` requires
+  the strict end.
+- **Backreferences:** numeric references combined with named groups are
+  unsupported. Use named references such as `\k<name>` instead.
+
 Dates, wildcard matching and decoding can also differ; consult the affected
 module's notes rather than assuming identical runtime behavior.
+
+### Product facts
 
 On Vista, `win_product_facts` requires the Software Licensing service (`slsvc`)
 to be running. The module is read-only and does not start it. If the licensing
@@ -275,29 +316,28 @@ provider lacks `ProductKeyChannel`, it returns null channels with a named
 warning while retaining available edition and status information. Permission
 and service failures while enumerating licenses fail without partial facts.
 
-Known issues:
+### Windows Update
+
+Windows Update workers first use the task's effective account. A conclusive
+native startup rejection before any worker exists permits one SYSTEM attempt,
+when native token acquisition is available. Uncertain launches and failures after
+work starts are not retried under another account. Use the `runas` options above
+to select an account explicitly.
+
+- **Infrastructure:** a functioning update source and administrative WUA access
+  are required. Older installations may need signed servicing-stack, SHA-2
+  support and Windows Update Agent updates installed separately. `win_updates`
+  uses the installed agent; it does not bootstrap or replace the infrastructure.
+  Selecting SYSTEM or passing access checks does not prove servicing will work.
+- **Side effects:** search can update the local catalogue; installation and
+  removal can require reboots.
+- **Failures:** numeric HRESULTs are retained. Synchronous failures include a
+  localized Windows description when available, otherwise only the hexadecimal
+  code. This differs from upstream's fixed English text and symbolic names.
+  Async top-level failures also include available descriptions; per-update
+  results retain the numeric code without the synchronous `failure_msg` field.
+
+### Unresolved issues
 
 - A Windows 11 File test failed to preserve a path's access time. Its cause
   is unresolved; successful metadata reads do not establish that File case.
-
-Windows Update workers first use the task's effective account. A conclusive
-native startup rejection, before any worker exists, permits one SYSTEM attempt
-when native token acquisition is available. Uncertain launches and failures
-after work starts are not retried under another account. A functioning update
-source and administrative WUA access are still required; selecting SYSTEM does
-not guarantee successful servicing. Use the `runas` options above to select an
-account explicitly. Search can update the local catalogue; installation and
-removal can require reboots. Do not treat successful access checks as proof that
-servicing will work.
-
-Older installations may need signed servicing-stack, SHA-2 support and Windows
-Update Agent updates installed separately before their configured source can
-search successfully. `win_updates` uses the installed agent; it does not
-bootstrap or replace Windows Update infrastructure.
-
-Update failures retain their numeric HRESULT. Synchronous failures also include
-a localized Windows description when one is available; otherwise the message
-contains the hexadecimal code alone. This differs from upstream's fixed English
-descriptions and symbolic names. Async top-level failures also include available
-descriptions; per-update results retain the numeric code without the synchronous
-`failure_msg` field.

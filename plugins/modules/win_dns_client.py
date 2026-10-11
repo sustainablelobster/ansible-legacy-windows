@@ -1,6 +1,6 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
-# Copyright 2026 Joe Lustri
+# Copyright 2026 sustainablelobster
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 """Configure adapter DNS servers and the global suffix search list."""
@@ -65,7 +65,7 @@ notes:
   - Changes to several adapters or families are sequential; a later failure can leave earlier changes applied.
   - Like pinned 3.8.0, omitting a previously static address family can report changed on repeated requests.
 author:
-  - Joe Lustri
+  - sustainablelobster
 """
 
 EXAMPLES = r"""

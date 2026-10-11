@@ -1,6 +1,6 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
-# Copyright 2026 Joe Lustri
+# Copyright 2026 sustainablelobster
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 """Manage Windows Server roles and features using the native provider."""
@@ -72,7 +72,7 @@ notes:
   - The older ServerManagerCmd facility uses its Windows-default management-tool behavior. It cannot override an installation source; a nonempty source for a required install fails before servicing.
   - Numeric feature IDs unavailable in installed Win32_ServerFeature metadata are null on the older facility. Check mode predicts requested features, parents and catalogue subfeatures, but other native dependencies appear only in actual servicing results.
 author:
-  - Joe Lustri
+  - sustainablelobster
 """
 
 EXAMPLES = r"""

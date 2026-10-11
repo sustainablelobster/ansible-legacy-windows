@@ -1,6 +1,6 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
-# Copyright 2026 Joe Lustri
+# Copyright 2026 sustainablelobster
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 """Read Windows registry keys and values with a Python 3.4.4 payload."""
@@ -56,7 +56,7 @@ notes:
   - As upstream, the unnamed default value is reported as C(REG_SZ) regardless of its stored registry kind.
   - The upstream documentation lists C(property) as an alias, but the implementation ignores it. Use O(name), C(entry), or C(value).
 author:
-  - Joe Lustri
+  - sustainablelobster
 """
 
 EXAMPLES = r"""

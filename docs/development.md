@@ -36,7 +36,7 @@ bytes, checks licenses and private-file exclusions, and installs offline.
 Check an existing archive with:
 
 ```console
-python scripts/check_collection.py --artifact dist/sustainablelobster-legacy_windows-1.0.0.tar.gz
+python scripts/check_collection.py --artifact dist/sustainablelobster-legacy_windows-1.0.1.tar.gz
 ```
 
 Pytest exercises controller and developer behavior using Nix Python.
@@ -106,11 +106,11 @@ dispatch and pull requests never publish.
 Update `galaxy.yml` and add a nonempty matching `## X.Y.Z` section to
 `CHANGELOG.md`. Complete review and local checks, commit the complete intended
 source, push it, and verify branch CI before creating the release tag. For
-version 1.0.0, the final authorized release operations are:
+version 1.0.1, the publication commands after those checks are:
 
 ```console
-git tag -a v1.0.0 -m 'Release 1.0.0'
-git push origin v1.0.0
+git tag -a v1.0.1 -m 'Release 1.0.1'
+git push origin v1.0.1
 ```
 
 Pushing a stable `vX.Y.Z` tag in the originating repository automatically
@@ -148,6 +148,18 @@ Integration playbooks target the `legacy_windows` inventory group. Use that
 group name instead of `windows` in the README example inventory. Keep the
 inventory outside the checkout and replace `/path/to/private/inventory.yml`
 below with its location.
+
+Configurable controller evidence directories default to temporary storage
+(`TMPDIR`, or `/tmp` when it is unset). To retain captures in a chosen directory,
+set the playbook's `evidence_dir` or module-specific evidence/output variable;
+inspect its variables first. These paths are independent of the checkout and do
+not change the permissions of the system temporary directory.
+
+Tests that consume external DSC, hotfix or package fixtures need a directory
+supplied with `-e integration_artifact_dir=/path/to/fixtures` or the
+`LEGACY_WINDOWS_TEST_ARTIFACTS` environment variable. Individual fixture-path
+variables can override this directory. Required binaries are not bundled with
+the repository, and the tests do not download them automatically.
 
 Install into a dedicated directory and keep it unchanged until the test and
 cleanup finish:

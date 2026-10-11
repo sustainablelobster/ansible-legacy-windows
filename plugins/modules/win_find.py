@@ -1,6 +1,6 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
-# Copyright 2026 Joe Lustri
+# Copyright 2026 sustainablelobster
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 """Search Windows directories with Python 3.4.4 and native filesystem APIs."""
@@ -132,7 +132,7 @@ notes:
     C(plugins/action/_native_async_polling) directory on the controller action plugin path.
     Set C(action_plugins) in the project's C(ansible.cfg); installation alone does not activate the adapter.
 author:
-  - Joe Lustri
+  - sustainablelobster
 """
 
 # pylint: enable=duplicate-code

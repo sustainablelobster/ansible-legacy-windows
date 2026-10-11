@@ -20,6 +20,34 @@ eventlog_cases:
     check: true
     changed: true
     expected: { exists: false }
+  - name: Predict configured creation and return actual absence
+    params:
+      name: "{{ eventlog_names.log }}"
+      sources: ["{{ eventlog_names.sources[0] }}"]
+      maximum_size: 1MB
+      overflow_action: OverwriteAsNeeded
+    check: true
+    changed: true
+    expected: { exists: false }
+  - name: Reject invalid new-log maximum size without writing in check mode
+    params:
+      name: "{{ eventlog_names.log }}"
+      sources: ["{{ eventlog_names.sources[0] }}"]
+      maximum_size: 129KB
+    check: true
+    changed: true
+    failed: true
+    message: Maximum size must be divisible by 64KB
+  - name: Reject invalid new-log retention without writing in check mode
+    params:
+      name: "{{ eventlog_names.log }}"
+      sources: ["{{ eventlog_names.sources[0] }}"]
+      overflow_action: OverwriteOlder
+      retention_days: 366
+    check: true
+    changed: true
+    failed: true
+    message: RetentionDays must be between 1 and 365.
   - name: Create the log and two sources
     params: *create
     changed: true

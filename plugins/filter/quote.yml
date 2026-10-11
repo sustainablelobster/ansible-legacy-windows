@@ -6,7 +6,7 @@ DOCUMENTATION:
   short_description: Format arguments for Windows command lines
   version_added: '1.0.0'
   author:
-    - Joe Lustri
+    - sustainablelobster
   description:
     - Formats literal argument values for the selected Windows command language.
     - The default follows C-runtime argument parsing, as used by

@@ -5,8 +5,8 @@
   vars:
     updates_observer_source: '{{ playbook_dir }}/fixtures/setup.py'
     updates_capture_path: >-
-      {{ playbook_dir }}/../../tmp/codex/evidence/win-updates-legacy-access-{{
-      inventory_hostname }}.json
+      {{ lookup('env', 'TMPDIR') | default('/tmp', true)
+      }}/win-updates-legacy-access-{{ inventory_hostname }}.json
     updates_protected_observer: |
       import json,sys
       assert sys.version_info[:3] == (3,4,4)

@@ -1,6 +1,6 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
-# Copyright 2026 Joe Lustri
+# Copyright 2026 sustainablelobster
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 """Provide the action's native boot, shutdown and readiness operations."""
@@ -81,7 +81,7 @@ notes:
   - Reboot and readiness do not imply that every background service has settled.
   - The legacy startup event establishes completed automatic startup attempts, not that every service succeeded or that the logon prompt is displayed.
 author:
-  - Joe Lustri
+  - sustainablelobster
 """
 
 EXAMPLES = r"""

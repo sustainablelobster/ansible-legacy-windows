@@ -1,6 +1,6 @@
 ---
 http_trust_program: |
-  # Copyright 2026 Joe Lustri
+  # Copyright 2026 sustainablelobster
   # SPDX-License-Identifier: GPL-3.0-or-later
   """Recover an initially absent owned trust anchor and compare native state."""
   import base64, ctypes, hashlib, json, os, ssl, sys, tempfile, winreg

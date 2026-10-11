@@ -1,6 +1,6 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
-# Copyright 2026 Joe Lustri
+# Copyright 2026 sustainablelobster
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 """Manage Windows hosts entries with a Python 3.4.4 payload."""
@@ -84,7 +84,7 @@ notes:
   - Alias conflicts are removed from other entries of the same address family. The pinned upstream implementation leaves the other family unchanged.
   - Host-name matching escapes periods; other regular-expression characters retain their upstream meaning.
 author:
-  - Joe Lustri
+  - sustainablelobster
 """
 
 EXAMPLES = r"""

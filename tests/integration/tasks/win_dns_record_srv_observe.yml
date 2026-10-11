@@ -1,0 +1,40 @@
+---
+- name: Read native service record details independently of the payload
+  sustainablelobster.legacy_windows.win_command:
+    argv:
+      - dnscmd.exe
+      - /EnumRecords
+      - '{{ dns_srv_zone }}'
+      - _audit._tcp
+      - /Type
+      - SRV
+      - /Detail
+  register: dns_srv_details
+  changed_when: false
+
+- name: Query the native DNS service
+  sustainablelobster.legacy_windows.win_command:
+    argv:
+      - nslookup.exe
+      - -type=SRV
+      - '_audit._tcp.{{ dns_srv_zone }}'
+      - 127.0.0.1
+  register: dns_srv_lookup
+  changed_when: false
+
+- name: Require the requested native lifetime, target and service fields
+  ansible.builtin.assert:
+    that:
+      - >-
+        dns_srv_details.stdout | regex_findall('dwTtlSeconds\s*=\s*(\d+)') |
+        map('int') | list == [dns_srv_expected_ttl]
+      - dns_srv_target in dns_srv_lookup.stdout
+      - >-
+        dns_srv_lookup.stdout | regex_findall('port\s*=\s*(\d+)') |
+        map('int') | list == [dns_srv_expected_port]
+      - >-
+        dns_srv_lookup.stdout | regex_findall('priority\s*=\s*(\d+)') |
+        map('int') | list == [dns_srv_expected_priority]
+      - >-
+        dns_srv_lookup.stdout | regex_findall('weight\s*=\s*(\d+)') |
+        map('int') | list == [dns_srv_expected_weight]

@@ -75,6 +75,7 @@ def eventlog_runner(
         elif days:
             state[name]["retention_days"] = days
 
+    helper = module.eventlog
     native = SimpleNamespace(
         create_source=Mock(side_effect=_create),
         source_log=Mock(side_effect=_source),
@@ -94,7 +95,9 @@ def eventlog_runner(
         )
         return invoke_payload(module, capsys)
 
-    return SimpleNamespace(run=_run, state=state, native=native, module=module)
+    return SimpleNamespace(
+        run=_run, state=state, native=native, module=module, helper=helper
+    )
 
 
 def test_create_check_real_repeat_and_absent_results(runner: Any) -> None:
@@ -124,6 +127,59 @@ def test_create_check_real_repeat_and_absent_results(runner: Any) -> None:
         },
     )
     assert runner.run({"name": "Owned", "state": "absent"})[1]["changed"] is False
+
+
+@pytest.mark.parametrize(
+    "limits",
+    [
+        {"maximum_size": "1MB", "overflow_action": "OverwriteAsNeeded"},
+        {"maximum_size": "1MB"},
+        {"overflow_action": "OverwriteOlder", "retention_days": 7},
+    ],
+)
+def test_configured_new_log_check_mode_predicts_without_creating(
+    runner: Any, monkeypatch: pytest.MonkeyPatch, limits: dict[str, Any]
+) -> None:
+    missing_log = Mock(side_effect=FileNotFoundError(2, "Log is absent"))
+    monkeypatch.setattr(runner.helper, "_log_key", missing_log)
+    runner.native.validate_limit.side_effect = runner.helper.validate_limit
+    arguments = dict(limits, name="Owned", sources=["First"], _ansible_check_mode=True)
+    assert runner.run(arguments) == (
+        0,
+        {"changed": True, "name": "Owned", "exists": False, "sources_changed": []},
+    )
+    assert runner.state == {}
+    runner.native.create_source.assert_not_called()
+    runner.native.limit_log.assert_not_called()
+    missing_log.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "limits,message",
+    [
+        ({"maximum_size": "129KB"}, "Maximum size must be divisible by 64KB"),
+        ({"retention_days": -1}, "RetentionDays must be between 1 and 365."),
+        ({"retention_days": 366}, "RetentionDays must be between 1 and 365."),
+    ],
+)
+def test_new_log_check_mode_preserves_limit_validation(
+    runner: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    limits: dict[str, Any],
+    message: str,
+) -> None:
+    monkeypatch.setattr(
+        runner.helper,
+        "_log_key",
+        Mock(side_effect=FileNotFoundError(2, "Log is absent")),
+    )
+    runner.native.validate_limit.side_effect = runner.helper.validate_limit
+    arguments = dict(limits, name="Owned", sources=["First"], _ansible_check_mode=True)
+    code, result = runner.run(arguments)
+    assert code == 1 and result["failed"] is True and result["msg"] == message
+    assert runner.state == {}
+    runner.native.create_source.assert_not_called()
+    runner.native.limit_log.assert_not_called()
 
 
 def test_resources_recreate_and_reset_omitted_values(runner: Any) -> None:

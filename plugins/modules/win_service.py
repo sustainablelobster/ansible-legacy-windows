@@ -1,6 +1,6 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
-# Copyright 2026 Joe Lustri
+# Copyright 2026 sustainablelobster
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 """Manage Windows services with Python and the native service manager."""
@@ -155,7 +155,7 @@ notes:
     32-bit range validation. Exact lowercase aliases take precedence over canonical
     values. Nested aliases expand before input key case is normalized.
 author:
-  - Joe Lustri
+  - sustainablelobster
 """
 
 EXAMPLES = r"""

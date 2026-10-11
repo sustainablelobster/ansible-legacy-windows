@@ -1,4 +1,4 @@
-# Copyright 2026 Joe Lustri
+# Copyright 2026 sustainablelobster
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Use the installed DHCP Server management API and own its RPC allocations."""
 

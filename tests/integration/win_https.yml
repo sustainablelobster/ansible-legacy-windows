@@ -4,8 +4,6 @@
   gather_facts: false
   vars_files:
     - vars/get_url_fixture.yml
-  vars:
-    https_evidence_dir: '{{ playbook_dir }}/../../tmp/codex/evidence'
   tasks:
     - name: Require minimum Python and record staging and package temporaries
       ansible.builtin.raw: >-
@@ -19,6 +17,11 @@
       changed_when: false
 
     - name: Prepare private controller evidence directory
+      when:
+        - https_evidence_dir is defined
+        - >-
+          (https_evidence_dir | realpath) not in [('/tmp' | realpath),
+          (lookup('env', 'TMPDIR') | default('/tmp', true) | realpath)]
       ansible.builtin.file:
         path: '{{ https_evidence_dir }}'
         state: directory
@@ -33,7 +36,9 @@
     - name: Allocate private controller evidence
       ansible.builtin.tempfile:
         state: file
-        path: '{{ https_evidence_dir }}'
+        path: >-
+          {{ https_evidence_dir | default(lookup('env', 'TMPDIR') |
+          default('/tmp', true)) }}
         prefix: 'https-{{ inventory_hostname }}-'
         suffix: .json
       register: https_capture
@@ -46,7 +51,9 @@
         - name: Allocate owned controller certificate material
           ansible.builtin.tempfile:
             state: directory
-            path: '{{ https_evidence_dir }}'
+            path: >-
+              {{ https_evidence_dir | default(lookup('env', 'TMPDIR') |
+              default('/tmp', true)) }}
             prefix: https-material-
           register: https_tls_workspace
           delegate_to: localhost

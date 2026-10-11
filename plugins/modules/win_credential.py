@@ -1,6 +1,6 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
-# Copyright 2026 Joe Lustri
+# Copyright 2026 sustainablelobster
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 """Manage named credentials with the native Windows credential store."""
@@ -105,7 +105,7 @@ notes:
   - Secret values are omitted from diffs. Other diff fields can coincide with a secret.
   - Check-mode attribute diffs contain supplied values; real diffs contain base64 bytes.
 author:
-  - Joe Lustri
+  - sustainablelobster
 """
 
 EXAMPLES = r"""

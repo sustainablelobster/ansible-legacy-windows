@@ -1,6 +1,6 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
-# Copyright 2026 Joe Lustri
+# Copyright 2026 sustainablelobster
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 """Set Windows regional settings using Python 3.4.4 and native interfaces."""
@@ -61,7 +61,7 @@ notes:
   - Copying settings requires access to the default profile and permission to load its registry hive.
   - Copying preserves the caller's current privilege state; it does not enable disabled privileges. A copy failure can occur after earlier settings were changed.
 author:
-  - Joe Lustri
+  - sustainablelobster
 """
 
 EXAMPLES = r"""

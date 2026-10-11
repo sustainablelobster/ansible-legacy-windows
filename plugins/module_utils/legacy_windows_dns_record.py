@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# Copyright 2026 Joe Lustri
+# Copyright 2026 sustainablelobster
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 """Manage DNS records through the native provider used by DNS Server cmdlets."""
@@ -344,14 +344,13 @@ class _Records:
         arguments = dict(self.location, Name=options["name"])
         arguments[kind] = True
         arguments[_PROPERTIES[kind]] = value
+        arguments["TimeToLive"] = _interval(options["ttl"])
         if kind == "SRV":
             arguments.update(
                 Port=options["port"],
                 Priority=options["priority"],
                 Weight=options["weight"],
             )
-        else:
-            arguments["TimeToLive"] = _interval(options["ttl"])
         if options["aging"]:
             arguments["AgeRecord"] = True
         if options["allow_update_any"]:
@@ -374,7 +373,6 @@ _CLASSIC_PROPERTIES = {
     "CNAME": "PrimaryName",
     "NS": "NSHost",
     "PTR": "PTRDomainName",
-    "SRV": "SRVDomainName",
     "TXT": "DescriptiveText",
 }
 
@@ -396,13 +394,67 @@ def _classic_text(value):
         return value
 
 
-class _ClassicRecords:
+# This DNS-only inspection uses the existing WMI object reader for class and
+# method-input objects, whose declared properties exist before any record does.
+# pylint: disable=protected-access
+def _classic_srv_fields(connection):
+    with ExitStack() as cleanup:
+        definition = wmi._get_object(
+            connection._services,
+            connection._automation,
+            cleanup,
+            "MicrosoftDNS_SRVType",
+        )
+        arguments = connection._method_inputs(
+            cleanup, "MicrosoftDNS_SRVType", "CreateInstanceFromPropertyData", {}
+        )
+        fields = []
+        for instance, contract in ((definition, "record"), (arguments, "creation")):
+            properties = wmi._read_embedded_object(connection._automation, instance)
+            field = next(
+                (
+                    name
+                    for name in ("SRVDomainName", "DomainName")
+                    if name in properties
+                ),
+                None,
+            )
+            if field is None:
+                raise ValueError(
+                    "The installed classic DNS SRV {0} schema has no supported "
+                    "target property.".format(contract)
+                )
+            fields.append(field)
+        return fields[0], fields[1]
+
+
+# pylint: enable=protected-access
+
+
+def _classic_srv_modify_path(row):
+    # The older DomainName schema puts the SRV target in its generic lookup key.
+    # Native Get/Modify instead need the owner there; retain every other key.
+    # Delete accepts the original returned path, so only Modify uses this repair.
+    def _domain_key(value):
+        return ',DomainName="' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+    key = _domain_key(row["DomainName"])
+    if key not in row["__PATH"]:
+        raise ValueError("The classic DNS SRV path has no matching DomainName key.")
+    return row["__PATH"].replace(key, _domain_key(row["OwnerName"]), 1)
+
+
+# Keep the owner, native tool and both installed SRV contracts together;
+# separate provider state objects would obscure these native operations.
+class _ClassicRecords:  # pylint: disable=too-many-instance-attributes
     """Use real older DNS record classes and installed DNS administration tools."""
 
     def __init__(self, connection, options):
         self.connection = connection
         self.options = options
         self.kind = options["type"].upper()
+        self.value_property = _CLASSIC_PROPERTIES.get(self.kind)
+        self.value_input = self.value_property
         self.zone = options["zone"].rstrip(".")
         self.name = options["name"]
         if self.name == "@":
@@ -446,6 +498,8 @@ class _ClassicRecords:
                     + self.kind
                     + " records."
                 )
+            if self.kind == "SRV":
+                self.value_property, self.value_input = _classic_srv_fields(connection)
         if options["value"]:
             zones = connection.query(
                 "SELECT * FROM MicrosoftDNS_Zone WHERE Name="
@@ -533,7 +587,7 @@ class _ClassicRecords:
         try:
             if self.kind == "DHCID":
                 return self._dhcid()
-            field = _CLASSIC_PROPERTIES[self.kind]
+            field = self.value_property
             properties = ["__PATH", "OwnerName", "TTL", "Timestamp", field]
             if self.kind == "SRV":
                 properties += ["Port", "Priority", "Weight"]
@@ -647,7 +701,13 @@ class _ClassicRecords:
             # TXT Modify requires its data even on a TTL-only edit. Preserve
             # the exact provider text rather than re-encoding the public value.
             inputs["DescriptiveText"] = old["__classic_row"]["DescriptiveText"]
-        classic.call(self.connection, old["__classic_row"]["__PATH"], "Modify", inputs)
+        row = old["__classic_row"]
+        path = (
+            _classic_srv_modify_path(row)
+            if self.kind == "SRV" and self.value_property == "DomainName"
+            else row["__PATH"]
+        )
+        classic.call(self.connection, path, "Modify", inputs)
 
     def add(self, value):
         """Add one requested value without modifying other types at its owner.
@@ -686,7 +746,7 @@ class _ClassicRecords:
             "OwnerName": self.owner,
             "RecordClass": 1,
             "TTL": options["ttl"],
-            _CLASSIC_PROPERTIES[self.kind]: value,
+            self.value_input: value,
         }
         if self.kind == "SRV":
             inputs.update(

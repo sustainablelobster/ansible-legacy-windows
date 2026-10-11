@@ -1,6 +1,6 @@
 """Exercise real fallback worker ownership without installing or removing updates."""
 
-# Copyright 2026 Joe Lustri
+# Copyright 2026 sustainablelobster
 # SPDX-License-Identifier: GPL-3.0-or-later
 # The controlled operation replaces only an owned generated bootstrap script;
 # production native launch, token, journal, polling and cancellation stay intact.

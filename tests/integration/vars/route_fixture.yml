@@ -1,6 +1,6 @@
 ---
 route_fixture: |
-  # Copyright 2026 Joe Lustri
+  # Copyright 2026 sustainablelobster
   # SPDX-License-Identifier: GPL-3.0-or-later
   """Journal unused documentation destinations and verify route recovery."""
 

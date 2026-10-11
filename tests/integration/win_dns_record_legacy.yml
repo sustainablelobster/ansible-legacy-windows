@@ -8,8 +8,13 @@
     ansible_python_interpreter: '{{ ansible_playbook_python }}'
   tasks:
     - name: Create the private local capture directory
+      when:
+        - evidence_dir is defined
+        - >-
+          (evidence_dir | realpath) not in [('/tmp' | realpath),
+          (lookup('env', 'TMPDIR') | default('/tmp', true) | realpath)]
       ansible.builtin.file:
-        path: '{{ playbook_dir }}/../../tmp/codex/evidence'
+        path: '{{ evidence_dir }}'
         state: directory
         mode: '0700'
 
@@ -25,7 +30,8 @@
         dns_zone_cases: '{{ dns_record_cases + dns_record_legacy_extra_cases }}'
         dns_zone_compare_released: false
         dns_zone_capture: >-
-          {{ playbook_dir }}/../../tmp/codex/evidence/dns-record-classic-v5.json
+          {{ evidence_dir | default(lookup('env', 'TMPDIR') |
+          default('/tmp', true)) }}/dns-record-classic-v5.json
         dns_record_fixture_program: '{{ dns_record_fixture_program }}'
         dns_zone_recovery_reboot_authorized: true
         dns_record_expected_unchanged:

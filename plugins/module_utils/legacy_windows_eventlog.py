@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# Copyright 2026 Joe Lustri
+# Copyright 2026 sustainablelobster
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 """Manage classic event logs through the registry and native event-log API."""
@@ -334,7 +334,7 @@ def create_source(name, source, resources):
 
 
 def validate_limit(name, overflow_action, retention_days, check_mode):
-    """Validate the upstream Limit-EventLog binding and missing-log failures.
+    """Validate limit arguments without requiring predicted logs to exist.
 
     :param name: Requested classic log name.
     :type name: str
@@ -342,13 +342,15 @@ def validate_limit(name, overflow_action, retention_days, check_mode):
     :type overflow_action: str or None
     :param retention_days: Optional requested retention days.
     :type retention_days: int or None
-    :param check_mode: Whether setters will be skipped.
+    :param check_mode: Whether to validate arguments without rereading the log.
     :type check_mode: bool
     :raises ValueError: A binding, missing-log, or overflow-policy validation fails.
     :raises OSError: Registry reads fail.
     """
     if retention_days is not None and not 1 <= retention_days <= 365:
         raise ValueError("RetentionDays must be between 1 and 365.")
+    if check_mode:
+        return
     try:
         with _log_key(name) as key:
             retention = _value(key, "Retention", 604800)
@@ -358,14 +360,10 @@ def validate_limit(name, overflow_action, retention_days, check_mode):
         raise ValueError(
             'The Log name "' + name + '" does not exist in the computer "localhost".'
         ) from error
-    if (
-        not check_mode
-        and retention_days is not None
-        and (
-            overflow_action in ("DoNotOverwrite", "OverwriteAsNeeded")
-            or overflow_action is None
-            and retention in (0, 0xFFFFFFFF)
-        )
+    if retention_days is not None and (
+        overflow_action in ("DoNotOverwrite", "OverwriteAsNeeded")
+        or overflow_action is None
+        and retention in (0, 0xFFFFFFFF)
     ):
         raise ValueError(
             'Retention days is valid only if the overflow action is "OverwriteOlder". '

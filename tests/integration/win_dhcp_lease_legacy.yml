@@ -8,8 +8,13 @@
     ansible_python_interpreter: '{{ ansible_playbook_python }}'
   tasks:
     - name: Create the private evidence directory
+      when:
+        - evidence_dir is defined
+        - >-
+          (evidence_dir | realpath) not in [('/tmp' | realpath),
+          (lookup('env', 'TMPDIR') | default('/tmp', true) | realpath)]
       ansible.builtin.file:
-        path: '{{ playbook_dir }}/../../tmp/codex/evidence'
+        path: '{{ evidence_dir }}'
         state: directory
         mode: '0700'
 

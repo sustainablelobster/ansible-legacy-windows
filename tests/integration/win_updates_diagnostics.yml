@@ -1,5 +1,5 @@
 ---
-# Copyright 2026 Joe Lustri
+# Copyright 2026 sustainablelobster
 # SPDX-License-Identifier: GPL-3.0-or-later
 - name: Verify native update diagnostics and safe provider failure recovery
   hosts: legacy_windows
@@ -27,7 +27,7 @@
 
     - name: Allocate a private diagnostic capture
       ansible.builtin.tempfile:
-        path: '{{ playbook_dir }}/../../tmp/codex/evidence'
+        path: "{{ lookup('env', 'TMPDIR') | default('/tmp', true) }}"
         state: file
         prefix: 'updates-diagnostics-{{ inventory_hostname }}-'
         suffix: .json

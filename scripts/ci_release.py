@@ -1,6 +1,6 @@
 """Prepare verified collection assets and publish an originating tag release.
 
-Copyright (c) 2026 Joe Lustri. Licensed under GPL-3.0-or-later.
+Copyright (c) 2026 sustainablelobster. Licensed under GPL-3.0-or-later.
 This developer script never runs Windows payloads or creates Git tags.
 """
 

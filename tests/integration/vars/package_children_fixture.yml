@@ -1,6 +1,10 @@
 ---
+integration_artifact_dir: >-
+  {{ lookup('env', 'LEGACY_WINDOWS_TEST_ARTIFACTS') |
+     default(undef(hint='Set integration_artifact_dir to the external ' +
+                       'fixture directory'), true) }}
 package_children_controller_x86: >-
-  {{ playbook_dir }}/../../tmp/codex/artifacts/package-children-x86
+  {{ integration_artifact_dir }}/package-children-x86
 package_children_program: |
   import base64
   import sys

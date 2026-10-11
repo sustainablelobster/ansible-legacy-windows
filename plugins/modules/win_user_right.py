@@ -1,6 +1,6 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
-# Copyright 2026 Joe Lustri
+# Copyright 2026 sustainablelobster
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 """Manage local Windows user-right assignments with a Python 3.4.4 payload."""
@@ -63,7 +63,7 @@ notes:
   - Accounts are compared by SID. Results use account names or literal SIDs when no name is mapped.
   - Additions precede removals. Completed changes remain if a later native operation fails.
 author:
-  - Joe Lustri
+  - sustainablelobster
 """
 
 EXAMPLES = r"""

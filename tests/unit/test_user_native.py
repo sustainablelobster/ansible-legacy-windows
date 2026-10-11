@@ -1,6 +1,6 @@
 """Exercise local-user native boundaries without contacting Windows hosts."""
 
-# Copyright 2026 Joe Lustri
+# Copyright 2026 sustainablelobster
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Native substitutes inspect private ABI records and buffer ownership directly.
 # pylint: disable=protected-access

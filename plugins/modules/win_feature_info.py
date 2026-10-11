@@ -1,6 +1,6 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
-# Copyright 2026 Joe Lustri
+# Copyright 2026 sustainablelobster
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 """Return Server Manager feature metadata with a native Python 3.4.4 payload."""
@@ -47,7 +47,7 @@ notes:
   - Availability depends on the installed provider, not the Windows build number.
   - The older ServerManagerCmd catalogue returns real names, installed states, types and hierarchy, plus numeric IDs available from installed Win32_ServerFeature metadata. Description, dependency, descriptor, service, BPA, event, post-configuration and other additional metadata are null, with a warning.
 author:
-  - Joe Lustri
+  - sustainablelobster
 """
 
 EXAMPLES = r"""

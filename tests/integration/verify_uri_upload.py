@@ -1,4 +1,4 @@
-# Copyright 2026 Joe Lustri
+# Copyright 2026 sustainablelobster
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Check public upload captures without contacting the Windows target."""
 

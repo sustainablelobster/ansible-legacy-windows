@@ -6,19 +6,22 @@
   vars_files:
     - vars/native_async.yml
   vars:
+    integration_artifact_dir: >-
+      {{ lookup('env', 'LEGACY_WINDOWS_TEST_ARTIFACTS') |
+         default(undef(hint='Set integration_artifact_dir to the external ' +
+                           'fixture directory'), true) }}
     updates_snapshot_journal: >-
-      {{ playbook_dir + '/../../tmp/codex/evidence/' +
+      {{ (lookup('env', 'TMPDIR') | default('/tmp', true)) + '/' +
          'win-updates-async-snapshot-original-v1.json' }}
     updates_snapshot_stable: >-
-      {{ playbook_dir + '/../../tmp/codex/evidence/' +
+      {{ (lookup('env', 'TMPDIR') | default('/tmp', true)) + '/' +
          'win-updates-async-snapshot-stable-v1.json' }}
     updates_snapshot_current: >-
-      {{ playbook_dir + '/../../tmp/codex/evidence/' +
+      {{ (lookup('env', 'TMPDIR') | default('/tmp', true)) + '/' +
          'win-updates-async-snapshot-' +
          updates_snapshot_phase + '-v1.json' }}
     updates_snapshot_cache_compressed: >-
-      {{ lookup('ansible.builtin.file', playbook_dir +
-        '/../../tmp/codex/artifacts/' +
+      {{ lookup('ansible.builtin.file', integration_artifact_dir + '/' +
         'win-updates-cache-observer-gzip-v1.b64') }}
     updates_snapshot_catalog_program: |
       HELPER_SOURCES = {
@@ -88,7 +91,7 @@
           {{ {'quiesce': updates_snapshot_quiesce,
               'cache': updates_snapshot_raw_cache} | to_nice_json }}
         dest: >-
-          {{ playbook_dir + '/../../tmp/codex/evidence/' +
+          {{ (lookup('env', 'TMPDIR') | default('/tmp', true)) + '/' +
              'win-updates-async-first-recovery-' +
              updates_snapshot_phase + '-v1.json' }}
         mode: '0600'
@@ -146,7 +149,7 @@
       ansible.builtin.copy:
         content: '{{ updates_snapshot_writers | to_nice_json }}'
         dest: >-
-          {{ playbook_dir + '/../../tmp/codex/evidence/' +
+          {{ (lookup('env', 'TMPDIR') | default('/tmp', true)) + '/' +
              'win-updates-async-writers-' +
              updates_snapshot_phase + '-v1.json' }}
         mode: '0600'
@@ -302,7 +305,7 @@
               'restoration': updates_snapshot_release_runtime,
               'final': updates_snapshot_final_services} | to_nice_json }}
         dest: >-
-          {{ playbook_dir + '/../../tmp/codex/evidence/' +
+          {{ (lookup('env', 'TMPDIR') | default('/tmp', true)) + '/' +
              'win-updates-async-release-final-v1.json' }}
         mode: '0600'
       delegate_to: localhost

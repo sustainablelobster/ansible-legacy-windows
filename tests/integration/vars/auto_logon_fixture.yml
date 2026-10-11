@@ -1,6 +1,6 @@
 ---
 auto_logon_fixture: |
-  # Copyright 2026 Joe Lustri
+  # Copyright 2026 sustainablelobster
   # SPDX-License-Identifier: GPL-3.0-or-later
   """Journal secrets with DPAPI and independently observe Winlogon and LSA."""
   import base64

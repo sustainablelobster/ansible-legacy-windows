@@ -1,6 +1,6 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
-# Copyright 2026 Joe Lustri
+# Copyright 2026 sustainablelobster
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 """Download files with Python 3.4.4 and native Windows HTTP services."""
@@ -148,7 +148,7 @@ notes:
     The tested TLS 1.0 endpoint accepted the client certificate, but both collection and native synchronous
     WinHTTP requests timed out receiving HTTP. This observation does not establish that every XP HTTPS endpoint fails.
 author:
-  - Joe Lustri
+  - sustainablelobster
 """
 
 EXAMPLES = r"""

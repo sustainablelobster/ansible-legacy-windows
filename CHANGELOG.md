@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.0.1
+
+- Predict configured creation of a fresh event log in check mode without
+  requiring the log to exist or writing its sources or configuration.
+- Use the installed classic DNS provider's SRV target property and creation
+  parameter names, including `DomainName` on Server 2003.
+- Correct the older provider's SRV update identity while preserving the target
+  and unrelated record fields.
+- Apply the requested SRV lifetime during creation so the first identical
+  repeat is unchanged, including on the modern DNS provider.
+- Preserve native HTTPS errors with high-bit Windows error codes on
+  Python 3.4 instead of replacing them with an integer overflow.
+- Select a certificate with a private key from PFX client-certificate bundles
+  and keep it usable by native TLS through an owned temporary key container,
+  removed when the request closes without changing existing keys or system
+  certificate stores.
+
 ## 1.0.0
 
 - License the collection and original contributions under GPL-3.0-or-later,

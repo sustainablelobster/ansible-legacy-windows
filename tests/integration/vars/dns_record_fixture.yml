@@ -71,7 +71,7 @@ dns_record_cases:
     args: {type: TXT, value: 'owned text'}
   - id: create-srv
     args: {type: SRV, value: target.example.test, port: 123, weight: 5,
-           priority: 7, ttl: 300}
+           priority: 7, ttl: 3600}
   - id: preview-srv
     check: true
     args: {type: SRV, value: target.example.test, port: 123, weight: 5,

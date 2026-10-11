@@ -4,10 +4,10 @@
   gather_facts: false
   vars:
     updates_lifecycle_capture_path: >-
-      {{ playbook_dir + '/../../tmp/codex/evidence/' +
+      {{ (lookup('env', 'TMPDIR') | default('/tmp', true)) + '/' +
          'win-updates-async-lifecycle-v1.json' }}
     updates_lifecycle_sources_path: >-
-      {{ playbook_dir + '/../../tmp/codex/evidence/' +
+      {{ (lookup('env', 'TMPDIR') | default('/tmp', true)) + '/' +
          'win-updates-async-lifecycle-sources-v1.json' }}
     updates_lifecycle_program: |
       HELPER_SOURCES = (
@@ -36,6 +36,10 @@
         mode: '0700'
       delegate_to: localhost
       changed_when: false
+      when: >-
+        (updates_lifecycle_capture_path | dirname | realpath) not in
+        [(lookup('env', 'TMPDIR') | default('/tmp', true) | realpath),
+         ('/tmp' | realpath)]
     - name: Observe exact original global staging and workers
       ansible.builtin.raw: >-
         cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c

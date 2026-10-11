@@ -1,6 +1,6 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
-# Copyright 2026 Joe Lustri
+# Copyright 2026 sustainablelobster
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Apply a DSC v3 configuration through its external command-line interface."""
 
@@ -79,7 +79,7 @@ notes:
   - Automatic polling requires explicit activation of the collection's native
     polling action path; bounded inline and remote-file cases are verified.
 author:
-  - Joe Lustri
+  - sustainablelobster
 """
 
 EXAMPLES = r"""

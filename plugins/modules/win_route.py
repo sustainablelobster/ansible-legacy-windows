@@ -1,6 +1,6 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
-# Copyright 2026 Joe Lustri
+# Copyright 2026 sustainablelobster
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Manage persistent Windows routes with Python and shipped native tools."""
 
@@ -65,7 +65,7 @@ notes:
   - Those legacy systems reject actual on-link creation but check mode still predicts it.
   - Check mode accepts host bits in a valid prefix; actual creation rejects them.
 author:
-  - Joe Lustri
+  - sustainablelobster
 """
 
 EXAMPLES = r"""

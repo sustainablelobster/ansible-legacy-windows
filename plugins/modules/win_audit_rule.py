@@ -1,6 +1,6 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
-# Copyright 2026 Joe Lustri
+# Copyright 2026 sustainablelobster
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 """Manage filesystem and registry audit rules with Python 3.4.4."""
@@ -93,7 +93,7 @@ notes:
   - When a projected explicit rule triggers O(state=absent), all explicit audit ACEs for that identity are removed, including its object and callback entries. Object-only entries do not trigger removal; inherited entries remain unchanged.
   - Audit-policy configuration determines whether these rules produce Security events; this module does not change policy or promise an event.
 author:
-  - Joe Lustri
+  - sustainablelobster
 """
 
 EXAMPLES = r"""

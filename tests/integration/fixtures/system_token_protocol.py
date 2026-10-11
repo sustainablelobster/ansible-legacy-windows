@@ -1,6 +1,6 @@
 """Observe real one-shot pipe rejection, deadlines, and identity recovery."""
 
-# Copyright 2026 Joe Lustri
+# Copyright 2026 sustainablelobster
 # SPDX-License-Identifier: GPL-3.0-or-later
 # This observer checks the production helper's native authentication boundary.
 # pylint: disable=protected-access,import-outside-toplevel,import-error

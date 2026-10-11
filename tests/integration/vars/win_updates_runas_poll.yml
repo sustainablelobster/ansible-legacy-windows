@@ -1,6 +1,7 @@
 ---
 updates_runas_capture: >-
-  {{ playbook_dir }}/../../tmp/codex/evidence/win-updates-runas-poll-result.json
+  {{ lookup('env', 'TMPDIR') | default('/tmp', true)
+  }}/win-updates-runas-poll-result.json
 updates_runas_poll_retained_source: >-
   {{ (lookup('ansible.builtin.file', updates_runas_poll_retained_source_path)
       | from_json) if updates_runas_poll_retained_source_path is defined

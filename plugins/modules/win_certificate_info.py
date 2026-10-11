@@ -1,6 +1,6 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
-# Copyright 2026 Joe Lustri
+# Copyright 2026 sustainablelobster
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 """Read Windows certificate stores using a Python 3.4.4 payload."""
@@ -53,7 +53,7 @@ notes:
   - Date values follow the target account's calendar and time separator, matching upstream. Numeric dates use C(01/01/1970) interpreted in that calendar; calendars that cannot parse it cause a failure.
   - RV(certificates.raw) contains the encoded certificate, matching the selected upstream implementation's actual return field.
 author:
-  - Joe Lustri
+  - sustainablelobster
 """
 
 EXAMPLES = r"""

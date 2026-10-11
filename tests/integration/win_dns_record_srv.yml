@@ -1,0 +1,184 @@
+---
+# Requires an installed DNS Server and dnscmd.exe management tools.
+# The unique file-backed zone is owned by this play and removed in always.
+- name: Verify SRV creation, requested lifetime, repeat runs and removal
+  hosts: legacy_windows
+  gather_facts: false
+  tasks:
+    - name: Identify the target runtime and reserve a unique zone name
+      sustainablelobster.legacy_windows.win_command:
+        argv:
+          - '{{ ansible_python_interpreter }}'
+          - '-c'
+          - >-
+            import json, sys, uuid;
+            print(json.dumps({'python': list(sys.version_info[:3]),
+            'zone': 'srv-' + uuid.uuid4().hex + '.test'}))
+      register: dns_srv_runtime
+      changed_when: false
+
+    - name: Require the actual minimum target runtime
+      ansible.builtin.assert:
+        that:
+          - (dns_srv_runtime.stdout | from_json).python == [3, 4, 4]
+
+    - name: Set the owned SRV request
+      ansible.builtin.set_fact:
+        dns_srv_zone: '{{ (dns_srv_runtime.stdout | from_json).zone }}'
+        dns_srv_target: 'target.{{ (dns_srv_runtime.stdout | from_json).zone }}'
+
+    - name: Exercise the owned zone and restore its state
+      block:
+        - name: Create the owned file-backed zone
+          sustainablelobster.legacy_windows.win_dns_zone:
+            name: '{{ dns_srv_zone }}'
+            type: primary
+            replication: none
+
+        - name: Preview a new SRV record
+          sustainablelobster.legacy_windows.win_dns_record: &srv_request
+            zone: '{{ dns_srv_zone }}'
+            name: _audit._tcp
+            type: SRV
+            value: ['{{ dns_srv_target }}']
+            port: 12345
+            priority: 10
+            weight: 20
+            ttl: 600
+          check_mode: true
+          register: dns_srv_preview
+
+        - name: Verify preview prediction
+          ansible.builtin.assert:
+            that:
+              - dns_srv_preview.changed
+
+        - name: Confirm prediction did not create a native record
+          sustainablelobster.legacy_windows.win_command: &srv_enum
+            argv:
+              - dnscmd.exe
+              - /EnumRecords
+              - '{{ dns_srv_zone }}'
+              - _audit._tcp
+              - /Type
+              - SRV
+              - /Detail
+          register: dns_srv_missing
+          changed_when: false
+          failed_when: >-
+            dns_srv_missing.rc not in [0, 9701, 9714] or
+            'wType' in dns_srv_missing.stdout
+
+        - name: Create a service record with the requested lifetime
+          sustainablelobster.legacy_windows.win_dns_record: *srv_request
+          register: dns_srv_created
+
+        - name: Require creation changed the owned zone
+          ansible.builtin.assert:
+            that:
+              - dns_srv_created.changed
+
+        - name: Verify native fields immediately after creation
+          ansible.builtin.include_tasks: tasks/win_dns_record_srv_observe.yml
+          vars:
+            dns_srv_expected_ttl: 600
+            dns_srv_expected_port: 12345
+            dns_srv_expected_priority: 10
+            dns_srv_expected_weight: 20
+
+        - name: Repeat identical values with both target spellings
+          sustainablelobster.legacy_windows.win_dns_record:
+            zone: '{{ dns_srv_zone }}'
+            name: _audit._tcp
+            type: SRV
+            value: ['{{ dns_srv_target }}{{ item }}']
+            port: 12345
+            priority: 10
+            weight: 20
+            ttl: 600
+          loop: ['', '.']
+          register: dns_srv_repeated
+
+        - name: Preview the existing service record
+          sustainablelobster.legacy_windows.win_dns_record: *srv_request
+          check_mode: true
+          register: dns_srv_existing_preview
+
+        - name: Require all identical repeats and prediction to remain unchanged
+          ansible.builtin.assert:
+            that:
+              - >-
+                dns_srv_repeated.results | selectattr('changed') |
+                list | length == 0
+              - not dns_srv_existing_preview.changed
+
+        - name: Update service fields and lifetime
+          sustainablelobster.legacy_windows.win_dns_record: &srv_update
+            zone: '{{ dns_srv_zone }}'
+            name: _audit._tcp
+            type: SRV
+            value: ['{{ dns_srv_target }}']
+            port: 23456
+            priority: 11
+            weight: 21
+            ttl: 900
+          register: dns_srv_updated
+
+        - name: Require service changes were applied
+          ansible.builtin.assert:
+            that:
+              - dns_srv_updated.changed
+
+        - name: Verify native fields after update
+          ansible.builtin.include_tasks: tasks/win_dns_record_srv_observe.yml
+          vars:
+            dns_srv_expected_ttl: 900
+            dns_srv_expected_port: 23456
+            dns_srv_expected_priority: 11
+            dns_srv_expected_weight: 21
+
+        - name: Repeat updated service fields
+          sustainablelobster.legacy_windows.win_dns_record: *srv_update
+          register: dns_srv_update_repeat
+
+        - name: Remove the service record
+          sustainablelobster.legacy_windows.win_dns_record: &srv_remove
+            zone: '{{ dns_srv_zone }}'
+            name: _audit._tcp
+            type: SRV
+            port: 23456
+            priority: 11
+            weight: 21
+            state: absent
+          register: dns_srv_removed
+
+        - name: Confirm native absence after removal
+          sustainablelobster.legacy_windows.win_command: *srv_enum
+          register: dns_srv_missing
+          changed_when: false
+          failed_when: >-
+            dns_srv_missing.rc not in [0, 9701, 9714] or
+            'wType' in dns_srv_missing.stdout
+
+        - name: Repeat removal
+          sustainablelobster.legacy_windows.win_dns_record: *srv_remove
+          register: dns_srv_remove_repeat
+
+        - name: Require update and removal idempotence
+          ansible.builtin.assert:
+            that:
+              - not dns_srv_update_repeat.changed
+              - dns_srv_removed.changed
+              - not dns_srv_remove_repeat.changed
+      always:
+        - name: Remove the play-owned zone
+          sustainablelobster.legacy_windows.win_dns_zone:
+            name: '{{ dns_srv_zone }}'
+            state: absent
+
+        - name: Confirm the play-owned zone is absent through native management
+          sustainablelobster.legacy_windows.win_command:
+            argv: [dnscmd.exe, /ZoneInfo, '{{ dns_srv_zone }}']
+          changed_when: false
+          register: dns_srv_zone_missing
+          failed_when: dns_srv_zone_missing.rc != 9601

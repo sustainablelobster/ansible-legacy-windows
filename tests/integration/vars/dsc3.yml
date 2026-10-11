@@ -1,8 +1,12 @@
 ---
+integration_artifact_dir: >-
+  {{ lookup('env', 'LEGACY_WINDOWS_TEST_ARTIFACTS') |
+     default(undef(hint='Set integration_artifact_dir to the external ' +
+                       'fixture directory'), true) }}
 dsc3_compare: false
 dsc3_case_start: 0
 dsc3_archive: >-
-  {{ playbook_dir + '/../../tmp/codex/artifacts/' +
+  {{ integration_artifact_dir + '/' +
      'DSC-3.1.2-x86_64-pc-windows-msvc.zip' }}
 dsc3_echo:
   resources:

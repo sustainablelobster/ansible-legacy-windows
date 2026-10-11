@@ -1,5 +1,5 @@
 ---
-# Copyright 2026 Joe Lustri
+# Copyright 2026 sustainablelobster
 # SPDX-License-Identifier: GPL-3.0-or-later
 - name: Verify direct and restricted native async launch with exact cleanup
   hosts: legacy_windows
@@ -53,7 +53,7 @@
       ansible.builtin.tempfile:
         path: >-
           {{ evidence_dir |
-          default(playbook_dir + '/../../tmp/codex/evidence') }}
+          default(lookup('env', 'TMPDIR') | default('/tmp', true)) }}
         prefix: 'native-async-launch-{{ inventory_hostname }}-'
         suffix: .json
       register: native_async_launch_capture

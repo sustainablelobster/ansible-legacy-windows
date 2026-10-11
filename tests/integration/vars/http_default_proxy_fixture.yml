@@ -1,6 +1,6 @@
 ---
 http_default_proxy_program: |
-  # Copyright 2026 Joe Lustri
+  # Copyright 2026 sustainablelobster
   # SPDX-License-Identifier: GPL-3.0-or-later
   # Independent native observation and exact LAN-setting recovery only.
   import base64, ctypes, json, os, sys, tempfile, winreg

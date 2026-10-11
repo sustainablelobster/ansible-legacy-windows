@@ -136,11 +136,10 @@ def test_real_archive_and_offline_install_preserve_licenses_and_diagnostics(
     manifest = packaging._inspect_archive(  # pylint: disable=protected-access
         built_collection
     )
-    assert json.loads(manifest)["collection_info"]["license"] == [
-        "GPL-3.0-or-later",
-        "MIT",
-        "Unicode-3.0",
-    ]
+    collection_info = json.loads(manifest)["collection_info"]
+    assert collection_info["authors"] == ["sustainablelobster"]
+    assert collection_info["license_file"] == "LICENSE"
+    assert not collection_info["license"]
     subprocess.run(
         [
             sys.executable,
@@ -243,9 +242,9 @@ def test_packaging_rejects_changed_license_or_notice(
         packaging._inspect_archive(altered)  # pylint: disable=protected-access
 
 
-@pytest.mark.parametrize("license_name", ["GPL-3.0-or-later", "MIT", "Unicode-3.0"])
-def test_packaging_rejects_metadata_that_omits_distributed_material(
-    built_collection: Path, tmp_path: Path, license_name: str
+@pytest.mark.parametrize("license_file", [None, "", "COPYING", "NOTICE", GPL_LICENSE])
+def test_packaging_rejects_missing_or_incorrect_license_file_selection(
+    built_collection: Path, tmp_path: Path, license_file: str | None
 ) -> None:
     altered = tmp_path / "metadata.tar.gz"
     with (
@@ -256,11 +255,17 @@ def test_packaging_rejects_metadata_that_omits_distributed_material(
         assert manifest_file is not None
         with manifest_file:
             manifest = json.load(manifest_file)
-        manifest["collection_info"]["license"].remove(license_name)
+        if license_file is None:
+            del manifest["collection_info"]["license_file"]
+        else:
+            manifest["collection_info"]["license_file"] = license_file
         replaced = {"MANIFEST.json": json.dumps(manifest).encode("utf-8")}
         for member, data in _modified_members(original, "", replaced):
             new.addfile(member, io.BytesIO(data) if data is not None else None)
-    with pytest.raises(SystemExit, match="does not declare its " + license_name):
+    with pytest.raises(
+        SystemExit,
+        match="Artifact must declare license_file: LICENSE without a license list",
+    ):
         # The private archive gate is the behavior being tested here.
         packaging._inspect_archive(altered)  # pylint: disable=protected-access
 
@@ -285,16 +290,17 @@ def test_packaging_rejects_reintroduced_hresult_table(
 
 
 @pytest.mark.parametrize(
-    "license_name",
+    "licenses",
     [
-        "GPL-2.0-only",
-        "GPL-3.0-only",
-        "Apache-2.0",
-        "Apache-2.0 OR GPL-3.0-or-later",
+        ["GPL-3.0-or-later"],
+        ["MIT"],
+        ["Unicode-3.0"],
+        ["GPL-3.0-or-later", "MIT", "Unicode-3.0"],
+        ["Apache-2.0"],
     ],
 )
-def test_packaging_rejects_metadata_that_replaces_the_collection_license(
-    built_collection: Path, tmp_path: Path, license_name: str
+def test_packaging_rejects_license_list_alongside_license_file(
+    built_collection: Path, tmp_path: Path, licenses: list[str]
 ) -> None:
     altered = tmp_path / "wrong-license-metadata.tar.gz"
     with (
@@ -305,9 +311,12 @@ def test_packaging_rejects_metadata_that_replaces_the_collection_license(
         assert manifest_file is not None
         with manifest_file:
             manifest = json.load(manifest_file)
-        manifest["collection_info"]["license"][0] = license_name
+        manifest["collection_info"]["license"] = licenses
         replaced = {"MANIFEST.json": json.dumps(manifest).encode("utf-8")}
         for member, data in _modified_members(original, "", replaced):
             new.addfile(member, io.BytesIO(data) if data is not None else None)
-    with pytest.raises(SystemExit, match="does not declare its GPL-3.0-or-later"):
+    with pytest.raises(
+        SystemExit,
+        match="Artifact must declare license_file: LICENSE without a license list",
+    ):
         packaging._inspect_archive(altered)  # pylint: disable=protected-access

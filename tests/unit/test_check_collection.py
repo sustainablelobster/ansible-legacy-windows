@@ -49,7 +49,8 @@ def _archive(tmp_path: Path, plugins: dict[str, bytes]) -> Path:
             "collection_info": {
                 "namespace": "sustainablelobster",
                 "name": "legacy_windows",
-                "license": ["GPL-3.0-or-later", "MIT", "Unicode-3.0"],
+                "license": [],
+                "license_file": "LICENSE",
             }
         }
     ).encode("utf-8")

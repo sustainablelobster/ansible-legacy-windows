@@ -1,6 +1,6 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
-# Copyright 2026 Joe Lustri
+# Copyright 2026 sustainablelobster
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 """Manage advanced Windows system audit policy with Python 3.4.4."""
@@ -60,7 +60,7 @@ notes:
   - A supplied empty or null selector preserves the upstream unchanged result containing native error text.
   - Back up system audit policy before changing it. This module does not perform automatic rollback.
 author:
-  - Joe Lustri
+  - sustainablelobster
 """
 
 EXAMPLES = r"""

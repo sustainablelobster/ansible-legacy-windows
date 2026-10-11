@@ -1,6 +1,6 @@
 """Check installer-counter isolation and owned-service cleanup safeguards."""
 
-# Copyright 2026 Joe Lustri
+# Copyright 2026 sustainablelobster
 # SPDX-License-Identifier: GPL-3.0-or-later
 # These tests exercise the fixture's private resource-ownership boundaries.
 # pylint: disable=protected-access

@@ -1,6 +1,6 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
-# Copyright 2026 Joe Lustri
+# Copyright 2026 sustainablelobster
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 """Manage online Windows optional features through the shipped DISM executable."""
@@ -67,7 +67,7 @@ notes:
   - If the installed DISM enable-feature command lacks C(/All) or C(/Source), meaningful O(include_parent=true) or O(source) requests fail before servicing, including in check mode. Already-satisfied and absent requests do not need these switches.
   - On a case-sensitive DISM installation, feature names are resolved against the actual native catalogue before servicing.
 author:
-  - Joe Lustri
+  - sustainablelobster
 """
 
 EXAMPLES = r"""

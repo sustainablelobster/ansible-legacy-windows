@@ -1,6 +1,6 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
-# Copyright 2026 Joe Lustri
+# Copyright 2026 sustainablelobster
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Manage DHCP Server leases and reservations."""
 
@@ -95,7 +95,7 @@ notes:
   - The classic API cannot set per-lease DNS registration flags. It preserves the existing server policy for O(dns_regtype=aptr) and rejects V(a) and V(noreg) before creation, including in check mode.
   - Native server and scope lease-duration settings are read for an omitted duration; no duration is invented.
 author:
-  - Joe Lustri
+  - sustainablelobster
 """
 
 EXAMPLES = r"""

@@ -6,7 +6,7 @@
     - vars/native_async.yml
   vars:
     updates_async_capture_path: >-
-      {{ playbook_dir + '/../../tmp/codex/evidence/' +
+      {{ (lookup('env', 'TMPDIR') | default('/tmp', true)) + '/' +
          'win-updates-async-public-v1.json' }}
     updates_async_staging_observer: >-
       import glob,json,os,sys,tempfile;
@@ -22,6 +22,10 @@
         mode: '0700'
       delegate_to: localhost
       changed_when: false
+      when: >-
+        (updates_async_capture_path | dirname | realpath) not in
+        [(lookup('env', 'TMPDIR') | default('/tmp', true) | realpath),
+         ('/tmp' | realpath)]
     - name: Journal complete original global staging and Updates workers
       ansible.builtin.raw: >-
         cmd.exe /d /s /c ""{{ ansible_python_interpreter }}" -c

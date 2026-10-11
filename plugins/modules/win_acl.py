@@ -1,6 +1,6 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
-# Copyright 2026 Joe Lustri
+# Copyright 2026 sustainablelobster
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 """Manage Windows access rules through native APIs on Python 3.4.4."""
@@ -95,7 +95,7 @@ seealso:
   - module: sustainablelobster.legacy_windows.win_acl_inheritance
   - module: sustainablelobster.legacy_windows.win_owner
 author:
-  - Joe Lustri
+  - sustainablelobster
 """
 
 EXAMPLES = r"""

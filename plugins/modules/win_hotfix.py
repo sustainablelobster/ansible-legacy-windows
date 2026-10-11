@@ -1,6 +1,6 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
-# Copyright 2026 Joe Lustri
+# Copyright 2026 sustainablelobster
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 """Manage Windows hotfix packages with native DISM."""
@@ -65,7 +65,7 @@ notes:
   - Retain C(reboot_required) from a changing request. A later no-op may not rediscover a removed package's pending restart.
   - Package installation can have partial effects if a later package fails.
 author:
-  - Joe Lustri
+  - sustainablelobster
 """
 
 EXAMPLES = r"""

@@ -1,6 +1,6 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
-# Copyright 2026 Joe Lustri
+# Copyright 2026 sustainablelobster
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Manage Windows Server DNS zones through the native DNS WMI provider."""
 
@@ -93,7 +93,7 @@ notes:
   - Conversion is supported only to primary or secondary, subject to provider restrictions.
   - Operations are sequential, not transactional; a later failure can retain an earlier write.
 author:
-  - Joe Lustri
+  - sustainablelobster
 """
 
 EXAMPLES = r"""

@@ -1,4 +1,4 @@
-# Copyright 2026 Joe Lustri
+# Copyright 2026 sustainablelobster
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Read persistent routes and use native IP Helper and Windows route tools."""
 

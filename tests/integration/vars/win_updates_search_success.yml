@@ -3,7 +3,8 @@
 updates_search_mode: observe
 updates_search_cache_journal: false
 updates_search_capture: >-
-  {{ playbook_dir }}/../../tmp/codex/evidence/win-updates-search-success.json
+  {{ lookup('env', 'TMPDIR') | default('/tmp', true)
+  }}/win-updates-search-success.json
 updates_search_inputs:
   state: searched
   server_selection: windows_update

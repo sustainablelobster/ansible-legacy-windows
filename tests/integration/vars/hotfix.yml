@@ -1,4 +1,8 @@
 ---
+integration_artifact_dir: >-
+  {{ lookup('env', 'LEGACY_WINDOWS_TEST_ARTIFACTS') |
+     default(undef(hint='Set integration_artifact_dir to the external ' +
+                       'fixture directory'), true) }}
 hotfix_compare: false
 hotfix_case_start: 0
 hotfix_case_end: 28
@@ -7,7 +11,7 @@ hotfix_selected_cases: >-
   default(range(hotfix_case_start | int, hotfix_case_end | int) | list) |
   map('extract', hotfix_cases) | list }}
 hotfix_inapplicable_controller_source: >-
-  {{ playbook_dir + '/../../tmp/codex/artifacts/' +
+  {{ integration_artifact_dir + '/' +
      'hotfix-inapplicable-windows8-x64.msu' }}
 hotfix_cases:
   - name: Missing present source

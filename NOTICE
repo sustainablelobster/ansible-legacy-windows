@@ -1,5 +1,5 @@
 sustainablelobster.legacy_windows
-Copyright (c) 2026 Joe Lustri for original contributions.
+Copyright (c) 2026 sustainablelobster for original contributions.
 The collection and project contributions are licensed under
 GPL-3.0-or-later; see LICENSE.
 
@@ -16,7 +16,8 @@ in plugins/action/win_updates.py incorporates portions of upstream
 plugins/action/win_updates.py.
 Copyright (c) 2021 Ansible Project for these upstream portions.
 The Python implementations, compatibility adaptations, and licensing notices
-were modified by Joe Lustri; the licensing notices were updated on 2026-10-09.
+were modified by sustainablelobster; the licensing notices were updated on
+2026-10-09.
 These adaptations are not the original upstream implementation.
 
 The Hebrew calendar postponement calculation in
