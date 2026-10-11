@@ -24,10 +24,7 @@ from ansible.parsing.dataloader import DataLoader  # type: ignore[import-untyped
 from ansible.playbook.block import Block  # type: ignore[import-untyped]
 from ansible.playbook.play import Play  # type: ignore[import-untyped]
 from ansible.playbook.task import Task  # type: ignore[import-untyped]
-from ansible.plugins.loader import (  # type: ignore[import-untyped]
-    action_loader,
-    init_plugin_loader,
-)
+from ansible.plugins.loader import action_loader  # type: ignore[import-untyped]
 from ansible.template import Templar  # type: ignore[import-untyped]
 
 # The checkout's source-only plugin namespace is resolved by pytest's pythonpath.
@@ -106,27 +103,21 @@ _MODULES = (
 
 @pytest.fixture(name="collection_actions", scope="module")
 def load_collection_actions(
-    tmp_path_factory: pytest.TempPathFactory,
+    source_collection: Path,
 ) -> dict[str, type[PythonModuleAction]]:
     """Load action plugins through Ansible's actual collection namespace.
 
-    :param tmp_path_factory: Pytest's scoped temporary-directory factory.
+    :param source_collection: Checkout registered by the shared loader fixture.
     :returns: The loaded native Python action classes.
     """
-    collections = tmp_path_factory.mktemp("action-collections")
-    namespace = collections / "ansible_collections" / "sustainablelobster"
-    namespace.mkdir(parents=True)
-    (namespace / "legacy_windows").symlink_to(_ROOT, target_is_directory=True)
-    init_plugin_loader([str(collections)])
-    return {
-        name: cast(
-            type[PythonModuleAction],
-            action_loader.get(
-                f"sustainablelobster.legacy_windows.{name}", class_only=True
-            ),
+    actions: dict[str, type[PythonModuleAction]] = {}
+    for name in _MODULES + ("win_copy",):
+        action = action_loader.get(
+            f"sustainablelobster.legacy_windows.{name}", class_only=True
         )
-        for name in _MODULES + ("win_copy",)
-    }
+        assert action is not None, f"Cannot load {name} from {source_collection}"
+        actions[name] = cast(type[PythonModuleAction], action)
+    return actions
 
 
 def _action(

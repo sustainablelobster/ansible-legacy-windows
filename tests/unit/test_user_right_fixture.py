@@ -17,13 +17,9 @@ import yaml  # type: ignore[import-untyped]
 
 # Use Ansible's real escaping and Windows-name filter, not bare Jinja semantics.
 from ansible.parsing.dataloader import DataLoader  # type: ignore[import-untyped]
-from ansible.plugins.loader import init_plugin_loader  # type: ignore[import-untyped]
 from ansible.template import (  # type: ignore[import-untyped]
     Templar,
     trust_as_template,
-)
-from ansible.utils.collection_loader import (  # type: ignore[import-untyped]
-    AnsibleCollectionConfig,
 )
 
 from tests.unit.payload_support import ROOT
@@ -33,8 +29,6 @@ from tests.unit.payload_support import ROOT
 def test_relative_account_case_renders_one_separator_and_no_builtin_domain(
     group: str,
 ) -> None:
-    if AnsibleCollectionConfig.collection_finder is None:
-        init_plugin_loader()
     cases = yaml.safe_load(
         (ROOT / "tests/integration/vars/user_right.yml").read_text()
     )["user_right_cases"]

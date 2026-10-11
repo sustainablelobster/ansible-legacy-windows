@@ -41,6 +41,9 @@ python scripts/check_collection.py --artifact dist/sustainablelobster-legacy_win
 
 Pytest exercises controller and developer behavior using Nix Python.
 Routine checks do not contact Windows or establish target compatibility.
+Pytest exposes the current checkout through a disposable collection namespace
+before initializing Ansible's shared loader. It does not require an installed
+copy of the collection or a prior lint run.
 The Ansible-lint hook refreshes the checkout's offline installation under
 `.ansible/collections`; do not use that changing installation for live tests.
 

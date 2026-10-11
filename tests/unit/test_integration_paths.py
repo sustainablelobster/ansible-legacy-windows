@@ -12,13 +12,9 @@ import pytest
 # The pinned development environment supplies PyYAML and Ansible without stubs.
 import yaml  # type: ignore[import-untyped]
 from ansible.errors import AnsibleError  # type: ignore[import-untyped]
-from ansible.plugins.loader import init_plugin_loader  # type: ignore[import-untyped]
 from ansible.template import (  # type: ignore[import-untyped]
     Templar,
     trust_as_template,
-)
-from ansible.utils.collection_loader import (  # type: ignore[import-untyped]
-    AnsibleCollectionConfig,
 )
 
 from tests.unit.payload_support import ROOT
@@ -53,8 +49,6 @@ def _play(filename: str) -> dict[str, Any]:
 
 
 def _render(expression: str, variables: dict[str, Any]) -> Any:
-    if AnsibleCollectionConfig.collection_finder is None:
-        init_plugin_loader()
     trusted = {
         key: trust_as_template(value) if isinstance(value, str) else value
         for key, value in variables.items()
