@@ -198,49 +198,86 @@ def test_ipv6_command_failure_precedes_mixed_request_ipv4_write(
     connection.call_method.assert_not_called()
 
 
-@pytest.mark.parametrize("servers", [[], ["2001:db8::53", "2001:db8::54"]])
-def test_ipv6_tool_receives_ordered_addresses_without_shell_or_dns_validation(
-    helper: ModuleType, monkeypatch: pytest.MonkeyPatch, servers: list[str]
-) -> None:
+def _netsh_tool(
+    helper: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    spelling: str,
+    validation: tuple[bool, bool],
+    write_error: str | None = None,
+) -> tuple[Mock, list[list[str]]]:
+    writes: list[list[str]] = []
+
+    def _launch(arguments: list[str], **_keywords: Any) -> MagicMock:
+        command = arguments[3:]
+        operation = command[0]
+        valid = validation[operation == "add"]
+        status = 0
+        if command == [operation, "/?"]:
+            output = (
+                f"Available commands:\r\n{operation} {spelling} - DNS settings.\r\n"
+            )
+        elif command == [operation, spelling, "/?"]:
+            output = f"Usage: {operation} {spelling} [name=]connection "
+            output += "[[validate=]yes|no]" if valid else "[address=]address"
+        elif command[1] != spelling or (not valid and "validate=no" in command):
+            status, output = 1, "The following command was not found."
+        else:
+            writes.append(command)
+            status, output = (1, write_error) if write_error else (0, "")
+        process = MagicMock(returncode=status)
+        process.communicate.return_value = [Mock(decode=Mock(return_value=output))]
+        context = MagicMock()
+        context.__enter__.return_value = process
+        return context
+
+    launch_mock = Mock(side_effect=_launch)
+    monkeypatch.setattr(helper.subprocess, "Popen", launch_mock)
     monkeypatch.setenv("SystemRoot", "Windows")
-    process = MagicMock(returncode=0)
-    process.communicate.return_value = [Mock(decode=Mock(return_value=""))]
-    context = MagicMock()
-    context.__enter__.return_value = process
-    launch = Mock(return_value=context)
-    monkeypatch.setattr(helper.subprocess, "Popen", launch)
+    return launch_mock, writes
+
+
+@pytest.mark.parametrize(
+    ("spelling", "validation"),
+    [
+        ("dnsserver", (False, False)),
+        ("dnsservers", (True, True)),
+        ("dnsserver", (False, True)),
+    ],
+)
+@pytest.mark.parametrize("servers", [[], ["2001:db8::53", "2001:db8::54"]])
+def test_ipv6_tool_uses_advertised_syntax_and_ordered_addresses_without_shell(
+    helper: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    servers: list[str],
+    spelling: str,
+    validation: tuple[bool, bool],
+) -> None:
+    launch, commands = _netsh_tool(helper, monkeypatch, spelling, validation)
     helper._set_ipv6_servers({"name": "Local Area Connection"}, servers)
-    commands = [call.args[0][1:] for call in launch.call_args_list]
     if servers:
         assert commands == [
             [
-                "interface",
-                "ipv6",
                 "set",
-                "dnsservers",
+                spelling,
                 "name=Local Area Connection",
                 "source=static",
                 "address=2001:db8::53",
-                "validate=no",
-            ],
+            ]
+            + (["validate=no"] if validation[0] else []),
             [
-                "interface",
-                "ipv6",
                 "add",
-                "dnsservers",
+                spelling,
                 "name=Local Area Connection",
                 "address=2001:db8::54",
                 "index=2",
-                "validate=no",
-            ],
+            ]
+            + (["validate=no"] if validation[1] else []),
         ]
     else:
         assert commands == [
             [
-                "interface",
-                "ipv6",
                 "set",
-                "dnsservers",
+                spelling,
                 "name=Local Area Connection",
                 "source=dhcp",
             ]
@@ -251,20 +288,81 @@ def test_ipv6_tool_receives_ordered_addresses_without_shell_or_dns_validation(
 def test_ipv6_tool_reports_native_failure_and_stops_adding_addresses(
     helper: ModuleType, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setenv("SystemRoot", "Windows")
-    process = MagicMock(returncode=1)
-    process.communicate.return_value = [
-        Mock(decode=Mock(return_value="IPv6 command unavailable"))
-    ]
-    context = MagicMock()
-    context.__enter__.return_value = process
-    launch = Mock(return_value=context)
-    monkeypatch.setattr(helper.subprocess, "Popen", launch)
-    with pytest.raises(OSError, match="IPv6 DNS configuration failed"):
+    unused_launch, commands = _netsh_tool(
+        helper, monkeypatch, "dnsserver", (False, False), "provider denied settings"
+    )
+    with pytest.raises(OSError, match="IPv6 DNS configuration failed.*provider denied"):
         helper._set_ipv6_servers(
             {"name": "Local Area Connection"}, ["2001:db8::53", "2001:db8::54"]
         )
-    launch.assert_called_once()
+    assert len(commands) == 1
+    assert commands[0][:2] == ["set", "dnsserver"]
+
+
+def test_singular_only_ipv6_reset_reaches_ipv4_reset(
+    helper: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        helper,
+        "os",
+        SimpleNamespace(name="nt", path=helper.os.path, environ=helper.os.environ),
+    )
+    monkeypatch.setattr(helper, "_set_interface", Mock(return_value=False))
+    connection = _connection(helper, monkeypatch)
+    connection.call_method.return_value = {"ReturnValue": 0}
+    unused_launch, commands = _netsh_tool(
+        helper, monkeypatch, "dnsserver", (False, False)
+    )
+    helper.write_servers(
+        {
+            "name": "Local Area Connection",
+            "guid": "guid",
+            "path": "path",
+            "families": [{"version": 4}, {"version": 6}],
+        },
+        [],
+    )
+    assert commands == [
+        ["set", "dnsserver", "name=Local Area Connection", "source=dhcp"]
+    ]
+    connection.call_method.assert_called_once_with(
+        "path", "SetDNSServerSearchOrder", ["ReturnValue"], {}
+    )
+
+
+@pytest.mark.parametrize("missing_operation", ["set", "add"])
+def test_missing_installed_ipv6_dns_command_fails_before_changing_either_family(
+    helper: ModuleType, monkeypatch: pytest.MonkeyPatch, missing_operation: str
+) -> None:
+    monkeypatch.setenv("SystemRoot", "Windows")
+    monkeypatch.setattr(
+        helper,
+        "os",
+        SimpleNamespace(name="nt", path=helper.os.path, environ=helper.os.environ),
+    )
+    monkeypatch.setattr(helper, "_set_interface", Mock(return_value=False))
+    connection = _connection(helper, monkeypatch)
+    commands: list[list[str]] = []
+
+    def _run(unused_executable: str, command: list[str]) -> str:
+        commands.append(command)
+        if command == [missing_operation, "/?"]:
+            return missing_operation + " address - Address settings."
+        return "set dnsserver - DNS settings."
+
+    monkeypatch.setattr(helper, "_run_ipv6_netsh", Mock(side_effect=_run))
+    with pytest.raises(OSError, match="no IPv6 DNS '" + missing_operation + "'"):
+        helper.write_servers(
+            {
+                "name": "Local Area Connection",
+                "guid": "guid",
+                "path": "path",
+                "families": [{"version": 4}, {"version": 6}],
+            },
+            ["192.0.2.53", "2001:db8::53", "2001:db8::54"],
+        )
+    assert all(command[-1] == "/?" for command in commands)
+    connection.call_method.assert_not_called()
 
 
 @pytest.mark.parametrize(

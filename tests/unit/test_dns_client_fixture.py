@@ -6,6 +6,7 @@ import ast
 import copy
 import json
 import os
+import re
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -153,6 +154,104 @@ def test_fixture_is_python34_native_and_does_not_import_payload_helper() -> None
     assert "legacy_windows_dns_client" not in source
     assert "os.fsync" in source and 'save(state, "x")' in source
     assert "assert observe(identity) == initial" in source
+
+
+@pytest.mark.parametrize(
+    ("spelling", "validate"), [("dnsserver", False), ("dnsservers", True)]
+)
+def test_independent_fixture_restores_both_dns_families_using_installed_syntax(
+    monkeypatch: pytest.MonkeyPatch, spelling: str, validate: bool
+) -> None:
+    source = yaml.safe_load(
+        (ROOT / "tests/integration/vars/dns_client_fixture.yml").read_text()
+    )["dns_client_fixture"]
+    definitions: list[ast.stmt] = [
+        node
+        for node in ast.parse(source).body
+        if isinstance(node, ast.FunctionDef)
+        and node.name in {"netsh", "dns_command", "servers"}
+    ]
+    identity = {"name": "Local Area Connection", "guid": "guid", "path": "path"}
+    initial = {"v4": ["192.0.2.53"], "v6": ["2001:db8::53", "2001:db8::54"]}
+    current = copy.deepcopy(initial)
+    writes: list[list[str]] = []
+
+    def _launch(arguments: list[str], **_keywords: Any) -> MagicMock:
+        command = arguments[3:]
+        operation = command[0]
+        status = 0
+        if command == [operation, "/?"]:
+            output = operation + " " + spelling + " - DNS settings."
+        elif command == [operation, spelling, "/?"]:
+            output = "[name=]connection [address=]address"
+            output += " [[validate=]yes|no]" if validate else ""
+        elif command[1] != spelling or (not validate and "validate=no" in command):
+            status, output = 1, "Unsupported IPv6 DNS command."
+        else:
+            writes.append(command)
+            addresses = [value[8:] for value in command if value.startswith("address=")]
+            if operation == "set":
+                current["v6"] = addresses
+            else:
+                current["v6"].extend(addresses)
+            output = ""
+        manager = MagicMock()
+        manager.__enter__.return_value = SimpleNamespace(
+            returncode=status,
+            communicate=Mock(
+                return_value=[SimpleNamespace(decode=Mock(return_value=output))]
+            ),
+        )
+        return manager
+
+    def _wmi_set(
+        unused_path: str,
+        unused_method: str,
+        unused_fields: list[str],
+        arguments: dict[str, list[str]],
+    ) -> dict[str, int]:
+        current["v4"] = arguments.get("DNSServerSearchOrder", [])
+        return {"ReturnValue": 0}
+
+    connection = Mock(call_method=Mock(side_effect=_wmi_set))
+    context = MagicMock()
+    context.__enter__.return_value = connection
+    launch_mock = Mock(side_effect=_launch)
+    monkeypatch.setenv("SystemRoot", "Windows")
+    namespace: dict[str, Any] = {
+        "os": os,
+        "re": re,
+        "ctypes": SimpleNamespace(WinDLL=Mock(return_value=SimpleNamespace())),
+        "subprocess": SimpleNamespace(Popen=launch_mock, PIPE=1, STDOUT=2),
+        "TCPIP": "Tcpip",
+        "registry": Mock(return_value={}),
+        "WmiConnection": Mock(return_value=context),
+    }
+    # Exercise independent native restoration, not the collection's DNS helper.
+    # pylint: disable-next=exec-used
+    exec(
+        compile(ast.Module(body=definitions, type_ignores=[]), "<DNS servers>", "exec"),
+        namespace,
+    )
+    namespace["servers"](identity, "", "")
+    assert current == {"v4": [], "v6": []}
+    namespace["servers"](identity, ",".join(initial["v4"]), ",".join(initial["v6"]))
+    assert current == initial
+    assert [command[:2] for command in writes] == [
+        ["set", spelling],
+        ["set", spelling],
+        ["add", spelling],
+    ]
+    assert writes[0][-1] == "source=dhcp"
+    assert "source=static" in writes[1]
+    assert "index=2" in writes[2]
+    assert all("name=Local Area Connection" in command for command in writes)
+    assert [("validate=no" in command) for command in writes] == [
+        False,
+        validate,
+        validate,
+    ]
+    assert all("shell" not in call.kwargs for call in launch_mock.call_args_list)
 
 
 @pytest.mark.parametrize("settles", [True, False])

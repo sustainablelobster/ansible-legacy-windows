@@ -8,6 +8,7 @@ import ctypes
 import fnmatch
 import ipaddress
 import os
+import re
 import subprocess
 import uuid
 
@@ -187,46 +188,72 @@ def _set_interface(guid, servers):
     return True
 
 
+def _run_ipv6_netsh(executable, command):
+    with subprocess.Popen(
+        [executable, "interface", "ipv6"] + command,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+    ) as process:
+        output = process.communicate()[0].decode("mbcs", errors="replace").strip()
+    if process.returncode:
+        raise OSError(
+            "netsh IPv6 DNS configuration failed ({0}): {1}".format(
+                process.returncode, output
+            )
+        )
+    return output
+
+
+def _ipv6_dns_command(executable, operation):
+    # Command and parameter names stay invariant in localized netsh help.
+    listing = _run_ipv6_netsh(executable, [operation, "/?"])
+    for line in listing.splitlines():
+        words = line.lower().split()
+        if (
+            len(words) > 1
+            and words[0] == operation
+            and words[1] in ("dnsserver", "dnsservers")
+        ):
+            command = words[1]
+            details = _run_ipv6_netsh(executable, [operation, command, "/?"])
+            validation = re.search(r"(?:\[|\s)validate(?:=|\])", details, re.I)
+            return command, bool(validation)
+    raise OSError("Installed netsh has no IPv6 DNS '{0}' command.".format(operation))
+
+
 def _set_ipv6_servers(adapter, servers):
     executable = os.path.join(os.environ["SystemRoot"], "System32", "netsh.exe")
+    set_command, validate_set = _ipv6_dns_command(executable, "set")
+    add_command, validate_add = (
+        _ipv6_dns_command(executable, "add") if len(servers) > 1 else (None, False)
+    )
     commands = [
         (
-            ["set", "dnsservers", "name=" + adapter["name"], "source=dhcp"]
+            ["set", set_command, "name=" + adapter["name"], "source=dhcp"]
             if not servers
             else [
                 "set",
-                "dnsservers",
+                set_command,
                 "name=" + adapter["name"],
                 "source=static",
                 "address=" + servers[0],
-                "validate=no",
             ]
+            + (["validate=no"] if validate_set else [])
         )
     ]
     commands.extend(
         [
             "add",
-            "dnsservers",
+            add_command,
             "name=" + adapter["name"],
             "address=" + address,
             "index=" + str(index),
-            "validate=no",
         ]
+        + (["validate=no"] if validate_add else [])
         for index, address in enumerate(servers[1:], 2)
     )
     for command in commands:
-        with subprocess.Popen(
-            [executable, "interface", "ipv6"] + command,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-        ) as process:
-            output = process.communicate()[0].decode("mbcs", errors="replace").strip()
-        if process.returncode:
-            raise OSError(
-                "netsh IPv6 DNS configuration failed ({0}): {1}".format(
-                    process.returncode, output
-                )
-            )
+        _run_ipv6_netsh(executable, command)
 
 
 def write_servers(adapter, servers):

@@ -61,6 +61,7 @@ attributes:
     support: none
 notes:
   - Uses the native DNS interface when available; otherwise IPv4 uses WMI and IPv6 uses the installed netsh IPv6 DNS commands.
+  - IPv6 fallback discovers the installed netsh command spelling and optional validation flag before changing DNS settings.
   - Requires permission to change network DNS configuration.
   - Changes to several adapters or families are sequential; a later failure can leave earlier changes applied.
   - Like pinned 3.8.0, omitting a previously static address family can report changed on repeated requests.

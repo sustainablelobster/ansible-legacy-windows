@@ -204,6 +204,10 @@ to correct it. Classic DNS providers can expose the SRV target as either
 `DomainName` or `SRVDomainName`; the collection uses the installed provider's
 metadata for both reading and creation.
 
+Classic SRV edits verify the record after updating it. If verification fails,
+inspect the DNS server before retrying; the collection does not automatically
+delete or recreate a record after an uncertain update.
+
 ### HTTP requests
 
 - **Timeouts:** HTTP/HTTPS requires a positive `url_timeout` (default 30 seconds).

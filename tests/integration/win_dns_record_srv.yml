@@ -112,6 +112,69 @@
                 list | length == 0
               - not dns_srv_existing_preview.changed
 
+        - name: Preview changing only the service record lifetime
+          sustainablelobster.legacy_windows.win_dns_record: &srv_ttl_update
+            zone: '{{ dns_srv_zone }}'
+            name: _audit._tcp
+            type: SRV
+            value: ['{{ dns_srv_target }}']
+            port: 12345
+            priority: 10
+            weight: 20
+            ttl: 900
+          check_mode: true
+          register: dns_srv_ttl_preview
+
+        - name: Require a lifetime-only edit is predicted
+          ansible.builtin.assert:
+            that:
+              - dns_srv_ttl_preview.changed
+
+        - name: Confirm lifetime prediction leaves the native record unchanged
+          ansible.builtin.include_tasks: tasks/win_dns_record_srv_observe.yml
+          vars:
+            dns_srv_expected_ttl: 600
+            dns_srv_expected_port: 12345
+            dns_srv_expected_priority: 10
+            dns_srv_expected_weight: 20
+
+        - name: Change only the service record lifetime
+          sustainablelobster.legacy_windows.win_dns_record: *srv_ttl_update
+          register: dns_srv_ttl_updated
+
+        - name: Require the lifetime-only change was applied
+          ansible.builtin.assert:
+            that:
+              - dns_srv_ttl_updated.changed
+
+        - name: Verify the record immediately after a lifetime edit
+          ansible.builtin.include_tasks: tasks/win_dns_record_srv_observe.yml
+          vars:
+            dns_srv_expected_ttl: 900
+            dns_srv_expected_port: 12345
+            dns_srv_expected_priority: 10
+            dns_srv_expected_weight: 20
+
+        - name: Repeat the lifetime edit with both target spellings
+          sustainablelobster.legacy_windows.win_dns_record:
+            zone: '{{ dns_srv_zone }}'
+            name: _audit._tcp
+            type: SRV
+            value: ['{{ dns_srv_target }}{{ item }}']
+            port: 12345
+            priority: 10
+            weight: 20
+            ttl: 900
+          loop: ['', '.']
+          register: dns_srv_ttl_repeated
+
+        - name: Require every lifetime-only repeat to remain unchanged
+          ansible.builtin.assert:
+            that:
+              - >-
+                dns_srv_ttl_repeated.results | selectattr('changed') |
+                list | length == 0
+
         - name: Update service fields and lifetime
           sustainablelobster.legacy_windows.win_dns_record: &srv_update
             zone: '{{ dns_srv_zone }}'

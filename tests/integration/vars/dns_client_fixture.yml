@@ -9,6 +9,7 @@ dns_client_fixture: |
   import ipaddress
   import json
   import os
+  import re
   import subprocess
   import sys
   import time
@@ -180,6 +181,29 @@ dns_client_fixture: |
                   ("profile", ctypes.c_wchar_p)]
 
 
+  def netsh(executable, arguments):
+      with subprocess.Popen(
+              [executable, "interface", "ipv6"] + arguments,
+              stdout=subprocess.PIPE, stderr=subprocess.STDOUT) as process:
+          output = process.communicate()[0].decode("mbcs", "replace")
+      assert process.returncode == 0, output
+      return output
+
+
+  def dns_command(executable, operation):
+      listing = netsh(executable, [operation, "/?"])
+      for line in listing.splitlines():
+          words = line.lower().split()
+          if (len(words) > 1 and words[0] == operation
+                  and words[1] in ("dnsserver", "dnsservers")):
+              command = words[1]
+              details = netsh(executable, [operation, command, "/?"])
+              validation = re.search(
+                  r"(?:\[|\s)validate(?:=|\])", details, re.I)
+              return command, bool(validation)
+      raise AssertionError("No IPv6 DNS '{0}' command.".format(operation))
+
+
   def servers(identity, v4, v6):
       library = ctypes.WinDLL("iphlpapi")
       setter = getattr(library, "SetInterfaceDnsSettings", None)
@@ -194,26 +218,27 @@ dns_client_fixture: |
           path = (TCPIP.replace("Tcpip", "Tcpip6") +
                   "\\Interfaces\\" + identity["guid"])
           if registry(path, ("NameServer",)) is not None:
-              arguments = ["set", "dnsservers", "name=" + identity["name"],
-                           "source=static", "address=" + v6.split(",")[0],
-                           "validate=no"] if v6 else [
-                  "set", "dnsservers", "name=" + identity["name"],
-                  "source=dhcp"]
-              commands = [arguments]
-              commands.extend([
-                  "add", "dnsservers", "name=" + identity["name"],
-                  "address=" + address, "index=" + str(index), "validate=no"]
-                  for index, address in enumerate(v6.split(",")[1:], 2))
               executable = os.path.join(os.environ["SystemRoot"], "System32",
                                         "netsh.exe")
+              set_command, validate_set = dns_command(executable, "set")
+              add_command, validate_add = (dns_command(executable, "add")
+                                          if "," in v6 else (None, False))
+              if v6:
+                  arguments = ["set", set_command, "name=" + identity["name"],
+                               "source=static", "address=" + v6.split(",")[0]]
+                  if validate_set:
+                      arguments.append("validate=no")
+              else:
+                  arguments = ["set", set_command, "name=" + identity["name"],
+                               "source=dhcp"]
+              commands = [arguments]
+              commands.extend([
+                  "add", add_command, "name=" + identity["name"],
+                  "address=" + address, "index=" + str(index)] +
+                  (["validate=no"] if validate_add else [])
+                  for index, address in enumerate(v6.split(",")[1:], 2))
               for command in commands:
-                  with subprocess.Popen(
-                          [executable, "interface", "ipv6"] + command,
-                          stdout=subprocess.PIPE,
-                          stderr=subprocess.STDOUT) as process:
-                      output = process.communicate()[0].decode(
-                          "mbcs", "replace")
-                  assert process.returncode == 0, output
+                  netsh(executable, command)
           with WmiConnection() as connection:
               result = connection.call_method(
                   identity["path"], "SetDNSServerSearchOrder", ["ReturnValue"],

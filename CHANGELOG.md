@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.0.2
+
+- Preserve classic DNS SRV records during TTL-only updates by omitting
+  unchanged service fields, and verify the requested record after native edits.
+- Select the installed IPv6 DNS command spelling and supported validation
+  switches before DNS client configuration and recovery.
+- Make controller tests independent of collection installation and test order.
+
 ## 1.0.1
 
 - Predict configured creation of a fresh event log in check mode without

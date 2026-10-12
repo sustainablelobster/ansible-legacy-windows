@@ -91,6 +91,7 @@ requirements:
   - Classic DHCID records, aging, update permissions and Unicode TXT creation require installed C(dnscmd.exe) DNS management tools.
 notes:
   - Unlike C(ansible.windows) 3.8.0, SRV creation applies O(ttl) immediately rather than requiring an identical repeat to correct a nondefault lifetime.
+  - Classic SRV edits omit unchanged service fields and verify the resulting native record. A missing or incorrect record, or a verification read failure, is reported as a failure rather than successful configuration.
   - Classic DNS has no zone scopes; O(zone_scope) requests fail before any record mutation.
   - DHCID support is detected from the installed administration tool, not the Windows version.
   - Classic DHCID and UTF-8 TXT lifetime edits use the native tool and refresh an aged record's timestamp.

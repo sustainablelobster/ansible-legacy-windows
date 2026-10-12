@@ -578,11 +578,13 @@ class _ClassicRecords:  # pylint: disable=too-many-instance-attributes
                 return
             raise
 
-    def read(self):
+    def read(self, strict=False):
         """Read the selected native records with upstream's read-error policy.
 
+        :param bool strict: Propagate read failures when verifying a mutation.
         :returns: Selected records, or no records after a native read failure.
         :rtype: list
+        :raises OSError: A native read fails when strict verification is requested.
         """
         try:
             if self.kind == "DHCID":
@@ -601,6 +603,8 @@ class _ClassicRecords:  # pylint: disable=too-many-instance-attributes
                 properties,
             )
         except OSError:
+            if strict:
+                raise
             return []
         records = []
         for row in rows:
@@ -691,10 +695,14 @@ class _ClassicRecords:  # pylint: disable=too-many-instance-attributes
             return
         inputs = {"TTL": _seconds(new["TimeToLive"])}
         if self.kind == "SRV":
+            # Passing unchanged service fields makes older native providers
+            # remove a record during some TTL-only edits. Omitted fields retain
+            # their existing values; supply only service fields actually changed.
             inputs.update(
                 {
                     name: new["RecordData"][name]
                     for name in ("Port", "Priority", "Weight")
+                    if old["RecordData"][name] != new["RecordData"][name]
                 }
             )
         if self.kind == "TXT":
@@ -708,6 +716,19 @@ class _ClassicRecords:  # pylint: disable=too-many-instance-attributes
             else row["__PATH"]
         )
         classic.call(self.connection, path, "Modify", inputs)
+        if self.kind == "SRV" and not any(
+            record["RecordData"] == new["RecordData"]
+            and record["TimeToLive"] == new["TimeToLive"]
+            and (record["Timestamp"] is not None) == (new["Timestamp"] is not None)
+            for record in self.read(strict=True)
+        ):
+            raise OSError(
+                "Classic DNS SRV update did not retain the requested target, "
+                "lifetime and service fields at {0} in zone {1}. "
+                "Inspect the DNS server's native state before retrying.".format(
+                    self.name, self.zone
+                )
+            )
 
     def add(self, value):
         """Add one requested value without modifying other types at its owner.

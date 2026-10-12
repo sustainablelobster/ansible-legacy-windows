@@ -117,6 +117,14 @@ def classic_server(monkeypatch: pytest.MonkeyPatch) -> Any:
             if not selected:
                 raise OSError("The provider cannot look up that SRV path.")
             assert len(selected) == 1
+            if "MicrosoftDNS_SRVType" in path and all(
+                name in inputs and inputs[name] == selected[0][name]
+                for name in ("Port", "Priority", "Weight")
+            ):
+                # Native older providers can acknowledge a TTL-only request
+                # yet remove its record when unchanged service fields are sent.
+                state["rows"].remove(selected[0])
+                return {}
             selected[0].update(inputs)
         return {}
 
@@ -239,8 +247,133 @@ def test_srv_domain_name_edit_keeps_exact_other_path_keys(server: Any) -> None:
             ',DomainName="target.example.test."', ',DomainName="record.owned.invalid"'
         ),
         "Modify",
-        {"TTL": 900, "Port": 123, "Priority": 7, "Weight": 5},
+        {"TTL": 900},
     )
+
+
+@pytest.mark.parametrize("target_field", ["DomainName", "SRVDomainName"])
+@pytest.mark.parametrize("target_suffix", ["", "."])
+def test_srv_ttl_only_edit_retains_service_fields_and_unchanged_repeat(
+    server: Any, target_field: str, target_suffix: str
+) -> None:
+    helper, connection, state = server
+    state["srv_property"] = state["srv_input"] = target_field
+    options = _options("SRV", value=["target.example.test" + target_suffix], ttl=600)
+    provider = helper._ClassicRecords(connection, options)
+    assert helper._manage(provider, options, False, True)["changed"]
+    before = copy.deepcopy(state)
+    edited = dict(options, ttl=900)
+    assert helper._manage(provider, edited, True, True)["changed"]
+    assert state == before
+    assert helper._manage(provider, edited, False, True)["changed"]
+    assert state["writes"][-1][2] == {"TTL": 900}
+    assert len(state["rows"]) == 1
+    assert state["rows"][0]["TTL"] == 900
+    assert provider.read()[0]["RecordData"] == {
+        "DomainName": "target.example.test.",
+        "Port": 123,
+        "Priority": 7,
+        "Weight": 5,
+    }
+    assert helper._manage(provider, edited, False, True)["changed"] is False
+
+
+@pytest.mark.parametrize("field", ["port", "priority", "weight"])
+def test_srv_edit_omits_other_unchanged_service_fields(server: Any, field: str) -> None:
+    helper, connection, state = server
+    options = _options("SRV", value=["target.example.test."], ttl=600)
+    provider = helper._ClassicRecords(connection, options)
+    assert helper._manage(provider, options, False, True)["changed"]
+    edited = dict(options, **{field: 42})
+    assert helper._manage(provider, edited, False, True)["changed"]
+    assert state["writes"][-1][2] == {"TTL": 600, field.title(): 42}
+    assert helper._manage(provider, edited, False, True)["changed"] is False
+
+
+def test_srv_silent_native_deletion_fails_and_next_apply_recovers(
+    server: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    helper, connection, state = server
+    options = _options("SRV", value=["target.example.test."], ttl=600)
+    provider = helper._ClassicRecords(connection, options)
+    assert helper._manage(provider, options, False, True)["changed"]
+    native_call = helper.classic.call
+
+    def _lose_record(*args: Any) -> dict[str, Any]:
+        result: dict[str, Any] = native_call(*args)
+        state["rows"].clear()
+        return result
+
+    monkeypatch.setattr(helper.classic, "call", _lose_record)
+    edited = dict(options, ttl=900)
+    with pytest.raises(OSError, match="did not retain the requested target"):
+        helper._manage(provider, edited, False, True)
+    assert not state["rows"]
+    assert len(state["writes"]) == 2
+    monkeypatch.setattr(helper.classic, "call", native_call)
+    provider = helper._ClassicRecords(connection, edited)
+    assert helper._manage(provider, edited, False, True)["changed"]
+    assert state["rows"][0]["TTL"] == 900
+    assert helper._manage(provider, edited, False, True)["changed"] is False
+
+
+@pytest.mark.parametrize("mismatch", ["TTL", "Port", "Timestamp"])
+def test_srv_native_acknowledgement_requires_exact_requested_state(
+    server: Any, monkeypatch: pytest.MonkeyPatch, mismatch: str
+) -> None:
+    helper, connection, state = server
+    options = _options("SRV", value=["target.example.test."], ttl=600)
+    provider = helper._ClassicRecords(connection, options)
+    assert helper._manage(provider, options, False, True)["changed"]
+    native_call = helper.classic.call
+
+    def _wrong_state(*args: Any) -> dict[str, Any]:
+        result: dict[str, Any] = native_call(*args)
+        state["rows"][0][mismatch] = 1
+        return result
+
+    monkeypatch.setattr(helper.classic, "call", _wrong_state)
+    with pytest.raises(OSError, match="did not retain the requested target"):
+        helper._manage(provider, dict(options, ttl=900), False, True)
+    assert len(state["writes"]) == 2
+
+
+def test_srv_verification_propagates_read_failure_without_recreation(
+    server: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    helper, connection, state = server
+    options = _options("SRV", value=["target.example.test."], ttl=600)
+    provider = helper._ClassicRecords(connection, options)
+    assert helper._manage(provider, options, False, True)["changed"]
+    native_call = helper.classic.call
+    read_failure = OSError(5, "Native DNS state cannot be read")
+
+    def _fail_verification(*args: Any) -> dict[str, Any]:
+        result: dict[str, Any] = native_call(*args)
+        connection.query.side_effect = read_failure
+        return result
+
+    monkeypatch.setattr(helper.classic, "call", _fail_verification)
+    with pytest.raises(OSError) as raised:
+        helper._manage(provider, dict(options, ttl=900), False, True)
+    assert raised.value is read_failure
+    assert len(state["rows"]) == 1
+    assert len(state["writes"]) == 2
+
+
+def test_srv_ttl_edit_preserves_sibling_records(server: Any) -> None:
+    helper, connection, state = server
+    options = _options(
+        "SRV", value=["first.example.test.", "second.example.test."], ttl=600
+    )
+    provider = helper._ClassicRecords(connection, options)
+    assert helper._manage(provider, options, False, True)["changed"]
+    original = copy.deepcopy(state["rows"])
+    old = provider.read()[0]
+    new = helper._edited_record(old, dict(options, ttl=900))
+    provider.update(old, new)
+    assert state["rows"][0] == dict(original[0], TTL=900)
+    assert state["rows"][1] == original[1]
 
 
 @pytest.mark.parametrize("aging,open_acl", [(True, False), (False, True)])

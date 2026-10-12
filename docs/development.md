@@ -36,7 +36,7 @@ bytes, checks licenses and private-file exclusions, and installs offline.
 Check an existing archive with:
 
 ```console
-python scripts/check_collection.py --artifact dist/sustainablelobster-legacy_windows-1.0.1.tar.gz
+python scripts/check_collection.py --artifact dist/sustainablelobster-legacy_windows-1.0.2.tar.gz
 ```
 
 Pytest exercises controller and developer behavior using Nix Python.
@@ -109,11 +109,11 @@ dispatch and pull requests never publish.
 Update `galaxy.yml` and add a nonempty matching `## X.Y.Z` section to
 `CHANGELOG.md`. Complete review and local checks, commit the complete intended
 source, push it, and verify branch CI before creating the release tag. For
-version 1.0.1, the publication commands after those checks are:
+version 1.0.2, the publication commands after those checks are:
 
 ```console
-git tag -a v1.0.1 -m 'Release 1.0.1'
-git push origin v1.0.1
+git tag -a v1.0.2 -m 'Release 1.0.2'
+git push origin v1.0.2
 ```
 
 Pushing a stable `vX.Y.Z` tag in the originating repository automatically

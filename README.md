@@ -19,7 +19,7 @@ names with Python 3.4.4-compatible payloads and native Windows APIs.
 Install the collection archive on your Ansible controller:
 
 ```console
-ansible-galaxy collection install ./sustainablelobster-legacy_windows-1.0.1.tar.gz --offline --no-deps
+ansible-galaxy collection install ./sustainablelobster-legacy_windows-1.0.2.tar.gz --offline --no-deps
 ```
 
 To build an archive from this checkout, see [Development](docs/development.md).
