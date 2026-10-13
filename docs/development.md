@@ -96,13 +96,21 @@ is excluded only from Ansible-lint, not from the other applicable checks.
 
 The workflow uses read-only repository permissions by default and does not
 persist checkout credentials. Only publication receives `contents: write`.
-The built-in `GITHUB_TOKEN` is sufficient; no personal token or lab credential
-is required once the release's workflow files are present on the repository's
-default branch. [GitHub requires workflow-write permission](https://docs.github.com/en/rest/releases/releases#create-a-release)
+The built-in `GITHUB_TOKEN` is sufficient for GitHub Releases; no GitHub personal
+token or lab credential is required once the release's workflow files are
+present on the repository's default branch.
+[GitHub requires workflow-write permission](https://docs.github.com/en/rest/releases/releases#create-a-release)
 to release a commit whose workflow files differ from that branch, which
 `GITHUB_TOKEN` cannot receive. Merge workflow changes into the default branch
 before tagging a release, including this first CI implementation. Manual
 dispatch and pull requests never publish.
+
+For Galaxy, obtain an API token from an account authorized to publish in the
+`sustainablelobster` namespace and store it as the repository Actions secret
+`GALAXY_API_KEY`. See [Ansible's namespace and token setup](https://docs.ansible.com/projects/ansible/latest/dev_guide/developing_collections_distributing.html#initial-configuration-of-your-distribution-server-or-servers).
+Only the tag-publication step receives this secret, through its environment;
+it is not placed in command arguments or package files. A missing or blank
+secret fails before either GitHub or Galaxy publication begins.
 
 ### Publish a version
 
@@ -117,10 +125,10 @@ git push origin v1.0.2
 ```
 
 Pushing a stable `vX.Y.Z` tag in the originating repository automatically
-publishes after all three quality jobs pass. Tags must exactly match both
-`galaxy.yml` and the archive manifest. Leading-zero versions, prereleases, and
-build metadata are rejected. The workflow never rewrites versions or creates
-tags itself, and it does not publish to Ansible Galaxy.
+publishes to GitHub Releases and Ansible Galaxy after all three quality jobs
+pass. Tags must exactly match `galaxy.yml` and the archive manifest. Leading-zero
+versions, prereleases, and build metadata are rejected. The workflow never
+rewrites versions or creates tags itself.
 
 `scripts/ci_release.py` prepares the verified archive, checksum, release notes,
 and a manifest recording its tested commit. Publication downloads this exact
@@ -130,17 +138,31 @@ GitHub Release becomes public only after its archive and checksum attachments
 are complete. Download the collection archive attachment for installation;
 GitHub's automatic source archives are not collection packages.
 
+Galaxy receives the same verified archive after GitHub publication. The script
+uses the Galaxy client supplied by the locked Ansible dependency, applies a
+ten-minute import timeout, and verifies the published version's SHA-256 against
+the package job. Upload acceptance alone does not count as successful publication.
+
 ### Retry publication
 
 If publication fails, rerun only the failed publication job while its verified
 package artifact is retained. Matching draft assets can be reused; conflicting
-assets are never overwritten. An already published matching release is a no-op.
+assets are never overwritten. An already published matching GitHub release or
+Galaxy version is a no-op; different archive bytes for the same version fail
+without replacement. Galaxy authentication, network and import failures fail
+the job rather than being treated as an absent version.
+
+The two destinations are not transactional: if Galaxy fails after GitHub
+publication, the GitHub Release stays published. Correct the token or server
+failure and rerun the failed publication job; it reuses the matching GitHub
+release before retrying Galaxy. If an import times out, check its Galaxy task
+status before retrying. A completed matching version is accepted on retry.
 
 Collection archives are not byte-reproducible: rebuilding the same source can
 change archive timestamps and its SHA-256. A full workflow rerun can therefore
-conflict with an existing draft or release. Do not move the tag or replace
-published assets to force a retry. Diagnose the failure using the original
-artifact; a different published package needs a new reviewed version.
+conflict with an existing draft, release or Galaxy version. Do not move the tag
+or replace published assets to force a retry. Diagnose the failure using the
+original artifact; a different published package needs a new reviewed version.
 
 ## Windows integration tests
 

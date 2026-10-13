@@ -16,8 +16,11 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-# PyYAML is supplied by the locked development environment, not Windows targets.
+# These development dependencies lack typing stubs and never run on targets.
 import yaml  # type: ignore[import-untyped]
+from ansible.errors import AnsibleError  # type: ignore[import-untyped]
+from ansible.galaxy.api import GalaxyAPI, GalaxyError  # type: ignore[import-untyped]
+from ansible.galaxy.token import GalaxyToken  # type: ignore[import-untyped]
 
 ROOT = Path(__file__).resolve().parents[1]
 REPOSITORY = "sustainablelobster/ansible-legacy-windows"
@@ -238,13 +241,9 @@ def _existing_assets(release: dict[str, Any], tag: str, files: list[Path]) -> se
     return set(names)
 
 
-def publish(package_dir: Path, expected_sha256: str) -> None:
-    """Publish or safely resume the verified artifact for this tag push.
-
-    :param package_dir: Download of the successful package job's four files.
-    :param expected_sha256: Digest recorded by that same package job.
-    :raises SystemExit: If provenance, remote tag, assets, or GitHub calls fail.
-    """
+def _publication_candidate(
+    package_dir: Path, expected_sha256: str
+) -> tuple[Path, str, str]:
     if (
         os.environ.get("GITHUB_EVENT_NAME") != "push"
         or os.environ.get("GITHUB_REPOSITORY") != REPOSITORY
@@ -258,8 +257,19 @@ def publish(package_dir: Path, expected_sha256: str) -> None:
     if os.environ.get("GITHUB_REF") != "refs/tags/" + tag:
         raise SystemExit("Publishing requires the originating tag reference")
     artifact, notes = _candidate(package_dir, expected_sha256, tag)
+    _require_tag_commit(tag, _commit())
+    return artifact, notes, tag
+
+
+def publish(package_dir: Path, expected_sha256: str) -> None:
+    """Publish or safely resume the verified artifact for this tag push.
+
+    :param package_dir: Download of the successful package job's four files.
+    :param expected_sha256: Digest recorded by that same package job.
+    :raises SystemExit: If provenance, remote tag, assets, or GitHub calls fail.
+    """
+    artifact, notes, tag = _publication_candidate(package_dir, expected_sha256)
     commit = _commit()
-    _require_tag_commit(tag, commit)
     release = _find_release(tag)
     files = [artifact, package_dir / "SHA256SUMS"]
     existing: set[str] = set()
@@ -301,6 +311,56 @@ def publish(package_dir: Path, expected_sha256: str) -> None:
     print("Published verified release: " + tag)
 
 
+def _galaxy_version_matches(api: GalaxyAPI, version: str, digest: str) -> bool:
+    try:
+        metadata = api.get_collection_version_metadata(*IDENTITY, version)
+    except GalaxyError as error:
+        if error.http_code == 404:
+            return False
+        raise
+    if (metadata.namespace, metadata.name, metadata.version) != (*IDENTITY, version):
+        raise SystemExit("Galaxy returned conflicting collection identity or version")
+    if metadata.artifact_sha256 != digest:
+        raise SystemExit("Existing Galaxy version has conflicting archive SHA-256")
+    return True
+
+
+def publish_galaxy(package_dir: Path, expected_sha256: str) -> None:
+    """Import the verified archive to Galaxy, or accept an identical version.
+
+    :param package_dir: Download of the successful package job's four files.
+    :param expected_sha256: Digest recorded by that same package job.
+    :raises SystemExit: If credentials, provenance or published content disagree.
+    :raises AnsibleError: If Galaxy discovery, upload or import fails.
+    """
+    token = os.environ.get("GALAXY_API_KEY", "")
+    if not token.strip():
+        raise SystemExit("Set the GALAXY_API_KEY repository secret before publishing")
+    artifact, _, tag = _publication_candidate(package_dir, expected_sha256)
+    api = GalaxyAPI(
+        None,
+        "release_galaxy",
+        "https://galaxy.ansible.com/",
+        token=GalaxyToken(token),
+        no_cache=True,
+    )
+    # Discover first: a missing API root is not an absent collection version.
+    if "v3" not in api.available_api_versions:
+        raise SystemExit("Galaxy collection publication requires API v3")
+    if _galaxy_version_matches(api, tag[1:], expected_sha256):
+        _require_tag_commit(tag, _commit())
+        print("Matching Galaxy version is already published: " + tag[1:])
+        return
+    _require_tag_commit(tag, _commit())
+    task = api.publish_collection(str(artifact))
+    api.wait_import_task(task, timeout=600)
+    # A successful upload or polling return alone does not prove availability.
+    if not _galaxy_version_matches(api, tag[1:], expected_sha256):
+        raise SystemExit("Galaxy import did not make the verified version available")
+    _require_tag_commit(tag, _commit())
+    print("Published verified Galaxy version: " + tag[1:])
+
+
 def main() -> None:
     """Run candidate preparation or guarded publication.
 
@@ -312,15 +372,21 @@ def main() -> None:
     prepare.add_argument("--artifact", type=Path, required=True)
     prepare.add_argument("--output-dir", type=Path, required=True)
     prepare.add_argument("--tag")
-    release = commands.add_parser("publish", help="Publish a stable tag push only")
-    release.add_argument("--package-dir", type=Path, required=True)
-    release.add_argument("--sha256", required=True)
+    for command, help_text in (
+        ("publish", "Publish a stable tag push to GitHub"),
+        ("publish-galaxy", "Publish a stable tag push to Ansible Galaxy"),
+    ):
+        release = commands.add_parser(command, help=help_text)
+        release.add_argument("--package-dir", type=Path, required=True)
+        release.add_argument("--sha256", required=True)
     arguments = parser.parse_args()
     try:
         if arguments.command == "package":
             package(arguments.artifact, arguments.output_dir, arguments.tag)
-        else:
+        elif arguments.command == "publish":
             publish(arguments.package_dir, arguments.sha256)
+        else:
+            publish_galaxy(arguments.package_dir, arguments.sha256)
     except (
         OSError,
         ValueError,
@@ -328,6 +394,7 @@ def main() -> None:
         TypeError,
         tarfile.TarError,
         yaml.YAMLError,
+        AnsibleError,
     ) as error:
         raise SystemExit(
             "Invalid release inputs or API response: " + str(error)

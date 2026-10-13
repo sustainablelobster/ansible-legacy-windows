@@ -187,7 +187,7 @@ jobs:
           retention-days: 30
 
   publish:
-    name: Publish GitHub release
+    name: Publish GitHub release and Galaxy collection
     needs: [lint, unit, package]
     if: >-
       github.repository == 'sustainablelobster/ansible-legacy-windows'
@@ -197,7 +197,7 @@ jobs:
       && needs.unit.result == 'success'
       && needs.package.result == 'success'
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 20
     permissions:
       contents: write
     concurrency:
@@ -229,9 +229,16 @@ jobs:
       - name: Publish the verified archive without rebuilding
         env:
           GH_TOKEN: ${{ github.token }}
+          GALAXY_API_KEY: ${{ secrets.GALAXY_API_KEY }}
           EXPECTED_SHA256: ${{ needs.package.outputs.sha256 }}
         run: |
-          nix --extra-experimental-features 'nix-command flakes' \
-            develop --no-write-lock-file path:. --command \
-            python scripts/ci_release.py publish \
+          if [[ -z "${GALAXY_API_KEY//[[:space:]]/}" ]]; then
+            echo 'GALAXY_API_KEY repository secret is required.' >&2
+            exit 1
+          fi
+          nix_dev=(nix --extra-experimental-features 'nix-command flakes'
+            develop --no-write-lock-file path:. --command)
+          "${nix_dev[@]}" python scripts/ci_release.py publish \
+            --package-dir "$CI_OUTPUT_DIR/package" --sha256 "$EXPECTED_SHA256"
+          "${nix_dev[@]}" python scripts/ci_release.py publish-galaxy \
             --package-dir "$CI_OUTPUT_DIR/package" --sha256 "$EXPECTED_SHA256"

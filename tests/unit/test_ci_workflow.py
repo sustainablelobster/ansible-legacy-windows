@@ -249,7 +249,10 @@ def test_publication_requires_an_origin_tag_push_and_all_checks() -> None:
 def test_only_the_publisher_has_write_permissions_or_a_publish_token() -> None:
     workflow = _workflow()
     assert workflow["permissions"] == {"contents": "read"}
+    assert "env" not in workflow
+    galaxy_steps = []
     for name, job in workflow["jobs"].items():
+        assert "env" not in job
         assert job.get("permissions", workflow["permissions"]) == {
             "contents": "write" if name == "publish" else "read"
         }
@@ -261,8 +264,16 @@ def test_only_the_publisher_has_write_permissions_or_a_publish_token() -> None:
                 assert name == "publish"
                 assert "ci_release.py publish" in step["run"]
                 assert environment["GH_TOKEN"] == "${{ github.token }}"
+            if "GALAXY_API_KEY" in environment:
+                assert name == "publish"
+                assert environment["GALAXY_API_KEY"] == (
+                    "${{ secrets.GALAXY_API_KEY }}"
+                )
+                assert "ci_release.py publish-galaxy" in step["run"]
+                galaxy_steps.append(step)
+    assert len(galaxy_steps) == 1
     source = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
-    assert "secrets." not in source
+    assert re.findall(r"secrets\.[A-Za-z_]+", source) == ["secrets.GALAXY_API_KEY"]
     assert "self-hosted" not in source
     assert "pull_request_target" not in source
 
@@ -343,6 +354,65 @@ def test_artifact_promotion_uses_this_runs_package_and_its_recorded_digest() -> 
     assert '--package-dir "$CI_OUTPUT_DIR/package"' in publish["run"]
     assert '--sha256 "$EXPECTED_SHA256"' in publish["run"]
     assert "just build" not in publish["run"]
+
+
+@pytest.mark.parametrize("token", ["", " \t\n", "private-test-token"])
+def test_publish_step_requires_secret_and_promotes_same_candidate_to_both_servers(
+    tmp_path: Path, token: str
+) -> None:
+    step = next(
+        item
+        for item in _steps(_workflow()["jobs"]["publish"])
+        if "GALAXY_API_KEY" in item.get("env", {})
+    )
+    command_log = tmp_path / "commands.jsonl"
+    nix = tmp_path / "nix"
+    nix.write_text(
+        "#!/usr/bin/env python3\n"
+        "import json, os, sys\n"
+        "args = sys.argv[sys.argv.index('--command') + 1:]\n"
+        "with open(os.environ['CI_COMMAND_LOG'], 'a') as output:\n"
+        "    output.write(json.dumps(args) + '\\n')\n",
+        encoding="utf-8",
+    )
+    nix.chmod(0o700)
+    output_directory = tmp_path / "runner temporary storage"
+    digest = "a" * 64
+    result = subprocess.run(
+        ["bash", "-euo", "pipefail"],
+        input=step["run"],
+        cwd=tmp_path,
+        env=dict(
+            os.environ,
+            PATH=str(tmp_path) + os.pathsep + os.environ["PATH"],
+            CI_COMMAND_LOG=str(command_log),
+            CI_OUTPUT_DIR=str(output_directory),
+            EXPECTED_SHA256=digest,
+            GALAXY_API_KEY=token,
+        ),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if not token.strip():
+        assert result.returncode != 0
+        assert "GALAXY_API_KEY repository secret" in result.stderr
+        assert not command_log.exists()
+        return
+    assert result.returncode == 0, result.stderr
+    assert [json.loads(line) for line in command_log.read_text().splitlines()] == [
+        [
+            "python",
+            "scripts/ci_release.py",
+            command,
+            "--package-dir",
+            str(output_directory / "package"),
+            "--sha256",
+            digest,
+        ]
+        for command in ("publish", "publish-galaxy")
+    ]
+    assert token not in command_log.read_text() + result.stdout + result.stderr
 
 
 @pytest.mark.parametrize("count", [0, 2])
