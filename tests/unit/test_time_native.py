@@ -35,7 +35,7 @@ def time_helper() -> ModuleType:
 
     :returns: Loaded module without accessing Windows.
     """
-    source = ROOT / "plugins/module_utils/legacy_windows_time.py"
+    source = ROOT / "legacy_windows/plugins/module_utils/legacy_windows_time.py"
     return load_module(source, "tested_time_native")
 
 

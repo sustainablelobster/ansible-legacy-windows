@@ -8,6 +8,16 @@ default_stages: [pre-commit]
 # Controller version arguments match ansible-core's Requires-Python minimum.
 # Recheck them when updating Ansible; they do not select an interpreter.
 repos:
+  - repo: local
+    hooks:
+      - id: prepare-collection-imports
+        name: Prepare offline collection imports
+        entry: just _install-lint-collections
+        language: unsupported
+        always_run: true
+        pass_filenames: false
+        require_serial: true
+
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0
     hooks:
@@ -24,7 +34,8 @@ repos:
         language: unsupported
         # Ansible invokes these through Python, not as standalone executables.
         exclude: >-
-          ^plugins/modules/[^/]+\.py$|^plugins/module_utils/legacy_windows_async_wrapper\.py$
+          (?x)^(?:legacy_windows|legacy_ad)/plugins/modules/[^/]+\.py$
+          |^legacy_windows/plugins/module_utils/legacy_windows_async_wrapper\.py$
       - id: check-symlinks
         language: unsupported
       - id: destroyed-symlinks
@@ -46,7 +57,10 @@ repos:
       - id: end-of-file-fixer
         language: unsupported
         # Preserve the final blank line in the verbatim upstream GPL copies.
-        exclude: ^(LICENSE|LICENSES/ansible-windows-GPL-3\.0-or-later\.txt)$
+        exclude: >-
+          (?x)^(LICENSE|(legacy_windows|legacy_ad)/LICENSE
+          |legacy_windows/LICENSES/ansible-windows-GPL-3\.0-or-later\.txt
+          |legacy_ad/LICENSES/microsoft-ad-GPL-3\.0-or-later\.txt)$
       - id: mixed-line-ending
         language: unsupported
         args: [--fix=lf]
@@ -71,13 +85,16 @@ repos:
         name: Format Windows target Python
         language: unsupported
         # Windows fixtures, including win_powershell.py, share the target floor.
-        files: ^(plugins/(modules|module_utils)|tests/integration/fixtures)/
+        files: >-
+          (?x)^((?:legacy_windows|legacy_ad)/plugins/(modules|module_utils)
+          |tests/integration/fixtures)/
         args: [--target-version, py34]
       - id: black
         alias: black-controller
         name: Format controller Python
         language: unsupported
-        files: ^plugins/(?!modules/|module_utils/).*\.py$
+        files: >-
+          ^(?:legacy_windows|legacy_ad)/plugins/(?!modules/|module_utils/).*\.py$
         args: [--target-version, py312]
       - id: black
         alias: black-development
@@ -92,18 +109,24 @@ repos:
       - id: pylint
         alias: pylint-target
         name: Lint Windows target Python
+        entry: env PYTHONPATH=.ansible/collections pylint
         language: unsupported
-        files: ^(plugins/(modules|module_utils)|tests/integration/fixtures)/
+        files: >-
+          (?x)^((?:legacy_windows|legacy_ad)/plugins/(modules|module_utils)
+          |tests/integration/fixtures)/
         args: [--py-version, '3.4']
       - id: pylint
         alias: pylint-controller
         name: Lint controller Python
+        entry: env PYTHONPATH=.ansible/collections pylint
         language: unsupported
-        files: ^plugins/(?!modules/|module_utils/).*\.py$
+        files: >-
+          ^(?:legacy_windows|legacy_ad)/plugins/(?!modules/|module_utils/).*\.py$
         args: [--py-version, '3.12']
       - id: pylint
         alias: pylint-development
         name: Lint development Python
+        entry: env PYTHONPATH=.ansible/collections pylint
         language: unsupported
         files: ^(scripts|tests)/.*\.py$
         exclude: ^tests/integration/fixtures/
@@ -114,12 +137,15 @@ repos:
       - id: mypy
         alias: mypy-controller
         name: Type-check controller Python
+        entry: env MYPYPATH=.ansible/collections mypy
         language: unsupported
-        files: ^plugins/(?!modules/|module_utils/).*\.py$
+        files: >-
+          ^(?:legacy_windows|legacy_ad)/plugins/(?!modules/|module_utils/).*\.py$
         args: [--python-version, '3.12']
       - id: mypy
         alias: mypy-development
         name: Type-check development Python
+        entry: env MYPYPATH=.ansible/collections mypy
         language: unsupported
         files: ^(scripts|tests)/.*\.py$
         exclude: ^tests/integration/fixtures/
@@ -131,7 +157,9 @@ repos:
       - id: vermin
         name: Check Windows target Python compatibility
         language: unsupported
-        files: ^(plugins/(modules|module_utils)|tests/integration/fixtures)/
+        files: >-
+          (?x)^((?:legacy_windows|legacy_ad)/plugins/(modules|module_utils)
+          |tests/integration/fixtures)/
         args: [-t=3.4-, --violations]
 
   - repo: https://github.com/adrienverge/yamllint
@@ -153,7 +181,7 @@ repos:
         # Documentation and unit-test-only edits do not change
         # Ansible interfaces.
         always_run: false
-        files: '(^plugins/|\.ya?ml$|^justfile$)'
+        files: '(^((?:legacy_windows|legacy_ad)/plugins)/|\.ya?ml$|^justfile$)'
         # GitHub workflow YAML is checked by actionlint, not Ansible-lint.
         exclude: ^\.github/workflows/[^/]+\.ya?ml$
         require_serial: true

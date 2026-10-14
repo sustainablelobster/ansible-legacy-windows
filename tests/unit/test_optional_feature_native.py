@@ -23,7 +23,7 @@ def optional_feature_native(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> 
     :returns: Helper, native process and executable-presence controls.
     """
     helper = load_module(
-        ROOT / "plugins/module_utils/legacy_windows_optional_feature.py",
+        ROOT / "legacy_windows/plugins/module_utils/legacy_windows_optional_feature.py",
         "tested_optional_feature_native",
     )
     monkeypatch.setenv("SystemRoot", str(tmp_path))

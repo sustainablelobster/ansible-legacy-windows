@@ -25,7 +25,7 @@ def record_fixture(monkeypatch: pytest.MonkeyPatch) -> Any:
     :param monkeypatch: Scoped target helper import directory.
     :returns: Developer-runtime fixture, not Windows compatibility evidence.
     """
-    monkeypatch.syspath_prepend(str(ROOT / "plugins/module_utils"))
+    monkeypatch.syspath_prepend(str(ROOT / "legacy_windows/plugins/module_utils"))
     return load_module(
         ROOT / "tests/integration/fixtures/win_dns_record.py", "dns_record_fixture"
     )

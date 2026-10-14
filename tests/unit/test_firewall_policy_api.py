@@ -22,9 +22,9 @@ def policy_api(monkeypatch: pytest.MonkeyPatch) -> Any:
     :param monkeypatch: Scoped native API replacements.
     :returns: Helper, observable calls and mutable native profile values.
     """
-    monkeypatch.syspath_prepend(str(ROOT / "plugins/module_utils"))
+    monkeypatch.syspath_prepend(str(ROOT / "legacy_windows/plugins/module_utils"))
     helper = load_module(
-        ROOT / "plugins/module_utils/legacy_windows_firewall.py",
+        ROOT / "legacy_windows/plugins/module_utils/legacy_windows_firewall.py",
         "tested_firewall_policy_api",
     )
     events: list[tuple[Any, ...]] = []

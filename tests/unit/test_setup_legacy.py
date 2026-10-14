@@ -24,7 +24,7 @@ def native_helper(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
     :returns: Native collector module.
     """
     monkeypatch.syspath_prepend(
-        str(Path(__file__).resolve().parents[2] / "plugins/module_utils")
+        str(Path(__file__).resolve().parents[2] / "legacy_windows/plugins/module_utils")
     )
     for name in (
         "legacy_windows_setup_native",

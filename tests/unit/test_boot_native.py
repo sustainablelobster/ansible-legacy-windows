@@ -19,9 +19,10 @@ def boot_helper(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
     :param monkeypatch: Scoped target import path.
     :returns: Boot reader imported with the development interpreter.
     """
-    monkeypatch.syspath_prepend(str(ROOT / "plugins/module_utils"))
+    monkeypatch.syspath_prepend(str(ROOT / "legacy_windows/plugins/module_utils"))
     return load_module(
-        ROOT / "plugins/module_utils/legacy_windows_boot.py", "tested_boot"
+        ROOT / "legacy_windows/plugins/module_utils/legacy_windows_boot.py",
+        "tested_boot",
     )
 
 

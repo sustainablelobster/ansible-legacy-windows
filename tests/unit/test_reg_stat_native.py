@@ -20,7 +20,7 @@ def registry_helper() -> ModuleType:
 
     :returns: The isolated helper module.
     """
-    source = ROOT / "plugins/module_utils/legacy_windows_reg_stat.py"
+    source = ROOT / "legacy_windows/plugins/module_utils/legacy_windows_reg_stat.py"
     return load_module(source, "tested_reg_stat_native")
 
 

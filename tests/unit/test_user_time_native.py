@@ -58,7 +58,8 @@ def time_helper() -> ModuleType:
     :returns: Fresh module loaded by the developer interpreter.
     """
     return load_module(
-        ROOT / "plugins/module_utils/legacy_windows_user_time.py", "tested_user_time"
+        ROOT / "legacy_windows/plugins/module_utils/legacy_windows_user_time.py",
+        "tested_user_time",
     )
 
 

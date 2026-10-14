@@ -26,7 +26,7 @@ def msix_helper() -> Any:
     """
     return load_module(
         Path(__file__).resolve().parents[2]
-        / "plugins/module_utils/legacy_windows_package_msix.py",
+        / "legacy_windows/plugins/module_utils/legacy_windows_package_msix.py",
         "tested_msix",
     )
 

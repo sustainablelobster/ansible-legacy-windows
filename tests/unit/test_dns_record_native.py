@@ -23,9 +23,12 @@ def dns_helper(monkeypatch: pytest.MonkeyPatch) -> Any:
     :param monkeypatch: Temporary sibling helper import path.
     :returns: Native helper using developer Python, not target-runtime evidence.
     """
-    monkeypatch.syspath_prepend(str(ROOT / "plugins" / "module_utils"))
+    monkeypatch.syspath_prepend(str(ROOT / "legacy_windows/plugins" / "module_utils"))
     return load_module(
-        ROOT / "plugins" / "module_utils" / "legacy_windows_dns_record.py",
+        ROOT
+        / "legacy_windows/plugins"
+        / "module_utils"
+        / "legacy_windows_dns_record.py",
         "tested_dns_record",
     )
 

@@ -21,9 +21,9 @@ def native_helper(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
     :param monkeypatch: Scoped module path and native error formatter.
     :returns: Loaded target helper.
     """
-    monkeypatch.syspath_prepend(str(ROOT / "plugins/module_utils"))
+    monkeypatch.syspath_prepend(str(ROOT / "legacy_windows/plugins/module_utils"))
     module = load_module(
-        ROOT / "plugins/module_utils/legacy_windows_mapped_drive.py",
+        ROOT / "legacy_windows/plugins/module_utils/legacy_windows_mapped_drive.py",
         "tested_mapped_drive_native",
     )
     monkeypatch.setattr(

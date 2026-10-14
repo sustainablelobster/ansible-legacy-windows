@@ -18,7 +18,7 @@
         hostname_helper_sources: >-
           {{ hostname_helper_sources | default({}) |
              combine({item: lookup('ansible.builtin.file', playbook_dir ~
-             '/../../plugins/module_utils/' ~ item ~ '.py')}) }}
+             '/../../legacy_windows/plugins/module_utils/' ~ item ~ '.py')}) }}
       loop: '{{ hostname_helper_names }}'
       when: item not in (hostname_helper_sources | default({}))
 

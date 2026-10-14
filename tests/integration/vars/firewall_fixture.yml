@@ -3,7 +3,7 @@ firewall_registry_path: >-
   SYSTEM\CurrentControlSet\Services\SharedAccess\Parameters\FirewallPolicy
 firewall_wmi_source: >-
   {{ lookup('file', playbook_dir +
-  '/../../plugins/module_utils/legacy_windows_wmi.py') }}
+  '/../../legacy_windows/plugins/module_utils/legacy_windows_wmi.py') }}
 firewall_program: |
   {{ firewall_wmi_source }}
   {{ firewall_fixture }}

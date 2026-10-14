@@ -8,7 +8,7 @@
   vars:
     computer_description_wmi_source: >-
       {{ lookup('ansible.builtin.file', playbook_dir ~
-         '/../../plugins/module_utils/legacy_windows_wmi.py') }}
+         '/../../legacy_windows/plugins/module_utils/legacy_windows_wmi.py') }}
     computer_description_script: >-
       {{ computer_description_wmi_source ~ ('%c' | format(10)) ~
          computer_description_fixture }}

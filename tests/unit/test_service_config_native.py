@@ -43,7 +43,7 @@ def config_helper() -> ModuleType:
     :returns: Isolated configuration helper.
     """
     return load_module(
-        ROOT / "plugins/module_utils/legacy_windows_service_config.py",
+        ROOT / "legacy_windows/plugins/module_utils/legacy_windows_service_config.py",
         "tested_service_config",
     )
 

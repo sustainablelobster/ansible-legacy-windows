@@ -51,9 +51,9 @@ def audit_helper(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
     :param monkeypatch: Scoped import and native identity replacements.
     :returns: Independent helper using real byte operations and enum metadata.
     """
-    monkeypatch.syspath_prepend(str(ROOT / "plugins/module_utils"))
+    monkeypatch.syspath_prepend(str(ROOT / "legacy_windows/plugins/module_utils"))
     helper = load_module(
-        ROOT / "plugins/module_utils/legacy_windows_audit_rule.py",
+        ROOT / "legacy_windows/plugins/module_utils/legacy_windows_audit_rule.py",
         "tested_audit_rule_native",
     )
     monkeypatch.setattr(helper.filenames, "_current_lower", lambda: str.lower)

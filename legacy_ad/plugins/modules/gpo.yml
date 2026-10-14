@@ -1,0 +1,99 @@
+---
+# Copyright 2026 sustainablelobster
+# Interface documentation derived from microsoft.ad.
+# Original documentation Copyright 2026 Ansible Project.
+# SPDX-License-Identifier: GPL-3.0-or-later
+DOCUMENTATION:
+  module: gpo
+  short_description: Manage Group Policy Object links
+  version_added: '1.0.0'
+  description:
+    - Create, update or remove links to existing GPOs on an OU, domain or site.
+    - Uses authenticated native LDAP and changes only the target's C(gPLink)
+      attribute.
+  options:
+    name:
+      description:
+        - Existing GPO display name.
+        - Exactly one of O(name) or O(guid) is required.
+      type: str
+    guid:
+      description: Existing GPO GUID, mutually exclusive with O(name).
+      type: str
+    target:
+      description: Distinguished name of the OU, domain or site to manage.
+      type: str
+      required: true
+    state:
+      description: Whether the selected GPO link should exist.
+      type: str
+      default: present
+      choices: [present, absent]
+    enabled:
+      description:
+        - Link enablement; new links default to enabled.
+        - Existing links retain omitted settings.
+      type: bool
+    enforced:
+      description:
+        - Link enforcement; new links default to not enforced.
+        - Existing links retain omitted settings.
+      type: bool
+    order:
+      description:
+        - One-based link position; lower numbers indicate higher precedence.
+        - New links default to the last position; existing links retain their
+          current position when omitted.
+      type: int
+    domain_server:
+      description:
+        - Domain controller to use.
+        - Defaults to native discovery of the PDC emulator.
+      type: str
+  notes:
+    - The GPO must already exist; this module neither creates GPOs nor edits
+      their policy files.
+    - Uses the current Windows process logon for directory access; use become
+      when network credentials are needed.
+    - Unrelated links, their flags and ordering are preserved. C(gPOptions)
+      inheritance settings are not changed.
+    - Concurrent edits to the same target's link list must be serialized, as
+      with other read-modify-write administrative tools.
+    - The GPO and target must be readable through the selected directory
+      server; cross-domain LDAP referrals are not followed.
+    - The create diff reports null order when O(order) was omitted, matching
+      the released upstream module.
+    - Matching upstream, a failed link-write request may report changed true
+      even when the directory rejected the write. Check failure results before
+      relying on a changed flag as proof of applied state.
+  extends_documentation_fragment:
+    - ansible.builtin.action_common_attributes
+  attributes:
+    check_mode:
+      support: full
+    diff_mode:
+      support: full
+    platform:
+      platforms: [windows]
+  author:
+    - sustainablelobster
+    - Ron Gershburg (@rgershbu)
+EXAMPLES: |
+  - name: Link an existing policy to an OU
+    sustainablelobster.legacy_ad.gpo:
+      name: Application Security
+      target: OU=Applications,DC=example,DC=test
+
+  - name: Enforce a link with highest precedence
+    sustainablelobster.legacy_ad.gpo:
+      guid: 5990264b-7000-482d-a2f0-c43eb26aa956
+      target: OU=Applications,DC=example,DC=test
+      order: 1
+      enforced: true
+
+  - name: Remove the link without deleting the GPO
+    sustainablelobster.legacy_ad.gpo:
+      name: Application Security
+      target: OU=Applications,DC=example,DC=test
+      state: absent
+RETURN: {}

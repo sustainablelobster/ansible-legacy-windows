@@ -23,7 +23,8 @@ def group_helper(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
     """
     monkeypatch.syspath_prepend(str(HELPER.parent))
     return load_module(
-        ROOT / "plugins/module_utils/legacy_windows_group.py", "tested_group_native"
+        ROOT / "legacy_windows/plugins/module_utils/legacy_windows_group.py",
+        "tested_group_native",
     )
 
 

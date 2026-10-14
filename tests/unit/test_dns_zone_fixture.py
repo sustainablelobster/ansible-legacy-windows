@@ -28,7 +28,7 @@ def load_fixture(monkeypatch: pytest.MonkeyPatch) -> Any:
     """
     monkeypatch.setenv("SystemRoot", "fixture-windows")
     monkeypatch.setitem(sys.modules, "winreg", ModuleType("winreg"))
-    monkeypatch.syspath_prepend(str(ROOT / "plugins/module_utils"))
+    monkeypatch.syspath_prepend(str(ROOT / "legacy_windows/plugins/module_utils"))
     monkeypatch.syspath_prepend(str(ROOT / "tests/integration/fixtures"))
     return load_module(
         ROOT / "tests/integration/fixtures/win_dns_zone.py", "dns_zone_fixture_test"

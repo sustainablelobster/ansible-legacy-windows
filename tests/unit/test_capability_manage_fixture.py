@@ -374,7 +374,9 @@ def test_maintained_program_and_payloads_parse_as_python34() -> None:
     document = yaml.safe_load(
         (ROOT / "tests/integration/vars/capability_fixture.yml").read_text()
     )
-    wmi = (ROOT / "plugins/module_utils/legacy_windows_wmi.py").read_text()
+    wmi = (
+        ROOT / "legacy_windows/plugins/module_utils/legacy_windows_wmi.py"
+    ).read_text()
     program = (
         Environment()
         .from_string(document["capability_program"])
@@ -384,8 +386,8 @@ def test_maintained_program_and_payloads_parse_as_python34() -> None:
     )
     ast.parse(program, feature_version=(3, 4))
     for path in (
-        "plugins/modules/win_capability.py",
-        "plugins/module_utils/legacy_windows_capability_manage.py",
+        "legacy_windows/plugins/modules/win_capability.py",
+        "legacy_windows/plugins/module_utils/legacy_windows_capability_manage.py",
     ):
         ast.parse((ROOT / path).read_text(), feature_version=(3, 4))
 

@@ -28,9 +28,10 @@ from ansible.plugins.loader import action_loader  # type: ignore[import-untyped]
 from ansible.template import Templar  # type: ignore[import-untyped]
 
 # The checkout's source-only plugin namespace is resolved by pytest's pythonpath.
-from plugins.plugin_utils._module import (  # pylint: disable=import-error
+from ansible_collections.sustainablelobster.legacy_windows.plugins.plugin_utils.runtime import (  # pylint: disable=import-error
     PythonModuleAction,
 )
+
 from tests.unit.python_action_helpers import EXPECTED_HELPERS
 
 _ROOT = Path(__file__).resolve().parents[2]
@@ -187,7 +188,7 @@ def test_stages_only_required_helpers_and_normal_action_cleans_once(
         *[
             (
                 "transfer",
-                str(_ROOT / "plugins/module_utils" / name),
+                str(_ROOT / "legacy_windows/plugins/module_utils" / name),
                 ntpath.join(_REMOTE_TMP, name),
             )
             for name in helpers
@@ -616,7 +617,7 @@ def test_ansible_preserves_native_payload_without_modern_python_wrapper(
     collection_actions: dict[str, type[PythonModuleAction]], module: str
 ) -> None:
     assert module in collection_actions
-    module_path = _ROOT / "plugins" / "modules" / f"{module}.py"
+    module_path = _ROOT / "legacy_windows/plugins" / "modules" / f"{module}.py"
     built = modify_module(
         module_name=f"sustainablelobster.legacy_windows.{module}",
         module_path=str(module_path),

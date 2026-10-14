@@ -25,9 +25,10 @@ def wait_helper(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
     :param monkeypatch: Scoped Windows-only ctypes substitutions.
     :returns: Loaded helper without executing Windows operations.
     """
-    monkeypatch.syspath_prepend(str(ROOT / "plugins/module_utils"))
+    monkeypatch.syspath_prepend(str(ROOT / "legacy_windows/plugins/module_utils"))
     module = load_module(
-        ROOT / "plugins/module_utils/legacy_windows_wait.py", "tested_wait_native"
+        ROOT / "legacy_windows/plugins/module_utils/legacy_windows_wait.py",
+        "tested_wait_native",
     )
     monkeypatch.setattr(module.ctypes, "WinError", native_error, raising=False)
     return module

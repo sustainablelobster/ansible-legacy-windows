@@ -1,0 +1,47 @@
+---
+namespace: sustainablelobster
+name: legacy_windows
+version: 1.1.0
+readme: README.md
+authors:
+  - sustainablelobster
+description: Python 3.4.4-compatible payloads for Windows automation.
+license_file: LICENSE
+tags:
+  - windows
+dependencies: {}
+repository: https://github.com/sustainablelobster/ansible-legacy-windows
+build_ignore:
+  - legacy_ad
+  - .github
+  - .gitattributes
+  - .gitignore
+  - .venv
+  - .cache
+  - .ansible
+  - .pytest_cache
+  - .mypy_cache
+  - .rumdl_cache
+  - .direnv
+  - .pre-commit-config.yaml
+  - .ansible-lint.yml
+  - flake.nix
+  - flake.lock
+  - result
+  - result-*
+  - .env
+  - .env.*
+  - dist
+  - tmp
+  - '*.tar.gz'
+  - '**/__pycache__'
+  - '*.pyc'
+  - inventory
+  - inventory.*
+  - inventories
+  - tests
+  - scripts
+  - AGENTS.md
+  - justfile
+  - pyproject.toml
+  - .yamllint.yml

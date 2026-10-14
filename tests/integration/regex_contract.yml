@@ -62,7 +62,9 @@
 
         - name: Stage real selection helpers without contacting WUA
           sustainablelobster.legacy_windows.win_copy:
-            src: '{{ playbook_dir }}/../../plugins/module_utils/{{ item }}'
+            src: >-
+              {{ playbook_dir + '/../../legacy_windows/plugins/module_utils/' +
+                 item }}
             dest: '{{ regex_contract_workspace.path }}\helpers\{{ item }}'
           loop:
             - legacy_windows_regex.py

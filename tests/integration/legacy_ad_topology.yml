@@ -1,0 +1,394 @@
+---
+# Copyright 2026 sustainablelobster
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Requires an isolated writable forest; removes only newly owned fixtures.
+- name: Verify native replication topology on the minimum Windows target runtime
+  hosts: legacy_ad
+  gather_facts: false
+  module_defaults:
+    group/sustainablelobster.legacy_ad.domain:
+      domain_server: '{{ ad_domain_server }}'
+      domain_username: '{{ ad_domain_username }}'
+      domain_password: '{{ ad_domain_password }}'
+  vars:
+    ad_compile_extra_files:
+      - {collection: ad, kind: modules, file: site.py}
+      - {collection: ad, kind: modules, file: site_link.py}
+      - {collection: ad, kind: modules, file: site_subnet.py}
+      - collection: ad
+        kind: module_utils
+        file: legacy_ad_topology.py
+    ad_topology_subnet_owned: false
+  tasks:
+    - name: Allocate unique site, link and subnet fixture names
+      sustainablelobster.legacy_windows.win_command:
+        argv:
+          - '{{ ansible_python_interpreter }}'
+          - -c
+          - >-
+            import json, uuid;
+            token = uuid.uuid4().hex;
+            print(json.dumps({'prefix': 'Ansible-Owned-' + token,
+            'subnet': 'fd00:ab00:' + token[:4] + ':' + token[4:8] + '::/64'}))
+      changed_when: false
+      register: ad_topology_names
+
+    - name: Record owned topology names
+      ansible.builtin.set_fact:
+        ad_topology_prefix: >-
+          {{ (ad_topology_names.stdout | from_json).prefix }}
+        ad_topology_subnet: >-
+          {{ (ad_topology_names.stdout | from_json).subnet }}
+
+    - name: Compile the installed payload and complete helper closure
+      ansible.builtin.include_tasks: tasks/legacy_ad_compile.yml
+
+    - name: Exercise topology and restore owned fixtures to absence
+      block:
+        - name: Preview a replication site
+          sustainablelobster.legacy_ad.site:
+            name: '{{ ad_topology_prefix }}-First'
+            description: Initial site
+            universal_group_caching_enabled: true
+          check_mode: true
+          diff: true
+          register: ad_site_preview
+
+        - name: Verify the preview did not create the site
+          sustainablelobster.legacy_ad.object_info:
+            identity: '{{ ad_site_preview.distinguished_name }}'
+          register: ad_site_before
+
+        - name: Check the predicted identity and actual absence
+          ansible.builtin.assert:
+            that:
+              - ad_site_preview.changed
+              - >-
+                ad_site_preview.object_guid ==
+                '00000000-0000-0000-0000-000000000000'
+              - ad_site_before.objects == []
+
+        - name: Create the first site and enable group caching
+          sustainablelobster.legacy_ad.site: &ad_topology_first
+            name: '{{ ad_topology_prefix }}-First'
+            description: Initial site
+            universal_group_caching_enabled: true
+          diff: true
+          register: ad_site_first
+
+        - name: Repeat the first site request
+          sustainablelobster.legacy_ad.site: *ad_topology_first
+          register: ad_site_repeat
+
+        - name: Independently read the native settings child
+          sustainablelobster.legacy_ad.object_info:
+            identity: >-
+              CN=NTDS Site Settings,{{ ad_site_first.distinguished_name }}
+            properties: [options]
+          register: ad_site_settings
+
+        - name: Independently read the native servers child
+          sustainablelobster.legacy_ad.object_info:
+            identity: 'CN=Servers,{{ ad_site_first.distinguished_name }}'
+          register: ad_site_servers
+
+        - name: Verify site idempotence and the native child objects
+          ansible.builtin.assert:
+            that:
+              - ad_site_first.changed
+              - not ad_site_repeat.changed
+              - ad_site_settings.objects | length == 1
+              - ad_site_settings.objects[0].options == 32
+              - ad_site_servers.objects | length == 1
+              - ad_site_servers.objects[0].ObjectClass == 'serversContainer'
+
+        - name: Update the first site using its immutable GUID
+          sustainablelobster.legacy_ad.site: &ad_topology_site_update
+            identity: '{{ ad_site_first.object_guid }}'
+            description: Updated site
+            automatic_topology_generation_enabled: false
+            automatic_inter_site_topology_generation_enabled: false
+            protect_from_deletion: true
+          register: ad_site_updated
+
+        - name: Repeat the GUID-based site update
+          sustainablelobster.legacy_ad.site: *ad_topology_site_update
+          register: ad_site_updated_repeat
+
+        - name: Read updated native site settings
+          sustainablelobster.legacy_ad.object_info:
+            identity: >-
+              CN=NTDS Site Settings,{{ ad_site_first.distinguished_name }}
+            properties: [options]
+          register: ad_site_settings_updated
+
+        - name: Verify topology flag updates and their idempotence
+          ansible.builtin.assert:
+            that:
+              - ad_site_updated.changed
+              - not ad_site_updated_repeat.changed
+              - ad_site_settings_updated.objects[0].options == 49
+
+        - name: Create two more owned sites
+          sustainablelobster.legacy_ad.site:
+            name: '{{ ad_topology_prefix }}-{{ item }}'
+          loop: [Second, Third]
+
+        - name: Reject a link to an unknown site before creating anything
+          sustainablelobster.legacy_ad.site_link:
+            name: '{{ ad_topology_prefix }}-Invalid'
+            sites_included:
+              - '{{ ad_topology_prefix }}-First'
+              - '{{ ad_topology_prefix }}-Missing'
+          register: ad_link_invalid
+          ignore_errors: true
+
+        - name: Verify invalid references fail without completed changes
+          ansible.builtin.assert:
+            that:
+              - ad_link_invalid.failed | default(false)
+              - not ad_link_invalid.changed
+
+        - name: Preview an IP replication link
+          sustainablelobster.legacy_ad.site_link: &ad_topology_link
+            name: '{{ ad_topology_prefix }}-Link'
+            cost: 100
+            replication_frequency: 15
+            sites_included:
+              - '{{ ad_topology_prefix }}-First'
+              - '{{ ad_topology_prefix }}-Second'
+          check_mode: true
+          diff: true
+          register: ad_link_preview
+
+        - name: Independently verify the link preview did not create a link
+          sustainablelobster.legacy_ad.object_info:
+            identity: '{{ ad_link_preview.distinguished_name }}'
+          register: ad_link_before
+
+        - name: Check link preview and actual absence
+          ansible.builtin.assert:
+            that:
+              - ad_link_preview.changed
+              - ad_link_before.objects == []
+
+        - name: Create the IP replication link
+          sustainablelobster.legacy_ad.site_link: *ad_topology_link
+          register: ad_link_created
+
+        - name: Repeat link creation
+          sustainablelobster.legacy_ad.site_link: *ad_topology_link
+          register: ad_link_repeat
+
+        - name: Independently read native link attributes
+          sustainablelobster.legacy_ad.object_info:
+            identity: '{{ ad_link_created.object_guid }}'
+            properties: [cost, replInterval, siteList]
+          register: ad_link_observed
+
+        - name: Check idempotence and native link attributes
+          ansible.builtin.assert:
+            that:
+              - ad_link_created.changed
+              - not ad_link_repeat.changed
+              - ad_link_observed.objects[0].cost == 100
+              - ad_link_observed.objects[0].replInterval == 15
+              - ad_link_observed.objects[0].siteList | length == 2
+
+        - name: Preview link cost and membership updates
+          sustainablelobster.legacy_ad.site_link: &ad_topology_link_update
+            identity: '{{ ad_link_created.object_guid }}'
+            cost: 200
+            replication_frequency: 30
+            sites_included:
+              - '{{ ad_topology_prefix }}-First'
+              - '{{ ad_topology_prefix }}-Third'
+          check_mode: true
+          diff: true
+          register: ad_link_update_preview
+
+        - name: Read the existing link after the preview
+          sustainablelobster.legacy_ad.object_info:
+            identity: '{{ ad_link_created.object_guid }}'
+            properties: [cost, replInterval]
+          register: ad_link_preview_observed
+
+        - name: Verify the link update preview did not modify the directory
+          ansible.builtin.assert:
+            that:
+              - ad_link_update_preview.changed
+              - ad_link_preview_observed.objects[0].cost == 100
+              - ad_link_preview_observed.objects[0].replInterval == 15
+
+        - name: Apply link cost and membership updates
+          sustainablelobster.legacy_ad.site_link: *ad_topology_link_update
+          diff: true
+          register: ad_link_updated
+
+        - name: Repeat the link update
+          sustainablelobster.legacy_ad.site_link: *ad_topology_link_update
+          register: ad_link_updated_repeat
+
+        - name: Verify the updated link is idempotent
+          ansible.builtin.assert:
+            that:
+              - ad_link_updated.changed
+              - not ad_link_updated_repeat.changed
+              - ad_link_updated.diff.after.cost == 200
+              - ad_link_updated.diff.after.replication_frequency == 30
+
+        - name: Record the subnet's configuration-partition identity
+          ansible.builtin.set_fact:
+            ad_topology_subnet_dn: >-
+              {{ 'CN=' ~ ad_topology_subnet ~ ',CN=Subnets,'
+              ~ ad_site_first.distinguished_name.split(',', 1)[1] }}
+
+        - name: Verify the uniquely named subnet is not an existing resource
+          sustainablelobster.legacy_ad.object_info:
+            identity: '{{ ad_topology_subnet_dn }}'
+          register: ad_subnet_before
+
+        - name: Require subnet absence before assuming cleanup ownership
+          ansible.builtin.assert:
+            that: ad_subnet_before.objects == []
+
+        - name: Record subnet cleanup ownership
+          ansible.builtin.set_fact:
+            ad_topology_subnet_owned: true
+
+        - name: Preview a site-associated IPv6 subnet
+          sustainablelobster.legacy_ad.site_subnet: &ad_topology_subnet
+            name: '{{ ad_topology_subnet }}'
+            site: '{{ ad_topology_prefix }}-First'
+            location: London
+          check_mode: true
+          diff: true
+          register: ad_subnet_preview
+
+        - name: Create the subnet
+          sustainablelobster.legacy_ad.site_subnet: *ad_topology_subnet
+          register: ad_subnet_created
+
+        - name: Repeat the subnet request
+          sustainablelobster.legacy_ad.site_subnet: *ad_topology_subnet
+          register: ad_subnet_repeat
+
+        - name: Independently read subnet association and location
+          sustainablelobster.legacy_ad.object_info:
+            identity: '{{ ad_subnet_created.object_guid }}'
+            properties: [siteObject, location]
+          register: ad_subnet_observed
+
+        - name: Verify the subnet preview, idempotence and native association
+          ansible.builtin.assert:
+            that:
+              - ad_subnet_preview.changed
+              - ad_subnet_created.changed
+              - not ad_subnet_repeat.changed
+              - >-
+                ad_subnet_observed.objects[0].siteObject ==
+                ad_site_first.distinguished_name
+              - ad_subnet_observed.objects[0].location == 'London'
+
+        - name: Change subnet association and location
+          sustainablelobster.legacy_ad.site_subnet: &ad_topology_subnet_update
+            identity: '{{ ad_subnet_created.object_guid }}'
+            site: '{{ ad_topology_prefix }}-Second'
+            location: New York
+          diff: true
+          register: ad_subnet_updated
+
+        - name: Repeat the subnet update
+          sustainablelobster.legacy_ad.site_subnet: *ad_topology_subnet_update
+          register: ad_subnet_updated_repeat
+
+        - name: Verify the updated association diff and idempotence
+          ansible.builtin.assert:
+            that:
+              - ad_subnet_updated.changed
+              - not ad_subnet_updated_repeat.changed
+              - >-
+                ad_subnet_updated.diff.before.site ==
+                ad_topology_prefix ~ '-First'
+              - >-
+                ad_subnet_updated.diff.after.site ==
+                ad_topology_prefix ~ '-Second'
+
+        - name: Clear the subnet association and location
+          sustainablelobster.legacy_ad.site_subnet: &ad_topology_subnet_clear
+            identity: '{{ ad_subnet_created.object_guid }}'
+            site: ''
+            location: ''
+          register: ad_subnet_cleared
+
+        - name: Repeat the clear request
+          sustainablelobster.legacy_ad.site_subnet: *ad_topology_subnet_clear
+          register: ad_subnet_cleared_repeat
+
+        - name: Verify clear operations are idempotent
+          ansible.builtin.assert:
+            that:
+              - ad_subnet_cleared.changed
+              - not ad_subnet_cleared_repeat.changed
+
+        - name: Preview removal of the protected site and its children
+          sustainablelobster.legacy_ad.site:
+            identity: '{{ ad_site_first.object_guid }}'
+            state: absent
+          check_mode: true
+          register: ad_site_remove_preview
+
+        - name: Verify removal preview retained the site
+          sustainablelobster.legacy_ad.object_info:
+            identity: '{{ ad_site_first.object_guid }}'
+          register: ad_site_after_preview
+
+        - name: Check protected site removal prediction
+          ansible.builtin.assert:
+            that:
+              - ad_site_remove_preview.changed
+              - ad_site_after_preview.objects | length == 1
+
+      always:
+        - name: Remove the owned subnet before removing its sites
+          sustainablelobster.legacy_ad.site_subnet:
+            name: '{{ ad_topology_subnet }}'
+            state: absent
+          when: ad_topology_subnet_owned | bool
+
+        - name: Remove owned valid and rejected links
+          sustainablelobster.legacy_ad.site_link:
+            name: '{{ ad_topology_prefix }}-{{ item }}'
+            state: absent
+          loop: [Link, Invalid]
+
+        - name: Remove all owned sites and their children
+          sustainablelobster.legacy_ad.site:
+            name: '{{ ad_topology_prefix }}-{{ item }}'
+            state: absent
+          loop: [First, Second, Third]
+
+        - name: Observe owned sites and links after cleanup
+          sustainablelobster.legacy_ad.object_info:
+            ldap_filter: '(name={{ ad_topology_prefix }}*)'
+            search_base: >-
+              {{ ad_site_preview.distinguished_name.split(',', 1)[1] }}
+            search_scope: subtree
+          when: ad_site_preview.distinguished_name | default(none) is not none
+          register: ad_topology_cleanup
+
+        - name: Require all owned sites and links to be absent
+          ansible.builtin.assert:
+            that: ad_topology_cleanup.objects == []
+          when: not (ad_topology_cleanup.skipped | default(false))
+
+        - name: Observe the owned subnet after cleanup
+          sustainablelobster.legacy_ad.object_info:
+            identity: '{{ ad_topology_subnet_dn }}'
+          when: ad_topology_subnet_owned | bool
+          register: ad_topology_subnet_cleanup
+
+        - name: Require the owned subnet to be absent
+          ansible.builtin.assert:
+            that: ad_topology_subnet_cleanup.objects == []
+          when: ad_topology_subnet_owned | bool

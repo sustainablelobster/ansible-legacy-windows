@@ -21,9 +21,10 @@ def hosts_helper(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
     :param monkeypatch: Scoped import path and native equality replacement.
     :returns: Real text editor with only Windows comparison substituted.
     """
-    monkeypatch.syspath_prepend(str(ROOT / "plugins/module_utils"))
+    monkeypatch.syspath_prepend(str(ROOT / "legacy_windows/plugins/module_utils"))
     module = load_module(
-        ROOT / "plugins/module_utils/legacy_windows_hosts.py", "tested_hosts_native"
+        ROOT / "legacy_windows/plugins/module_utils/legacy_windows_hosts.py",
+        "tested_hosts_native",
     )
     monkeypatch.setattr(
         module.environment,

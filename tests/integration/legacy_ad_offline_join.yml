@@ -1,0 +1,307 @@
+---
+- name: Verify offline provisioning output and complete a native offline join
+  hosts: legacy_ad_offline_provisioners
+  gather_facts: false
+  tasks:
+    - name: Require the designated isolated offline member and domain
+      ansible.builtin.assert:
+        that:
+          - ad_offline_member_host is defined
+          - ad_domain_server is defined
+          - ad_dns_domain is defined
+          - ad_computer_ou is defined
+          - ad_admin_user is defined
+          - ad_admin_password is defined
+
+    - name: Allocate a unique owned offline computer name for this run
+      sustainablelobster.legacy_windows.win_command:
+        argv:
+          - '{{ ansible_python_interpreter }}'
+          - -c
+          - import uuid; print('ODJ-' + uuid.uuid4().hex[:9].upper())
+      changed_when: false
+      register: offline_name_output
+
+    - name: Retain the unique offline fixture name
+      ansible.builtin.set_fact:
+        offline_test_name: '{{ offline_name_output.stdout | trim }}'
+
+    - name: Check that the intended offline directory account is absent
+      sustainablelobster.legacy_ad.object_info:
+        filter: sAMAccountName -eq '{{ offline_test_name }}$'
+        domain_server: '{{ ad_domain_server }}'
+        domain_username: '{{ ad_admin_user }}'
+        domain_password: '{{ ad_admin_password }}'
+      register: offline_account_before
+
+    - name: Refuse to reset or delete a preexisting offline account
+      ansible.builtin.assert:
+        that: offline_account_before.objects == []
+
+    - name: Journal the intended member's independent initial state
+      sustainablelobster.legacy_windows.win_command:
+        argv: ['{{ ansible_python_interpreter }}', '-']
+        stdin: |
+          import ctypes, json, socket, sys, winreg
+          library = ctypes.WinDLL('netapi32')
+          library.NetGetJoinInformation.argtypes = [ctypes.c_wchar_p,
+              ctypes.POINTER(ctypes.c_void_p), ctypes.POINTER(ctypes.c_int)]
+          library.NetGetJoinInformation.restype = ctypes.c_uint32
+          library.NetApiBufferFree.argtypes = [ctypes.c_void_p]
+          library.NetApiBufferFree.restype = ctypes.c_uint32
+          buffer = ctypes.c_void_p()
+          status = ctypes.c_int()
+          code = library.NetGetJoinInformation(None, ctypes.byref(buffer),
+              ctypes.byref(status))
+          if code:
+              raise ctypes.WinError(code)
+          try:
+              workgroup = ctypes.wstring_at(buffer)
+          finally:
+              library.NetApiBufferFree(buffer)
+          names_key = r'SYSTEM\CurrentControlSet\Control\ComputerName'
+          with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,
+              names_key + r'\ComputerName') as key:
+              pending_name = winreg.QueryValueEx(key, 'ComputerName')[0]
+          print(json.dumps({'hostname': socket.gethostname(),
+              'pending_hostname': pending_name,
+              'workgroup': workgroup, 'joined': status.value == 3,
+              'python': list(sys.version_info[:3])}))
+      delegate_to: '{{ ad_offline_member_host }}'
+      changed_when: false
+      register: offline_initial_output
+
+    - name: Retain the original member state for cleanup
+      ansible.builtin.set_fact:
+        offline_initial: '{{ offline_initial_output.stdout | from_json }}'
+
+    - name: Require a disposable workgroup member running minimum Python
+      ansible.builtin.assert:
+        that:
+          - not offline_initial.joined
+          - >-
+            offline_initial.pending_hostname | lower ==
+            offline_initial.hostname | lower
+          - offline_initial.python == [3, 4, 4]
+
+    - name: Create and consume an offline join blob
+      block:
+        - name: Create only the disposable computer account
+          sustainablelobster.legacy_ad.computer:
+            name: '{{ offline_test_name }}'
+            sam_account_name: '{{ offline_test_name }}'
+            path: '{{ ad_computer_ou }}'
+            state: present
+            domain_server: '{{ ad_domain_server }}'
+            domain_username: '{{ ad_admin_user }}'
+            domain_password: '{{ ad_admin_password }}'
+          register: offline_account
+
+        - name: Predict provisioning without resetting the password
+          sustainablelobster.legacy_ad.offline_join:
+            identity: '{{ offline_account.object_guid }}'
+            domain_server: '{{ ad_domain_server }}'
+          check_mode: true
+          register: offline_prediction
+
+        - name: Require an empty blob prediction
+          ansible.builtin.assert:
+            that:
+              - offline_prediction is changed
+              - offline_prediction.blob == ''
+
+        - name: Generate sensitive default base64 provisioning output
+          sustainablelobster.legacy_ad.offline_join:
+            identity: '{{ offline_account.object_guid }}'
+            domain_server: '{{ ad_domain_server }}'
+          no_log: true
+          register: offline_base64
+
+        - name: Require the default output to contain a base64 blob
+          ansible.builtin.assert:
+            that:
+              - offline_base64 is changed
+              - offline_base64.blob is string
+              - offline_base64.blob | length > 0
+          no_log: true
+
+        - name: Allocate a temporary binary-blob workspace
+          sustainablelobster.legacy_windows.win_tempfile:
+            state: directory
+            prefix: legacy-ad-offline-
+          register: offline_workspace
+
+        - name: Generate a binary offline blob under the delegated domain logon
+          sustainablelobster.legacy_ad.offline_join:
+            identity: '{{ offline_account.object_guid }}'
+            domain_server: '{{ ad_domain_server }}'
+            blob_path: '{{ offline_workspace.path }}\provision.bin'
+          register: offline_file
+
+        - name: Repeat provisioning without resetting the account password
+          sustainablelobster.legacy_ad.offline_join:
+            identity: '{{ offline_account.object_guid }}'
+            domain_server: '{{ ad_domain_server }}'
+            blob_path: '{{ offline_workspace.path }}\provision.bin'
+          register: offline_file_repeat
+
+        - name: Read the binary file as sensitive base64 transport data
+          sustainablelobster.legacy_windows.slurp:
+            src: '{{ offline_workspace.path }}\provision.bin'
+          no_log: true
+          register: offline_blob_file
+
+        - name: Require file-mode outputs and idempotence
+          ansible.builtin.assert:
+            that:
+              - offline_file is changed
+              - offline_file.blob is none
+              - offline_file_repeat is not changed
+              - offline_file_repeat.blob is none
+              - offline_blob_file.content | length > 0
+          no_log: true
+
+        - name: Apply the opaque blob on its isolated intended member
+          sustainablelobster.legacy_ad.membership:
+            offline_join_blob: '{{ offline_blob_file.content }}'
+            state: domain
+            reboot: true
+          delegate_to: '{{ ad_offline_member_host }}'
+          no_log: true
+          register: offline_join_result
+
+        - name: Observe the activated offline computer name independently
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - import socket; print(socket.gethostname())
+          delegate_to: '{{ ad_offline_member_host }}'
+          changed_when: false
+          register: offline_activated_name
+
+        - name: Query the offline member secure channel without repairing it
+          sustainablelobster.legacy_windows.win_command:
+            argv: [nltest, '/sc_query:{{ ad_dns_domain }}']
+          delegate_to: '{{ ad_offline_member_host }}'
+          changed_when: false
+          register: offline_secure_channel
+
+        - name: Journal the independent hostname and secure-channel status
+          ansible.builtin.debug:
+            msg:
+              hostname: '{{ offline_activated_name.stdout | trim }}'
+              secure_channel: '{{ offline_secure_channel.stdout }}'
+
+        - name: Require the provisioned hostname and healthy channel status
+          ansible.builtin.assert:
+            that:
+              - >-
+                offline_activated_name.stdout | trim | lower ==
+                offline_test_name | lower
+              - "'0x0 NERR_Success' in offline_secure_channel.stdout"
+
+        - name: Verify the activated domain is an idempotent online membership
+          sustainablelobster.legacy_ad.membership:
+            dns_domain_name: '{{ ad_dns_domain }}'
+            domain_admin_user: '{{ ad_admin_user }}'
+            domain_admin_password: '{{ ad_admin_password }}'
+            state: domain
+          delegate_to: '{{ ad_offline_member_host }}'
+          register: offline_join_repeat
+
+        - name: Require completed join and unchanged activated membership
+          ansible.builtin.assert:
+            that:
+              - offline_join_result is changed
+              - not offline_join_result.reboot_required
+              - offline_join_repeat is not changed
+              - not offline_join_repeat.reboot_required
+      always:
+        - name: Return the offline member to its configured original workgroup
+          sustainablelobster.legacy_ad.membership:
+            workgroup_name: '{{ offline_initial.workgroup }}'
+            hostname: '{{ offline_initial.hostname }}'
+            domain_admin_user: '{{ ad_admin_user }}'
+            domain_admin_password: '{{ ad_admin_password }}'
+            state: workgroup
+            reboot: true
+          delegate_to: '{{ ad_offline_member_host }}'
+
+        - name: Locate the account acquired under this initially absent name
+          sustainablelobster.legacy_ad.object_info:
+            filter: sAMAccountName -eq '{{ offline_test_name }}$'
+            domain_server: '{{ ad_domain_server }}'
+            domain_username: '{{ ad_admin_user }}'
+            domain_password: '{{ ad_admin_password }}'
+          register: offline_owned_account
+
+        - name: Require a unique computer before offline fixture cleanup
+          ansible.builtin.assert:
+            that:
+              - offline_owned_account.objects | length <= 1
+              - >-
+                offline_owned_account.objects == [] or
+                offline_owned_account.objects[0].ObjectClass == 'computer'
+
+        - name: Remove only the acquired offline account by immutable identity
+          sustainablelobster.legacy_ad.computer:
+            identity: '{{ offline_owned_account.objects[0].ObjectGUID }}'
+            state: absent
+            domain_server: '{{ ad_domain_server }}'
+            domain_username: '{{ ad_admin_user }}'
+            domain_password: '{{ ad_admin_password }}'
+          when: offline_owned_account.objects | length == 1
+
+        - name: Remove the sensitive binary-blob workspace
+          sustainablelobster.legacy_windows.win_file:
+            path: '{{ offline_workspace.path }}'
+            state: absent
+          when: offline_workspace.path is defined
+
+        - name: Independently read the restored offline member state
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}', '-']
+            stdin: |
+              import ctypes, json, socket, sys, winreg
+              library = ctypes.WinDLL('netapi32')
+              library.NetGetJoinInformation.argtypes = [ctypes.c_wchar_p,
+                  ctypes.POINTER(ctypes.c_void_p), ctypes.POINTER(ctypes.c_int)]
+              library.NetGetJoinInformation.restype = ctypes.c_uint32
+              library.NetApiBufferFree.argtypes = [ctypes.c_void_p]
+              library.NetApiBufferFree.restype = ctypes.c_uint32
+              buffer = ctypes.c_void_p()
+              status = ctypes.c_int()
+              code = library.NetGetJoinInformation(None, ctypes.byref(buffer),
+                  ctypes.byref(status))
+              if code:
+                  raise ctypes.WinError(code)
+              try:
+                  workgroup = ctypes.wstring_at(buffer)
+              finally:
+                  library.NetApiBufferFree(buffer)
+              names_key = r'SYSTEM\CurrentControlSet\Control\ComputerName'
+              with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,
+                  names_key + r'\ComputerName') as key:
+                  pending_name = winreg.QueryValueEx(key, 'ComputerName')[0]
+              print(json.dumps({'hostname': socket.gethostname(),
+                  'pending_hostname': pending_name,
+                  'workgroup': workgroup, 'joined': status.value == 3,
+                  'python': list(sys.version_info[:3])}))
+          delegate_to: '{{ ad_offline_member_host }}'
+          changed_when: false
+          register: offline_final_output
+
+        - name: Independently query the removed owned offline computer account
+          sustainablelobster.legacy_ad.object_info:
+            filter: sAMAccountName -eq '{{ offline_test_name }}$'
+            domain_server: '{{ ad_domain_server }}'
+            domain_username: '{{ ad_admin_user }}'
+            domain_password: '{{ ad_admin_password }}'
+          register: offline_account_cleaned
+
+        - name: Require complete member and directory restoration
+          ansible.builtin.assert:
+            that:
+              - offline_final_output.stdout | from_json == offline_initial
+              - offline_account_cleaned.objects == []

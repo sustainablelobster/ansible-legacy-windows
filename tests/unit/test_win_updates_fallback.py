@@ -146,9 +146,9 @@ def test_native_wmi_result_proves_rejection_only_without_a_process_id(
 def test_owner_sid_needs_only_native_query_access_not_wmi_methods(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "plugins/module_utils"))
+    monkeypatch.syspath_prepend(str(ROOT / "legacy_windows/plugins/module_utils"))
     helper = load_module(
-        ROOT / "plugins/module_utils/legacy_windows_updates_worker.py",
+        ROOT / "legacy_windows/plugins/module_utils/legacy_windows_updates_worker.py",
         "native_updates_owner",
     )
     kernel = SimpleNamespace(OpenProcess=Mock(return_value=70), CloseHandle=Mock())
@@ -193,9 +193,9 @@ def test_owner_sid_needs_only_native_query_access_not_wmi_methods(
 def test_process_birth_and_liveness_use_minimum_version_supported_query_rights(
     monkeypatch: pytest.MonkeyPatch, major: int, access: int, wait: int
 ) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "plugins/module_utils"))
+    monkeypatch.syspath_prepend(str(ROOT / "legacy_windows/plugins/module_utils"))
     helper = load_module(
-        ROOT / "plugins/module_utils/legacy_windows_updates_worker.py",
+        ROOT / "legacy_windows/plugins/module_utils/legacy_windows_updates_worker.py",
         "native_updates_process",
     )
 
@@ -225,9 +225,9 @@ def test_process_birth_and_liveness_use_minimum_version_supported_query_rights(
 def test_process_open_failure_is_not_treated_as_death_except_absent_pid(
     monkeypatch: pytest.MonkeyPatch, code: int
 ) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "plugins/module_utils"))
+    monkeypatch.syspath_prepend(str(ROOT / "legacy_windows/plugins/module_utils"))
     helper = load_module(
-        ROOT / "plugins/module_utils/legacy_windows_updates_worker.py",
+        ROOT / "legacy_windows/plugins/module_utils/legacy_windows_updates_worker.py",
         "native_updates_process_failure",
     )
     kernel = SimpleNamespace(OpenProcess=Mock(return_value=None), CloseHandle=Mock())

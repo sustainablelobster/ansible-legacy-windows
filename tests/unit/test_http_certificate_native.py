@@ -30,9 +30,9 @@ def native_fixture(monkeypatch: pytest.MonkeyPatch) -> Any:
     :param monkeypatch: Scoped native platform substitutes.
     :returns: Helper, native libraries, and observed resources.
     """
-    monkeypatch.syspath_prepend(str(ROOT / "plugins/module_utils"))
+    monkeypatch.syspath_prepend(str(ROOT / "legacy_windows/plugins/module_utils"))
     helper = load_module(
-        ROOT / "plugins/module_utils/legacy_windows_http_certificate.py",
+        ROOT / "legacy_windows/plugins/module_utils/legacy_windows_http_certificate.py",
         "tested_http_certificate",
     )
     monkeypatch.setattr(helper.certificates, "error_message", str)

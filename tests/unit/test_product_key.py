@@ -21,7 +21,7 @@ def product_key_helper() -> ModuleType:
     :returns: Decoder imported with the development interpreter.
     """
     return load_module(
-        ROOT / "plugins/module_utils/legacy_windows_product_key.py",
+        ROOT / "legacy_windows/plugins/module_utils/legacy_windows_product_key.py",
         "tested_product_key",
     )
 

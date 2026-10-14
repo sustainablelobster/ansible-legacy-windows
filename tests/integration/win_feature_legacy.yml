@@ -7,7 +7,7 @@
   vars:
     feature_legacy_script: >-
       {{ lookup('ansible.builtin.file', playbook_dir ~
-      '/../../plugins/module_utils/legacy_windows_wmi.py') ~
+      '/../../legacy_windows/plugins/module_utils/legacy_windows_wmi.py') ~
       ('%c' | format(10)) ~ feature_legacy_fixture }}
   tasks:
     - name: Record original global module staging

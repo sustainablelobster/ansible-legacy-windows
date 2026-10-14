@@ -23,7 +23,7 @@ def credential_helper() -> ModuleType:
     :returns: Imported helper with no Windows calls performed.
     """
     return load_module(
-        ROOT / "plugins/module_utils/legacy_windows_credential.py",
+        ROOT / "legacy_windows/plugins/module_utils/legacy_windows_credential.py",
         "tested_credential_native",
     )
 

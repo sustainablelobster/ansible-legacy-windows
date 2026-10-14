@@ -182,7 +182,9 @@ def test_pattern_enumeration_failure_propagates(guard: Any) -> None:
 
 
 def test_package_action_stages_service_guard_imports() -> None:
-    action = ast.parse((ROOT / "plugins/action/win_package.py").read_text())
+    action = ast.parse(
+        (ROOT / "legacy_windows/plugins/action/win_package.py").read_text()
+    )
     helpers = next(
         ast.literal_eval(node.value)
         for node in ast.walk(action)
@@ -200,7 +202,7 @@ def test_package_action_stages_service_guard_imports() -> None:
         "legacy_windows_regex.py",
     ):
         assert name in helpers
-        assert (ROOT / "plugins/module_utils" / name).is_file()
+        assert (ROOT / "legacy_windows/plugins/module_utils" / name).is_file()
 
 
 @pytest.mark.parametrize("initial", [(-1, False), (-1, True), (5, False), (5, True)])

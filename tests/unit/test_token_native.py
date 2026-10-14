@@ -24,9 +24,10 @@ def token_helper(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
     :param monkeypatch: Scoped helper import path.
     :returns: An isolated token helper module.
     """
-    monkeypatch.syspath_prepend(str(ROOT / "plugins/module_utils"))
+    monkeypatch.syspath_prepend(str(ROOT / "legacy_windows/plugins/module_utils"))
     return load_module(
-        ROOT / "plugins/module_utils/legacy_windows_token.py", "tested_token_native"
+        ROOT / "legacy_windows/plugins/module_utils/legacy_windows_token.py",
+        "tested_token_native",
     )
 
 

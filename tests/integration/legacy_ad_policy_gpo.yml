@@ -1,0 +1,224 @@
+---
+# Copyright 2026 sustainablelobster
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Links existing default GPOs only to a unique empty OU, not the domain root.
+- name: Verify native GPO links on the minimum Windows target interpreter
+  hosts: legacy_ad
+  gather_facts: false
+  module_defaults:
+    group/sustainablelobster.legacy_ad.domain:
+      domain_server: '{{ ad_domain_server }}'
+      domain_username: '{{ ad_domain_username }}'
+      domain_password: '{{ ad_domain_password }}'
+    sustainablelobster.legacy_ad.gpo:
+      domain_server: '{{ ad_domain_server }}'
+  vars:
+    policy_gpo_domain_guid: 31b2f340-016d-11d2-945f-00c04fb984f9
+    policy_gpo_controllers_guid: 6ac1786c-016f-11d2-945f-00c04fb984f9
+  tasks:
+    - name: Allocate the unique empty OU and identify the interpreter
+      sustainablelobster.legacy_windows.win_command:
+        argv:
+          - '{{ ansible_python_interpreter }}'
+          - -c
+          - >-
+            import json, sys, uuid;
+            print(json.dumps({'python': list(sys.version_info[:3]),
+            'name': 'LWAD-GPO-' + uuid.uuid4().hex[:8]}))
+      changed_when: false
+      register: policy_gpo_runtime
+
+    - name: Require the actual minimum interpreter
+      ansible.builtin.assert:
+        that: (policy_gpo_runtime.stdout | from_json).python == [3, 4, 4]
+
+    - name: Record the owned empty OU name
+      ansible.builtin.set_fact:
+        policy_gpo_name: '{{ (policy_gpo_runtime.stdout | from_json).name }}'
+
+    - name: Compile the installed native GPO closure
+      ansible.builtin.include_tasks: tasks/legacy_ad_compile.yml
+      vars:
+        ad_compile_extra_files:
+          - {collection: ad, kind: modules, file: gpo.py}
+          - {collection: ad, kind: module_utils, file: legacy_ad_policy_gpo.py}
+
+    - name: Verify link operations without modifying policy contents
+      block:
+        - name: Create the unique empty target OU
+          sustainablelobster.legacy_ad.ou:
+            name: '{{ policy_gpo_name }}'
+            path: '{{ ad_domain_dn }}'
+          register: policy_gpo_ou
+
+        - name: Predict linking the existing default domain policy
+          sustainablelobster.legacy_ad.gpo:
+            guid: '{{ policy_gpo_domain_guid }}'
+            target: '{{ policy_gpo_ou.distinguished_name }}'
+          check_mode: true
+          diff: true
+          register: policy_gpo_preview
+
+        - name: Read the original link attribute after the prediction
+          sustainablelobster.legacy_ad.object_info:
+            identity: '{{ policy_gpo_ou.object_guid }}'
+            properties: [gPLink]
+          register: policy_gpo_before
+
+        - name: Require a nonmutating creation prediction
+          ansible.builtin.assert:
+            that:
+              - policy_gpo_preview.changed
+              - policy_gpo_preview.diff.before == {}
+              - policy_gpo_preview.diff.after.order is none
+              - policy_gpo_before.objects[0].gPLink is none
+
+        - name: Create the first link to the existing default domain policy
+          sustainablelobster.legacy_ad.gpo: &policy_gpo_first
+            guid: '{{ policy_gpo_domain_guid }}'
+            target: '{{ policy_gpo_ou.distinguished_name }}'
+          diff: true
+          register: policy_gpo_created
+
+        - name: Repeat the first link request
+          sustainablelobster.legacy_ad.gpo: *policy_gpo_first
+          diff: true
+          register: policy_gpo_repeat
+
+        - name: Verify native PDC discovery on the domain execution host
+          sustainablelobster.legacy_ad.gpo:
+            guid: '{{ policy_gpo_domain_guid }}'
+            target: '{{ policy_gpo_ou.distinguished_name }}'
+            domain_server: null
+          register: policy_gpo_pdc_repeat
+
+        - name: Add the unrelated policy link as a disabled enforced entry
+          sustainablelobster.legacy_ad.gpo:
+            guid: '{{ policy_gpo_controllers_guid }}'
+            target: '{{ policy_gpo_ou.distinguished_name }}'
+            enabled: false
+            enforced: true
+          register: policy_gpo_second
+
+        - name: Read the actual ordered native link string
+          sustainablelobster.legacy_ad.object_info:
+            identity: '{{ policy_gpo_ou.object_guid }}'
+            properties: [gPLink]
+          register: policy_gpo_two_links
+
+        - name: Build the independent expected policy paths
+          ansible.builtin.set_fact:
+            policy_gpo_first_path: >-
+              {{ '[LDAP://CN={' ~ policy_gpo_domain_guid ~
+              '},CN=Policies,CN=System,' ~ ad_domain_dn ~ ';0]' }}
+            policy_gpo_second_path: >-
+              {{ '[LDAP://CN={' ~ policy_gpo_controllers_guid ~
+              '},CN=Policies,CN=System,' ~ ad_domain_dn ~ ';3]' }}
+
+        - name: Require native flags append order and an idempotent repeat
+          ansible.builtin.assert:
+            that:
+              - policy_gpo_created.changed
+              - not policy_gpo_repeat.changed
+              - not policy_gpo_pdc_repeat.changed
+              - policy_gpo_repeat.diff.before.order == 1
+              - policy_gpo_repeat.diff.after.order == 1
+              - policy_gpo_second.changed
+              - >-
+                policy_gpo_two_links.objects[0].gPLink | lower ==
+                (policy_gpo_second_path ~ policy_gpo_first_path) | lower
+
+        - name: Move the second link to the highest-precedence position
+          sustainablelobster.legacy_ad.gpo: &policy_gpo_reorder
+            guid: '{{ policy_gpo_controllers_guid }}'
+            target: '{{ policy_gpo_ou.distinguished_name }}'
+            order: 1
+          diff: true
+          register: policy_gpo_reordered
+
+        - name: Repeat the requested order without changing other flags
+          sustainablelobster.legacy_ad.gpo: *policy_gpo_reorder
+          register: policy_gpo_reorder_repeat
+
+        - name: Read the reordered links independently
+          sustainablelobster.legacy_ad.object_info:
+            identity: '{{ policy_gpo_ou.object_guid }}'
+            properties: [gPLink]
+          register: policy_gpo_reordered_native
+
+        - name: Require correct reordering and preserved link flags
+          ansible.builtin.assert:
+            that:
+              - policy_gpo_reordered.changed
+              - policy_gpo_reordered.diff.before.order == 2
+              - policy_gpo_reordered.diff.after.order == 1
+              - not policy_gpo_reorder_repeat.changed
+              - >-
+                policy_gpo_reordered_native.objects[0].gPLink | lower ==
+                (policy_gpo_first_path ~ policy_gpo_second_path) | lower
+
+        - name: Predict removing the first policy link
+          sustainablelobster.legacy_ad.gpo:
+            guid: '{{ policy_gpo_domain_guid }}'
+            target: '{{ policy_gpo_ou.distinguished_name }}'
+            state: absent
+          check_mode: true
+          register: policy_gpo_remove_preview
+
+        - name: Read the unmodified link string after predicted removal
+          sustainablelobster.legacy_ad.object_info:
+            identity: '{{ policy_gpo_ou.object_guid }}'
+            properties: [gPLink]
+          register: policy_gpo_after_preview
+
+        - name: Require a nonmutating removal prediction
+          ansible.builtin.assert:
+            that:
+              - policy_gpo_remove_preview.changed
+              - >-
+                policy_gpo_after_preview.objects[0].gPLink ==
+                policy_gpo_reordered_native.objects[0].gPLink
+
+        - name: Remove the first policy link without touching the other
+          sustainablelobster.legacy_ad.gpo: &policy_gpo_remove
+            guid: '{{ policy_gpo_domain_guid }}'
+            target: '{{ policy_gpo_ou.distinguished_name }}'
+            state: absent
+          register: policy_gpo_removed
+
+        - name: Repeat the removal request
+          sustainablelobster.legacy_ad.gpo: *policy_gpo_remove
+          register: policy_gpo_remove_repeat
+
+        - name: Read the surviving unrelated link
+          sustainablelobster.legacy_ad.object_info:
+            identity: '{{ policy_gpo_ou.object_guid }}'
+            properties: [gPLink]
+          register: policy_gpo_surviving
+
+        - name: Require idempotent deletion and exact surviving flags
+          ansible.builtin.assert:
+            that:
+              - policy_gpo_removed.changed
+              - not policy_gpo_remove_repeat.changed
+              - >-
+                policy_gpo_surviving.objects[0].gPLink | lower ==
+                policy_gpo_second_path | lower
+      always:
+        - name: Delete only the owned empty OU and its policy links
+          sustainablelobster.legacy_ad.ou:
+            identity: >-
+              {{ policy_gpo_ou.object_guid |
+                 default('OU=' ~ policy_gpo_name ~ ',' ~ ad_domain_dn) }}
+            state: absent
+
+        - name: Independently query the removed owned GPO-link container
+          sustainablelobster.legacy_ad.object_info:
+            identity: >-
+              {{ policy_gpo_ou.object_guid |
+                 default('OU=' ~ policy_gpo_name ~ ',' ~ ad_domain_dn) }}
+          register: policy_gpo_cleaned
+
+        - name: Require complete owned GPO-link container cleanup
+          ansible.builtin.assert:
+            that: policy_gpo_cleaned.objects == []

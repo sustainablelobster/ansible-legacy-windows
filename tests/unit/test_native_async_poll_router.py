@@ -16,7 +16,9 @@ def _run_fresh_polling_probe(tmp_path: Path, program: str, *arguments: str) -> s
     collections = tmp_path / "collections"
     namespace = collections / "ansible_collections/sustainablelobster"
     namespace.mkdir(parents=True)
-    (namespace / "legacy_windows").symlink_to(ROOT, target_is_directory=True)
+    (namespace / "legacy_windows").symlink_to(
+        ROOT / "legacy_windows", target_is_directory=True
+    )
     config = tmp_path / "ansible.cfg"
     config.write_text("[defaults]\n", encoding="utf-8")
     environment = {
@@ -63,7 +65,9 @@ action_groups:
     )
     modules = collection / "plugins/modules"
     modules.mkdir(parents=True)
-    (modules / "async_status.py").symlink_to(ROOT / "plugins/modules/async_status.py")
+    (modules / "async_status.py").symlink_to(
+        ROOT / "legacy_windows/plugins/modules/async_status.py"
+    )
     program = r"""
 import json
 import sys
@@ -262,7 +266,9 @@ def test_status_import_before_loader_initialization_keeps_builtin_lifecycle(
     collections = tmp_path / "collections"
     namespace = collections / "ansible_collections/sustainablelobster"
     namespace.mkdir(parents=True)
-    (namespace / "legacy_windows").symlink_to(ROOT, target_is_directory=True)
+    (namespace / "legacy_windows").symlink_to(
+        ROOT / "legacy_windows", target_is_directory=True
+    )
     environment = {
         **os.environ,
         "ANSIBLE_COLLECTIONS_PATH": str(collections),
@@ -272,6 +278,7 @@ def test_status_import_before_loader_initialization_keeps_builtin_lifecycle(
     program = r"""
 from ansible.utils.collection_loader import AnsibleCollectionConfig
 assert AnsibleCollectionConfig.collection_finder is None
+# Exercise ordinary Python import before Ansible creates the collection namespace.
 from plugins.action.async_status import ActionModule
 from ansible.plugins.action.async_status import ActionModule as BuiltinAction
 assert issubclass(ActionModule, BuiltinAction)
@@ -285,7 +292,7 @@ print('PASS: native status imports before init_plugin_loader without global init
     result = subprocess.run(
         [sys.executable, "-c", program],
         env=environment,
-        cwd=ROOT,
+        cwd=ROOT / "legacy_windows",
         capture_output=True,
         text=True,
         check=False,
@@ -300,7 +307,9 @@ def test_default_loader_rejects_native_automatic_poll_before_launch(
     collections = tmp_path / "collections"
     namespace = collections / "ansible_collections/sustainablelobster"
     namespace.mkdir(parents=True)
-    (namespace / "legacy_windows").symlink_to(ROOT, target_is_directory=True)
+    (namespace / "legacy_windows").symlink_to(
+        ROOT / "legacy_windows", target_is_directory=True
+    )
     program = r"""
 from types import SimpleNamespace
 from ansible.errors import AnsibleActionFail
@@ -310,7 +319,7 @@ selected = action_loader.get('ansible.legacy.async_status', class_only=True)
 builtin = action_loader.get('ansible.builtin.async_status', class_only=True)
 assert selected is builtin
 assert getattr(selected, '_supports_native_windows_polling', False) is not True
-from ansible_collections.sustainablelobster.legacy_windows.plugins.plugin_utils._module import PythonModuleAction
+from ansible_collections.sustainablelobster.legacy_windows.plugins.plugin_utils.runtime import PythonModuleAction
 action = object.__new__(PythonModuleAction)
 action._task = SimpleNamespace(async_val=30, poll=1)
 action._connection = SimpleNamespace(become=None)
@@ -349,7 +358,9 @@ def test_standard_opt_in_resolves_native_and_preserves_builtin_routing(
     collections = tmp_path / "collections"
     namespace = collections / "ansible_collections/sustainablelobster"
     namespace.mkdir(parents=True)
-    (namespace / "legacy_windows").symlink_to(ROOT, target_is_directory=True)
+    (namespace / "legacy_windows").symlink_to(
+        ROOT / "legacy_windows", target_is_directory=True
+    )
     program = r"""
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -397,13 +408,15 @@ print('PASS: standard plugin path resolves opt-in; native, POSIX and builtin-cmd
     }
     if activation == "environment":
         environment["ANSIBLE_ACTION_PLUGINS"] = str(
-            ROOT / "plugins/action/_native_async_polling"
+            ROOT / "legacy_windows/plugins/action/_native_async_polling"
         )
     else:
         environment.pop("ANSIBLE_ACTION_PLUGINS", None)
         config = tmp_path / "ansible.cfg"
         config.write_text(
-            (ROOT / "docs/examples/async-polling.cfg").read_text(encoding="utf-8"),
+            (ROOT / "legacy_windows/docs/examples/async-polling.cfg").read_text(
+                encoding="utf-8"
+            ),
             encoding="utf-8",
         )
         environment["ANSIBLE_CONFIG"] = str(config)

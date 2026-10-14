@@ -24,9 +24,10 @@ def native_capability(monkeypatch: pytest.MonkeyPatch) -> Any:
     :param monkeypatch: Scoped imports and library replacement.
     :returns: Helper, library and native storage that outlives each call.
     """
-    monkeypatch.syspath_prepend(str(ROOT / "plugins/module_utils"))
+    monkeypatch.syspath_prepend(str(ROOT / "legacy_windows/plugins/module_utils"))
     module = load_module(
-        ROOT / "plugins/module_utils/legacy_windows_capability.py", "capability_tested"
+        ROOT / "legacy_windows/plugins/module_utils/legacy_windows_capability.py",
+        "capability_tested",
     )
     records = (module._Capability * 3)(  # pylint: disable=protected-access
         ("Second", 0), ("First", 4), ("Third", 4)
@@ -237,7 +238,7 @@ def test_non_windows_target_fails_without_loading_a_library(
 ) -> None:
     # Exercise the real platform boundary with an independently loaded helper.
     module: ModuleType = load_module(
-        ROOT / "plugins/module_utils/legacy_windows_capability.py",
+        ROOT / "legacy_windows/plugins/module_utils/legacy_windows_capability.py",
         "capability_boundary",
     )
     monkeypatch.setattr(module.os, "name", "posix")

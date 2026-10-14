@@ -24,7 +24,7 @@ def native_route(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
     :param monkeypatch: Scoped helper import path.
     :returns: Native route helper.
     """
-    monkeypatch.syspath_prepend(str(ROOT / "plugins/module_utils"))
+    monkeypatch.syspath_prepend(str(ROOT / "legacy_windows/plugins/module_utils"))
     monkeypatch.setattr(
         sys,
         "getwindowsversion",
@@ -32,7 +32,8 @@ def native_route(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
         raising=False,
     )
     return load_module(
-        ROOT / "plugins/module_utils/legacy_windows_route.py", "route_tested"
+        ROOT / "legacy_windows/plugins/module_utils/legacy_windows_route.py",
+        "route_tested",
     )
 
 

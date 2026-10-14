@@ -1,0 +1,309 @@
+---
+# Copyright 2026 sustainablelobster
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Requires an isolated writable directory with msDS-SupportedEncryptionTypes.
+# Removes only its unique fixture OU.
+- name: Verify native computer lifecycles on the minimum target runtime
+  hosts: legacy_ad
+  gather_facts: false
+  module_defaults:
+    group/sustainablelobster.legacy_ad.domain:
+      domain_server: '{{ ad_domain_server }}'
+      domain_username: '{{ ad_domain_username }}'
+      domain_password: '{{ ad_domain_password }}'
+  tasks:
+    - name: Allocate unique fixture names and record the target runtime
+      sustainablelobster.legacy_windows.win_command:
+        argv:
+          - '{{ ansible_python_interpreter }}'
+          - -c
+          - >-
+            import json, sys, uuid;
+            print(json.dumps({"python": list(sys.version_info[:3]),
+            "name": "LWAD-DES-" + uuid.uuid4().hex[:6]}))
+      register: ad_computer_runtime
+      changed_when: false
+
+    - name: Require the minimum target interpreter and record the owned name
+      ansible.builtin.assert:
+        that: (ad_computer_runtime.stdout | from_json).python == [3, 4, 4]
+
+    - name: Record the unique fixture name
+      ansible.builtin.set_fact:
+        ad_computer_name: '{{ (ad_computer_runtime.stdout | from_json).name }}'
+
+    - name: Exercise the owned computer and clean up its fixture OU
+      block:
+        - name: Create the unique fixture OU
+          sustainablelobster.legacy_ad.ou:
+            name: '{{ ad_computer_name }}'
+            path: '{{ ad_domain_dn }}'
+          register: ad_computer_ou
+
+        - name: Preview computer creation
+          sustainablelobster.legacy_ad.computer:
+            name: '{{ ad_computer_name }}'
+            path: '{{ ad_computer_ou.distinguished_name }}'
+            kerberos_encryption_types:
+              set: [des]
+          check_mode: true
+          diff: true
+          register: ad_computer_preview
+
+        - name: Read the predicted object's absence
+          sustainablelobster.legacy_ad.object_info:
+            identity: '{{ ad_computer_preview.distinguished_name }}'
+          register: ad_computer_absent
+
+        - name: Verify the preview did not create an account
+          ansible.builtin.assert:
+            that:
+              - ad_computer_preview.changed
+              - >-
+                ad_computer_preview.object_guid ==
+                '00000000-0000-0000-0000-000000000000'
+              - ad_computer_preview.sid == 'S-1-5-0000'
+              - ad_computer_absent.objects == []
+
+        - name: Create the computer with a secure default password
+          sustainablelobster.legacy_ad.computer: &ad_computer_create
+            name: '{{ ad_computer_name }}'
+            path: '{{ ad_computer_ou.distinguished_name }}'
+            description: Initial description
+            dns_hostname: '{{ ad_computer_name }}.{{ ad_domain_name }}'
+            spn:
+              set:
+                - 'HOST/{{ ad_computer_name }}'
+            kerberos_encryption_types:
+              set: [des]
+          register: ad_computer_created
+
+        - name: Repeat computer creation
+          sustainablelobster.legacy_ad.computer: *ad_computer_create
+          register: ad_computer_repeated
+
+        - name: Read the created account's native state
+          sustainablelobster.legacy_ad.object_info:
+            identity: '{{ ad_computer_created.object_guid }}'
+            properties:
+              - sAMAccountName
+              - userAccountControl
+              - pwdLastSet
+              - objectSid
+              - description
+              - dNSHostName
+              - servicePrincipalName
+              - msDS-SupportedEncryptionTypes
+          register: ad_computer_observed
+
+        - name: Verify identity and password-backed creation is idempotent
+          ansible.builtin.assert:
+            that:
+              - ad_computer_created.changed
+              - not ad_computer_repeated.changed
+              - ad_computer_observed.objects | length == 1
+              - >-
+                ad_computer_observed.objects[0].objectSid.Sid ==
+                ad_computer_created.sid
+              - >-
+                ad_computer_observed.objects[0].sAMAccountName ==
+                ad_computer_name ~ '$'
+              - ad_computer_observed.objects[0].userAccountControl == 4096
+              - ad_computer_observed.objects[0].pwdLastSet != 0
+              - >-
+                ad_computer_observed.objects[0]['msDS-SupportedEncryptionTypes']
+                == 3
+
+        - name: Predict adding encryption types without changing native state
+          sustainablelobster.legacy_ad.computer:
+            identity: '{{ ad_computer_created.object_guid }}'
+            kerberos_encryption_types:
+              add: [rc4, aes256]
+          check_mode: true
+          diff: true
+          register: ad_computer_encryption_preview
+
+        - name: Read the unchanged DES value after prediction
+          sustainablelobster.legacy_ad.object_info:
+            identity: '{{ ad_computer_created.object_guid }}'
+            properties: [msDS-SupportedEncryptionTypes]
+          register: ad_computer_encryption_after_preview
+
+        - name: Verify encryption prediction is nonmutating
+          ansible.builtin.assert:
+            that:
+              - ad_computer_encryption_preview.changed
+              - >-
+                ad_computer_encryption_after_preview.objects[0]
+                ['msDS-SupportedEncryptionTypes'] == 3
+
+        - name: Add encryption types while retaining DES
+          sustainablelobster.legacy_ad.computer: &ad_computer_encryption_add
+            identity: '{{ ad_computer_created.object_guid }}'
+            kerberos_encryption_types:
+              add: [rc4, aes256]
+          register: ad_computer_encryption_added
+
+        - name: Repeat the encryption-type additions
+          sustainablelobster.legacy_ad.computer: *ad_computer_encryption_add
+          register: ad_computer_encryption_add_repeated
+
+        - name: Read the combined native encryption value
+          sustainablelobster.legacy_ad.object_info:
+            identity: '{{ ad_computer_created.object_guid }}'
+            properties: [msDS-SupportedEncryptionTypes]
+          register: ad_computer_encryption_combined
+
+        - name: Verify additions retain DES and are idempotent
+          ansible.builtin.assert:
+            that:
+              - ad_computer_encryption_added.changed
+              - not ad_computer_encryption_add_repeated.changed
+              - >-
+                ad_computer_encryption_combined.objects[0]
+                ['msDS-SupportedEncryptionTypes'] == 23
+
+        - name: Remove DES without removing the other encryption types
+          sustainablelobster.legacy_ad.computer: &ad_computer_encryption_remove
+            identity: '{{ ad_computer_created.object_guid }}'
+            kerberos_encryption_types:
+              remove: [DES]
+          register: ad_computer_encryption_removed
+
+        - name: Repeat DES removal
+          sustainablelobster.legacy_ad.computer: *ad_computer_encryption_remove
+          register: ad_computer_encryption_remove_repeated
+
+        - name: Read the encryption value without DES
+          sustainablelobster.legacy_ad.object_info:
+            identity: '{{ ad_computer_created.object_guid }}'
+            properties: [msDS-SupportedEncryptionTypes]
+          register: ad_computer_encryption_without_des
+
+        - name: Verify DES removal preserves other types and is idempotent
+          ansible.builtin.assert:
+            that:
+              - ad_computer_encryption_removed.changed
+              - not ad_computer_encryption_remove_repeated.changed
+              - >-
+                ad_computer_encryption_without_des.objects[0]
+                ['msDS-SupportedEncryptionTypes'] == 20
+
+        - name: Clear the remaining encryption types
+          sustainablelobster.legacy_ad.computer: &ad_computer_encryption_clear
+            identity: '{{ ad_computer_created.object_guid }}'
+            kerberos_encryption_types:
+              set: []
+          register: ad_computer_encryption_cleared
+
+        - name: Repeat the empty encryption-type request
+          sustainablelobster.legacy_ad.computer: *ad_computer_encryption_clear
+          register: ad_computer_encryption_clear_repeated
+
+        - name: Read the cleared native encryption value
+          sustainablelobster.legacy_ad.object_info:
+            identity: '{{ ad_computer_created.object_guid }}'
+            properties: [msDS-SupportedEncryptionTypes]
+          register: ad_computer_encryption_empty
+
+        - name: Verify clearing is idempotent and writes the empty enum
+          ansible.builtin.assert:
+            that:
+              - ad_computer_encryption_cleared.changed
+              - not ad_computer_encryption_clear_repeated.changed
+              - >-
+                ad_computer_encryption_empty.objects[0]
+                ['msDS-SupportedEncryptionTypes'] == 0
+
+        - name: Exercise the bare-SAM fallback and disable the account
+          sustainablelobster.legacy_ad.computer:
+            identity: '{{ ad_computer_name }}'
+            enabled: false
+            location: Test rack
+            spns:
+              add:
+                - 'HTTP/{{ ad_computer_name }}'
+              remove:
+                - 'HOST/{{ ad_computer_name }}'
+          register: ad_computer_updated
+
+        - name: Remove the SAM suffix explicitly
+          sustainablelobster.legacy_ad.computer: &ad_computer_suffix
+            identity: '{{ ad_computer_created.object_guid }}'
+            sam_account_name: '{{ ad_computer_name }}'
+            do_not_append_dollar_to_sam: true
+          register: ad_computer_suffix_removed
+
+        - name: Repeat the suffix-free SAM request
+          sustainablelobster.legacy_ad.computer: *ad_computer_suffix
+          register: ad_computer_suffix_repeated
+
+        - name: Read updated computer state
+          sustainablelobster.legacy_ad.object_info:
+            identity: '{{ ad_computer_created.object_guid }}'
+            properties:
+              - sAMAccountName
+              - userAccountControl
+              - servicePrincipalName
+              - location
+          register: ad_computer_updated_observed
+
+        - name: Verify updates and suffix-free idempotence
+          ansible.builtin.assert:
+            that:
+              - ad_computer_updated.changed
+              - ad_computer_suffix_removed.changed
+              - not ad_computer_suffix_repeated.changed
+              - >-
+                ad_computer_updated_observed.objects[0].sAMAccountName ==
+                ad_computer_name
+              - >-
+                ad_computer_updated_observed.objects[0].userAccountControl
+                == 4098
+              - >-
+                ad_computer_updated_observed.objects[0].servicePrincipalName ==
+                ['HTTP/' ~ ad_computer_name]
+              - ad_computer_updated_observed.objects[0].location == 'Test rack'
+
+        - name: Preview account deletion
+          sustainablelobster.legacy_ad.computer:
+            identity: '{{ ad_computer_created.object_guid }}'
+            state: absent
+          check_mode: true
+          register: ad_computer_delete_preview
+
+        - name: Delete the account
+          sustainablelobster.legacy_ad.computer:
+            identity: '{{ ad_computer_created.object_guid }}'
+            state: absent
+          register: ad_computer_deleted
+
+        - name: Repeat account deletion
+          sustainablelobster.legacy_ad.computer:
+            identity: '{{ ad_computer_created.object_guid }}'
+            state: absent
+          register: ad_computer_delete_repeated
+
+        - name: Verify removal and retained identifiers
+          ansible.builtin.assert:
+            that:
+              - ad_computer_delete_preview.changed
+              - ad_computer_deleted.changed
+              - ad_computer_deleted.sid == ad_computer_created.sid
+              - not ad_computer_delete_repeated.changed
+
+      always:
+        - name: Remove only the uniquely owned fixture OU and remaining children
+          sustainablelobster.legacy_ad.ou:
+            name: '{{ ad_computer_name }}'
+            path: '{{ ad_domain_dn }}'
+            state: absent
+
+        - name: Read the owned OU's absence after cleanup
+          sustainablelobster.legacy_ad.object_info:
+            identity: 'OU={{ ad_computer_name }},{{ ad_domain_dn }}'
+          register: ad_computer_cleanup_observed
+
+        - name: Verify the owned OU and its children were removed
+          ansible.builtin.assert:
+            that: ad_computer_cleanup_observed.objects == []

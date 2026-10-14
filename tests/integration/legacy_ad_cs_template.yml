@@ -1,0 +1,448 @@
+---
+# Copyright 2026 sustainablelobster
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Requires an isolated forest with default templates and an owned Enterprise CA.
+- name: Verify native certificate template lifecycle on Windows Python 3.4.4
+  hosts: legacy_ad
+  gather_facts: false
+  module_defaults:
+    sustainablelobster.legacy_ad.cs_template:
+      domain_server: '{{ ad_domain_server }}'
+    sustainablelobster.legacy_ad.object_info:
+      domain_server: '{{ ad_domain_server }}'
+      domain_username: '{{ ad_domain_username }}'
+      domain_password: '{{ ad_domain_password }}'
+    sustainablelobster.legacy_ad.object:
+      domain_server: '{{ ad_domain_server }}'
+      domain_username: '{{ ad_domain_username }}'
+      domain_password: '{{ ad_domain_password }}'
+  vars:
+    ad_cs_configuration: >-
+      {{ ad_configuration_dn | default('CN=Configuration,' ~ ad_domain_dn) }}
+    ad_cs_services: >-
+      {{ 'CN=Public Key Services,CN=Services,' ~ ad_cs_configuration }}
+    ad_compile_extra_files:
+      - {collection: ad, kind: modules, file: cs_template.py}
+      - collection: ad
+        kind: module_utils
+        file: legacy_ad_cs_template.py
+  tasks:
+    - name: Allocate a uniquely owned template name
+      sustainablelobster.legacy_windows.win_command:
+        argv:
+          - '{{ ansible_python_interpreter }}'
+          - -c
+          - import uuid; print('AnsibleOwned' + uuid.uuid4().hex)
+      changed_when: false
+      register: ad_cs_name_command
+
+    - name: Record the uniquely owned template name
+      ansible.builtin.set_fact:
+        ad_cs_template_name: '{{ ad_cs_name_command.stdout | trim }}'
+
+    - name: Compile the installed payload and complete helper closure
+      ansible.builtin.include_tasks: tasks/legacy_ad_compile.yml
+
+    - name: Find the prepared Enterprise CA in the isolated forest
+      sustainablelobster.legacy_ad.object_info:
+        ldap_filter: (objectClass=pKIEnrollmentService)
+        search_base: 'CN=Enrollment Services,{{ ad_cs_services }}'
+        search_scope: one_level
+        properties: [certificateTemplates]
+      register: ad_cs_authorities
+
+    - name: Require an existing Enterprise CA for publication verification
+      ansible.builtin.assert:
+        that: ad_cs_authorities.objects | length > 0
+
+    - name: Record the prepared CA name and template identity
+      ansible.builtin.set_fact:
+        ad_cs_ca_name: '{{ ad_cs_authorities.objects[0].Name }}'
+        ad_cs_template_dn: >-
+          {{ 'CN=' ~ ad_cs_template_name ~ ',CN=Certificate Templates,'
+          ~ ad_cs_services }}
+
+    - name: Confirm the unique template name is absent before ownership
+      sustainablelobster.legacy_ad.object_info:
+        identity: '{{ ad_cs_template_dn }}'
+      register: ad_cs_before
+
+    - name: Require absence before creating or deleting a template
+      ansible.builtin.assert:
+        that: ad_cs_before.objects == []
+
+    - name: Exercise the owned template and restore absence
+      block:
+        - name: Reject an absent source template before registering an OID
+          sustainablelobster.legacy_ad.cs_template:
+            name: '{{ ad_cs_template_name }}'
+            source_template: '{{ ad_cs_template_name }}MissingSource'
+          register: ad_cs_rejected
+          ignore_errors: true
+
+        - name: Observe the owned template after rejected creation
+          sustainablelobster.legacy_ad.object_info:
+            identity: '{{ ad_cs_template_dn }}'
+          register: ad_cs_rejected_template
+
+        - name: Observe uniquely named OID registrations after rejected creation
+          sustainablelobster.legacy_ad.object_info:
+            ldap_filter: >-
+              {{ '(&(objectClass=msPKI-Enterprise-Oid)(displayName='
+              ~ ad_cs_template_name ~ '))' }}
+            search_base: 'CN=OID,{{ ad_cs_services }}'
+            search_scope: one_level
+          register: ad_cs_rejected_oid
+
+        - name: Verify rejected creation made no template or OID registration
+          ansible.builtin.assert:
+            that:
+              - ad_cs_rejected.failed | default(false)
+              - not ad_cs_rejected.changed
+              - ad_cs_rejected.distinguished_name == none
+              - ad_cs_rejected.template_oid == none
+              - "'was not found' in ad_cs_rejected.msg"
+              - ad_cs_rejected_template.objects == []
+              - ad_cs_rejected_oid.objects == []
+
+        - name: Preview cloning Web Server and publishing to the prepared CA
+          sustainablelobster.legacy_ad.cs_template: &ad_cs_create
+            name: '{{ ad_cs_template_name }}'
+            display_name: '{{ ad_cs_template_name }}'
+            source_template: Web Server
+            key_size: 4096
+            schema_version: 2
+            extended_key_usages: [server_authentication]
+            key_usage: [digital_signature, key_encipherment]
+            validity_period_days: 365
+            renewal_period_days: 42
+            publish_to_ca: ['{{ ad_cs_ca_name }}']
+          check_mode: true
+          register: ad_cs_preview
+
+        - name: Observe the template after preview
+          sustainablelobster.legacy_ad.object_info:
+            identity: '{{ ad_cs_template_dn }}'
+          register: ad_cs_after_preview
+
+        - name: Verify preview returns null identities and leaves no object
+          ansible.builtin.assert:
+            that:
+              - ad_cs_preview.changed
+              - ad_cs_preview.distinguished_name == none
+              - ad_cs_preview.template_oid == none
+              - ad_cs_after_preview.objects == []
+
+        - name: Clone Web Server and publish the template
+          sustainablelobster.legacy_ad.cs_template: *ad_cs_create
+          register: ad_cs_created
+
+        - name: Repeat the complete creation request
+          sustainablelobster.legacy_ad.cs_template: *ad_cs_create
+          register: ad_cs_repeated
+
+        - name: Independently observe template LDAP attributes
+          sustainablelobster.legacy_ad.object_info:
+            identity: '{{ ad_cs_template_dn }}'
+            properties:
+              - msPKI-Minimal-Key-Size
+              - msPKI-Cert-Template-OID
+              - pKIExtendedKeyUsage
+              - pKIKeyUsage
+          register: ad_cs_native
+
+        - name: Independently observe CA publication
+          sustainablelobster.legacy_ad.object_info:
+            identity: '{{ ad_cs_authorities.objects[0].DistinguishedName }}'
+            properties: [certificateTemplates]
+          register: ad_cs_published
+
+        - name: Verify template idempotence, key bytes and CA publication
+          ansible.builtin.assert:
+            that:
+              - ad_cs_created.changed
+              - not ad_cs_repeated.changed
+              - ad_cs_created.distinguished_name == ad_cs_template_dn
+              - ad_cs_created.template_oid | length > 0
+              - ad_cs_native.objects[0]['msPKI-Minimal-Key-Size'] == 4096
+              - ad_cs_native.objects[0].pKIKeyUsage == 'oAA='
+              - >-
+                ad_cs_native.objects[0]['msPKI-Cert-Template-OID'] ==
+                ad_cs_created.template_oid
+              - >-
+                ad_cs_template_name in
+                ad_cs_published.objects[0].certificateTemplates
+
+        - name: Observe creation through the DirectoryServices provider
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - powershell.exe
+              - -NoProfile
+              - -NonInteractive
+              - -Command
+              - |
+                $ErrorActionPreference = 'Stop'
+                $template = New-Object System.DirectoryServices.DirectoryEntry(
+                  'LDAP://{{ ad_domain_server }}/{{ ad_cs_template_dn }}')
+                $template.RefreshCache()
+                [Console]::WriteLine('key_size=' +
+                  $template.Properties['msPKI-Minimal-Key-Size'][0])
+                [Console]::WriteLine('schema_version=' +
+                  $template.Properties['msPKI-Template-Schema-Version'][0])
+                [Console]::WriteLine('key_usage=' + [Convert]::ToBase64String(
+                  [byte[]]$template.Properties['pKIKeyUsage'][0]))
+                [Console]::WriteLine('validity_ticks=' +
+                  [BitConverter]::ToInt64(
+                  [byte[]]$template.Properties['pKIExpirationPeriod'][0], 0))
+                [Console]::WriteLine('renewal_ticks=' + [BitConverter]::ToInt64(
+                  [byte[]]$template.Properties['pKIOverlapPeriod'][0], 0))
+                $ekus = @($template.Properties['pKIExtendedKeyUsage'] |
+                  Sort-Object)
+                [Console]::WriteLine('ekus=' + ($ekus -join ','))
+                $oid = [string](
+                  $template.Properties['msPKI-Cert-Template-OID'][0])
+                [Console]::WriteLine('oid=' + $oid)
+                $oidRoot = New-Object System.DirectoryServices.DirectoryEntry(
+                  'LDAP://{{ ad_domain_server }}/CN=OID,{{ ad_cs_services }}')
+                $search = New-Object System.DirectoryServices.DirectorySearcher(
+                  $oidRoot)
+                $search.SearchScope = 'OneLevel'
+                $search.Filter = '(msPKI-Cert-Template-OID=' + $oid + ')'
+                $rows = $search.FindAll()
+                [Console]::WriteLine('oid_registrations=' + $rows.Count)
+                $rows.Dispose()
+                $search.Dispose()
+                $oidRoot.Dispose()
+                $template.Dispose()
+          changed_when: false
+          register: ad_cs_vendor_created
+
+        - name: Verify vendor-observed values and one forest OID registration
+          ansible.builtin.assert:
+            fail_msg: '{{ ad_cs_vendor_created.stdout_lines }}'
+            that:
+              - >-
+                ad_cs_vendor_created.stdout_lines ==
+                ['key_size=4096', 'schema_version=2', 'key_usage=oAA=',
+                'validity_ticks=-315360000000000',
+                'renewal_ticks=-36288000000000',
+                'ekus=1.3.6.1.5.5.7.3.1',
+                'oid=' ~ ad_cs_created.template_oid, 'oid_registrations=1']
+
+        - name: Preview changes to the existing template
+          sustainablelobster.legacy_ad.cs_template: &ad_cs_update
+            name: '{{ ad_cs_template_name }}'
+            key_size: 8192
+            enrollment_flag: [auto_enrollment, publish_to_ds]
+            private_key_flag: [exportable_key, '0x100']
+            certificate_name_flag: ['0x80000000', enrollee_supplies_subject]
+            key_usage: [key_agreement, decipher_only]
+            extended_key_usages: [client_authentication, server_authentication]
+            validity_period_days: 730
+            renewal_period_days: 60
+          check_mode: true
+          register: ad_cs_update_preview
+
+        - name: Observe key size after update preview
+          sustainablelobster.legacy_ad.object_info:
+            identity: '{{ ad_cs_template_dn }}'
+            properties: [msPKI-Minimal-Key-Size]
+          register: ad_cs_update_before
+
+        - name: Require prediction without changing key size
+          ansible.builtin.assert:
+            that:
+              - ad_cs_update_preview.changed
+              - ad_cs_update_before.objects[0]['msPKI-Minimal-Key-Size'] == 4096
+
+        - name: Apply the template property update
+          sustainablelobster.legacy_ad.cs_template: *ad_cs_update
+          register: ad_cs_updated
+
+        - name: Repeat the property update
+          sustainablelobster.legacy_ad.cs_template: *ad_cs_update
+          register: ad_cs_updated_repeat
+
+        - name: Observe flag attributes and key usage independently
+          sustainablelobster.legacy_ad.object_info:
+            identity: '{{ ad_cs_template_dn }}'
+            properties:
+              - msPKI-Minimal-Key-Size
+              - msPKI-Enrollment-Flag
+              - msPKI-Private-Key-Flag
+              - msPKI-Certificate-Name-Flag
+              - pKIKeyUsage
+          register: ad_cs_updated_native
+
+        - name: Verify native update values and idempotence
+          ansible.builtin.assert:
+            that:
+              - ad_cs_updated.changed
+              - not ad_cs_updated_repeat.changed
+              - >-
+                ad_cs_updated_native.objects[0]['msPKI-Minimal-Key-Size'] ==
+                8192
+              - ad_cs_updated_native.objects[0]['msPKI-Enrollment-Flag'] == 40
+              - ad_cs_updated_native.objects[0]['msPKI-Private-Key-Flag'] == 272
+              - >-
+                ad_cs_updated_native.objects[0]['msPKI-Certificate-Name-Flag']
+                ==
+                -2147483647
+              - ad_cs_updated_native.objects[0].pKIKeyUsage == 'CIA='
+
+        - name: Observe updated flags and periods through DirectoryServices
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - powershell.exe
+              - -NoProfile
+              - -NonInteractive
+              - -Command
+              - |
+                $ErrorActionPreference = 'Stop'
+                $template = New-Object System.DirectoryServices.DirectoryEntry(
+                  'LDAP://{{ ad_domain_server }}/{{ ad_cs_template_dn }}')
+                $template.RefreshCache()
+                [Console]::WriteLine('key_size=' +
+                  $template.Properties['msPKI-Minimal-Key-Size'][0])
+                [Console]::WriteLine('enrollment_flag=' +
+                  $template.Properties['msPKI-Enrollment-Flag'][0])
+                [Console]::WriteLine('private_key_flag=' +
+                  $template.Properties['msPKI-Private-Key-Flag'][0])
+                [Console]::WriteLine('certificate_name_flag=' +
+                  $template.Properties['msPKI-Certificate-Name-Flag'][0])
+                [Console]::WriteLine('key_usage=' + [Convert]::ToBase64String(
+                  [byte[]]$template.Properties['pKIKeyUsage'][0]))
+                [Console]::WriteLine('validity_ticks=' +
+                  [BitConverter]::ToInt64(
+                  [byte[]]$template.Properties['pKIExpirationPeriod'][0], 0))
+                [Console]::WriteLine('renewal_ticks=' + [BitConverter]::ToInt64(
+                  [byte[]]$template.Properties['pKIOverlapPeriod'][0], 0))
+                $ekus = @($template.Properties['pKIExtendedKeyUsage'] |
+                  Sort-Object)
+                [Console]::WriteLine('ekus=' + ($ekus -join ','))
+                $template.Dispose()
+          changed_when: false
+          register: ad_cs_vendor_updated
+
+        - name: Verify vendor-observed flags, bytes and periods
+          ansible.builtin.assert:
+            fail_msg: '{{ ad_cs_vendor_updated.stdout_lines }}'
+            that:
+              - >-
+                ad_cs_vendor_updated.stdout_lines ==
+                ['key_size=8192', 'enrollment_flag=40', 'private_key_flag=272',
+                'certificate_name_flag=-2147483647', 'key_usage=CIA=',
+                'validity_ticks=-630720000000000',
+                'renewal_ticks=-51840000000000',
+                'ekus=1.3.6.1.5.5.7.3.1,1.3.6.1.5.5.7.3.2']
+
+        - name: Clear EKUs and all CA publication
+          sustainablelobster.legacy_ad.cs_template: &ad_cs_unpublish
+            name: '{{ ad_cs_template_name }}'
+            extended_key_usages: []
+            publish_to_ca: []
+          register: ad_cs_unpublished
+
+        - name: Repeat clearing EKUs and publication
+          sustainablelobster.legacy_ad.cs_template: *ad_cs_unpublish
+          register: ad_cs_unpublished_repeat
+
+        - name: Independently observe cleared EKUs
+          sustainablelobster.legacy_ad.object_info:
+            identity: '{{ ad_cs_template_dn }}'
+            properties: [pKIExtendedKeyUsage]
+          register: ad_cs_cleared_ekus
+
+        - name: Independently observe CA publication after clearing
+          sustainablelobster.legacy_ad.object_info:
+            identity: '{{ ad_cs_authorities.objects[0].DistinguishedName }}'
+            properties: [certificateTemplates]
+          register: ad_cs_unpublished_native
+
+        - name: Verify unpublication and clearing are idempotent
+          ansible.builtin.assert:
+            that:
+              - ad_cs_unpublished.changed
+              - not ad_cs_unpublished_repeat.changed
+              - >-
+                ad_cs_cleared_ekus.objects[0].pKIExtendedKeyUsage |
+                default([]) == []
+              - >-
+                ad_cs_unpublished_native.objects[0].certificateTemplates | sort
+                == ad_cs_authorities.objects[0].certificateTemplates | sort
+
+        - name: Preview template removal
+          sustainablelobster.legacy_ad.cs_template:
+            name: '{{ ad_cs_template_name }}'
+            state: absent
+          check_mode: true
+          register: ad_cs_remove_preview
+
+        - name: Observe the template after removal preview
+          sustainablelobster.legacy_ad.object_info:
+            identity: '{{ ad_cs_template_dn }}'
+          register: ad_cs_remove_observed
+
+        - name: Verify removal prediction retained the template
+          ansible.builtin.assert:
+            that:
+              - ad_cs_remove_preview.changed
+              - ad_cs_remove_observed.objects | length == 1
+
+      always:
+        - name: Remove the owned template, publication and OID registration
+          sustainablelobster.legacy_ad.cs_template:
+            name: '{{ ad_cs_template_name }}'
+            state: absent
+
+        - name: Repeat removal after restoring absence
+          sustainablelobster.legacy_ad.cs_template:
+            name: '{{ ad_cs_template_name }}'
+            state: absent
+          register: ad_cs_removed_repeat
+
+        - name: Verify removal is idempotent with null absent identities
+          ansible.builtin.assert:
+            that:
+              - not ad_cs_removed_repeat.changed
+              - ad_cs_removed_repeat.distinguished_name == none
+              - ad_cs_removed_repeat.template_oid == none
+
+        - name: Independently verify the template is absent
+          sustainablelobster.legacy_ad.object_info:
+            identity: '{{ ad_cs_template_dn }}'
+          register: ad_cs_cleanup
+
+        - name: Require the owned template absent after cleanup
+          ansible.builtin.assert:
+            that: ad_cs_cleanup.objects == []
+
+        - name: Find uniquely owned OID registrations after partial failures
+          sustainablelobster.legacy_ad.object_info:
+            ldap_filter: >-
+              {{ '(&(objectClass=msPKI-Enterprise-Oid)(displayName='
+              ~ ad_cs_template_name ~ '))' }}
+            search_base: 'CN=OID,{{ ad_cs_services }}'
+            search_scope: one_level
+          register: ad_cs_oid_survivors
+
+        - name: Remove only OIDs carrying this fixture's unique display name
+          sustainablelobster.legacy_ad.object:
+            identity: '{{ item.DistinguishedName }}'
+            state: absent
+          loop: '{{ ad_cs_oid_survivors.objects }}'
+
+        - name: Independently check the created OID registration is absent
+          sustainablelobster.legacy_ad.object_info:
+            ldap_filter: >-
+              {{ '(msPKI-Cert-Template-OID='
+              ~ ad_cs_created.template_oid ~ ')' }}
+            search_base: 'CN=OID,{{ ad_cs_services }}'
+            search_scope: one_level
+          when: ad_cs_created.template_oid | default(none) is not none
+          register: ad_cs_oid_cleanup
+
+        - name: Require the owned OID registration absent after cleanup
+          ansible.builtin.assert:
+            that: ad_cs_oid_cleanup.objects == []
+          when: not (ad_cs_oid_cleanup.skipped | default(false))

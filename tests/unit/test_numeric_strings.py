@@ -11,7 +11,10 @@ from unittest.mock import Mock
 
 import pytest
 
-helper = importlib.import_module("plugins.module_utils.legacy_windows_module")
+helper = importlib.import_module(
+    "ansible_collections.sustainablelobster.legacy_windows.plugins.module_utils."
+    "legacy_windows_module"
+)
 
 
 @pytest.mark.parametrize(

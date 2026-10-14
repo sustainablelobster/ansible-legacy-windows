@@ -1,7 +1,7 @@
 ---
 capability_wmi_source: >-
   {{ lookup('file', playbook_dir +
-  '/../../plugins/module_utils/legacy_windows_wmi.py') }}
+  '/../../legacy_windows/plugins/module_utils/legacy_windows_wmi.py') }}
 capability_program: |
   {{ capability_wmi_source }}
   {{ capability_fixture }}

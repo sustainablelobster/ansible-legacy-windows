@@ -34,15 +34,17 @@ def wmi_helper(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
     :param monkeypatch: Scoped target-helper import path.
     :returns: Fresh helper imported with the development interpreter.
     """
-    monkeypatch.syspath_prepend(str(ROOT / "plugins/module_utils"))
+    monkeypatch.syspath_prepend(str(ROOT / "legacy_windows/plugins/module_utils"))
     return load_module(
-        ROOT / "plugins/module_utils/legacy_windows_wmi.py", "tested_wmi_native"
+        ROOT / "legacy_windows/plugins/module_utils/legacy_windows_wmi.py",
+        "tested_wmi_native",
     )
 
 
 def _read_boot(helper: ModuleType) -> Any:
     boot = load_module(
-        ROOT / "plugins/module_utils/legacy_windows_boot.py", "tested_boot_with_wmi"
+        ROOT / "legacy_windows/plugins/module_utils/legacy_windows_boot.py",
+        "tested_boot_with_wmi",
     )
     setattr(boot, "WmiConnection", helper.WmiConnection)
     setattr(boot, "parse_datetime", helper.parse_datetime)

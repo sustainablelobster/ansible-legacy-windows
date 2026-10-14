@@ -1,0 +1,283 @@
+---
+# Copyright 2026 sustainablelobster
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Requires an isolated capable forest, a minimum-runtime domain executor and
+# an explicitly designated capable DC with the vendor KDS observer commands.
+- name: Verify native KDS root-key contracts and Windows acceptance
+  hosts: legacy_ad_kds
+  gather_facts: false
+  tasks:
+    - name: Identify the actual minimum target interpreter
+      sustainablelobster.legacy_windows.win_command:
+        argv:
+          - '{{ ansible_python_interpreter }}'
+          - -c
+          - 'import json, sys; print(json.dumps(list(sys.version_info[:3])))'
+      register: kds_runtime
+      changed_when: false
+
+    - name: Require the actual minimum interpreter and designated observer
+      ansible.builtin.assert:
+        that:
+          - kds_runtime.stdout | from_json == [3, 4, 4]
+          - ad_kds_observer_host is defined
+          - ad_kds_observer_host in hostvars
+
+    - name: Record the initial key metadata
+      sustainablelobster.legacy_ad.kds_root_key_info:
+      register: kds_initial
+
+    - name: Reject invalid integer input before accessing native key management
+      sustainablelobster.legacy_ad.kds_root_key:
+        match_by: never
+        effective_time_hours: '{{ item }}'
+      loop: [true, 1.0, 1.2, '1_0', '0xa', 2147483648]
+      register: kds_invalid_integer
+      failed_when: >-
+        not kds_invalid_integer.failed | default(false)
+        or kds_invalid_integer.changed
+        or 'effective_time_hours' not in kds_invalid_integer.msg
+
+    - name: Read independent key metadata after invalid requests
+      sustainablelobster.legacy_ad.kds_root_key_info:
+      register: kds_after_invalid
+
+    - name: Require every invalid request left key metadata unchanged
+      ansible.builtin.assert:
+        that: kds_after_invalid.kds_root_keys == kds_initial.kds_root_keys
+
+    - name: Compile the installed KDS closure with the actual target interpreter
+      ansible.builtin.include_tasks: tasks/legacy_ad_compile.yml
+      vars:
+        ad_compile_extra_files:
+          - {collection: ad, kind: modules, file: kds_root_key.py}
+          - {collection: ad, kind: modules, file: kds_root_key_info.py}
+          - {collection: ad, kind: module_utils, file: legacy_ad_kds.py}
+
+    - name: Start an exact created-key cleanup journal
+      ansible.builtin.set_fact:
+        kds_owned_keys: []
+        kds_initial_ids: >-
+          {{ kds_initial.kds_root_keys | map(attribute='key_id') | list }}
+
+    - name: Exercise creation, matching, metadata and removal
+      block:
+        - name: Predict forced creation without adding a key
+          sustainablelobster.legacy_ad.kds_root_key:
+            state: PRESENT
+            match_by: NEVER
+            effective_time_hours: 0
+          check_mode: true
+          register: kds_preview
+
+        - name: Independently read keys after prediction
+          sustainablelobster.legacy_ad.kds_root_key_info:
+          register: kds_after_preview
+
+        - name: Verify predicted sentinel and absence of changes
+          ansible.builtin.assert:
+            that:
+              - kds_preview.changed
+              - kds_preview.key_id == '00000000-0000-0000-0000-000000000000'
+              - kds_after_preview.kds_root_keys == kds_initial.kds_root_keys
+
+        - name: Create an owned root key for immediate use
+          sustainablelobster.legacy_ad.kds_root_key:
+            effective_time_hours: 0
+            match_by: never
+          register: kds_created
+
+        - name: Qualify the newly acquired key identifier
+          ansible.builtin.assert:
+            that:
+              - kds_created.changed
+              - >-
+                kds_created.key_id is
+                match('^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$')
+              - kds_created.key_id not in kds_initial_ids
+
+        - name: Acquire cleanup ownership of the exact created key
+          ansible.builtin.set_fact:
+            kds_owned_keys: '{{ kds_owned_keys + [kds_created.key_id] }}'
+
+        - name: Verify any-key matching is unchanged
+          sustainablelobster.legacy_ad.kds_root_key:
+            match_by: any
+          register: kds_any
+
+        - name: Verify explicit matching is unchanged in normal mode
+          sustainablelobster.legacy_ad.kds_root_key:
+            match_by: key_id
+            key_id: '{{ kds_created.key_id }}'
+          register: kds_matching
+
+        - name: Verify explicit matching is unchanged in check mode
+          sustainablelobster.legacy_ad.kds_root_key:
+            match_by: key_id
+            key_id: '{{ kds_created.key_id }}'
+          check_mode: true
+          register: kds_matching_preview
+
+        - name: Read the owned key in normal mode
+          sustainablelobster.legacy_ad.kds_root_key_info:
+            key_id: '{{ kds_created.key_id }}'
+          register: kds_metadata
+
+        - name: Read the owned key in check mode
+          sustainablelobster.legacy_ad.kds_root_key_info:
+            key_id: '{{ kds_created.key_id }}'
+          check_mode: true
+          register: kds_metadata_preview
+
+        - name: Verify matching and exact safe metadata interface
+          ansible.builtin.assert:
+            that:
+              - not kds_any.changed
+              - kds_any.key_id == '00000000-0000-0000-0000-000000000000'
+              - not kds_matching.changed
+              - not kds_matching_preview.changed
+              - kds_matching.key_id is none
+              - kds_matching_preview.key_id is none
+              - not kds_metadata.changed
+              - kds_metadata.kds_root_keys | length == 1
+              - kds_metadata.kds_root_keys == kds_metadata_preview.kds_root_keys
+              - kds_metadata.kds_root_keys[0].key_id == kds_created.key_id
+              - kds_metadata.kds_root_keys[0].version_number is integer
+              - >-
+                kds_metadata.kds_root_keys[0].keys() | list | sort ==
+                ['creation_time', 'effective_time', 'key_id', 'version_number']
+              - >-
+                kds_metadata.kds_root_keys[0].creation_time is
+                match('^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]{8}\.[0-9]{7}Z$')
+              - >-
+                kds_metadata.kds_root_keys[0].effective_time is
+                match('^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]{8}\.[0-9]{7}Z$')
+
+        - name: Require Windows KDS group-key generation from the owned root
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - powershell.exe
+              - -NoProfile
+              - -NonInteractive
+              - -Command
+              - >-
+                $ErrorActionPreference='Stop';
+                $keys=Get-KdsRootKey; $matches=0;
+                foreach ($key in $keys)
+                { if ($key.KeyId.ToString() -eq '{{ kds_created.key_id }}')
+                { $matches++ } };
+                if ($matches -ne 1)
+                { throw 'Vendor root-key lookup failed' };
+                $accepted=Test-KdsRootKey -KeyId
+                ([guid]'{{ kds_created.key_id }}');
+                if (-not $accepted)
+                { throw 'Windows KDS rejected the owned root key' };
+                [Console]::WriteLine('KDS_ROOT_ACCEPTED')
+          delegate_to: '{{ ad_kds_observer_host }}'
+          ignore_unreachable: true
+          changed_when: false
+          register: kds_vendor_acceptance
+
+        - name: Require actual Windows KDS acceptance
+          ansible.builtin.assert:
+            that:
+              - not kds_vendor_acceptance.unreachable | default(false)
+              - kds_vendor_acceptance.rc == 0
+              - kds_vendor_acceptance.stdout | trim == 'KDS_ROOT_ACCEPTED'
+
+        - name: Create a second owned key effective in one hour
+          sustainablelobster.legacy_ad.kds_root_key:
+            effective_time_hours: 1
+            match_by: never
+          register: kds_later
+
+        - name: Qualify the second key before acquiring cleanup ownership
+          ansible.builtin.assert:
+            that:
+              - kds_later.changed
+              - >-
+                kds_later.key_id is
+                match('^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$')
+              - kds_later.key_id not in kds_initial_ids + kds_owned_keys
+
+        - name: Acquire the second exact created key
+          ansible.builtin.set_fact:
+            kds_owned_keys: '{{ kds_owned_keys + [kds_later.key_id] }}'
+
+        - name: Read the second key
+          sustainablelobster.legacy_ad.kds_root_key_info:
+            key_id: '{{ kds_later.key_id }}'
+          register: kds_later_metadata
+
+        - name: Verify requested effective times retain their order
+          ansible.builtin.assert:
+            that:
+              - kds_later_metadata.kds_root_keys | length == 1
+              - >-
+                kds_later_metadata.kds_root_keys[0].effective_time >
+                kds_metadata.kds_root_keys[0].effective_time
+
+        - name: Predict deletion without removing the immediate key
+          sustainablelobster.legacy_ad.kds_root_key:
+            state: absent
+            key_id: '{{ kds_created.key_id }}'
+          check_mode: true
+          register: kds_delete_preview
+
+        - name: Read the immediate key after deletion prediction
+          sustainablelobster.legacy_ad.kds_root_key_info:
+            key_id: '{{ kds_created.key_id }}'
+          register: kds_after_delete_preview
+
+        - name: Verify deletion preview is nonmutating
+          ansible.builtin.assert:
+            that:
+              - kds_delete_preview.changed
+              - kds_delete_preview.key_id == kds_created.key_id
+              - >-
+                kds_after_delete_preview.kds_root_keys ==
+                kds_metadata.kds_root_keys
+
+        - name: Remove only the owned immediate root key
+          sustainablelobster.legacy_ad.kds_root_key:
+            state: absent
+            key_id: '{{ kds_created.key_id }}'
+          register: kds_deleted
+
+        - name: Repeat removal of the exact owned key
+          sustainablelobster.legacy_ad.kds_root_key:
+            state: absent
+            key_id: '{{ kds_created.key_id }}'
+          register: kds_delete_repeat
+
+        - name: Read the removed key independently
+          sustainablelobster.legacy_ad.kds_root_key_info:
+            key_id: '{{ kds_created.key_id }}'
+          register: kds_removed_metadata
+
+        - name: Require actual removal and unchanged repeat
+          ansible.builtin.assert:
+            that:
+              - kds_deleted.changed
+              - kds_deleted.key_id == kds_created.key_id
+              - not kds_delete_repeat.changed
+              - kds_delete_repeat.key_id == kds_created.key_id
+              - kds_removed_metadata.kds_root_keys == []
+
+      always:
+        - name: Remove only exact keys acquired by this fixture
+          sustainablelobster.legacy_ad.kds_root_key:
+            state: absent
+            key_id: '{{ item }}'
+          loop: '{{ kds_owned_keys }}'
+
+        - name: Verify original key metadata is preserved after cleanup
+          sustainablelobster.legacy_ad.kds_root_key_info:
+          register: kds_final
+
+        - name: Require exact original keys after cleanup
+          ansible.builtin.assert:
+            that:
+              - >-
+                kds_final.kds_root_keys | sort(attribute='key_id') ==
+                kds_initial.kds_root_keys | sort(attribute='key_id')

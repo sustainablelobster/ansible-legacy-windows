@@ -1,0 +1,321 @@
+---
+# Copyright 2026 sustainablelobster
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Destructive role test: only on an explicitly owned disposable guest.
+# Requires a writable source domain and direct LDAP access to the new replica.
+# Provide ad_domain_dn, ad_configuration_dn and ad_replica_server for readbacks.
+# The lab runner must independently clean the created domain/replica metadata
+# and restore or remove the guest; promotion has no generic rollback operation.
+- name: Verify native replica promotion on the minimum target interpreter
+  hosts: legacy_ad_new_controller
+  gather_facts: false
+  module_defaults:
+    group/sustainablelobster.legacy_ad.domain:
+      domain_server: '{{ ad_domain_server }}'
+      domain_username: '{{ ad_domain_username }}'
+      domain_password: '{{ ad_domain_password }}'
+  tasks:
+    - name: Require the runner's disposable role-test declaration
+      ansible.builtin.assert:
+        that: ad_owned_role_test | default(false) | bool
+        fail_msg: This play requires an owned disposable role-test guest.
+
+    - name: Identify the actual target interpreter
+      sustainablelobster.legacy_windows.win_command:
+        argv:
+          - '{{ ansible_python_interpreter }}'
+          - -c
+          - >-
+            import json,socket,sys,uuid;
+            print(json.dumps({"python": list(sys.version_info[:3]),
+            "hostname": socket.gethostname(),
+            "probe": "LWRPL-" + uuid.uuid4().hex[:8]}))
+      register: ad_promotion_interpreter
+      changed_when: false
+
+    - name: Require actual minimum-interpreter execution
+      ansible.builtin.assert:
+        that: (ad_promotion_interpreter.stdout | from_json).python == [3, 4, 4]
+
+    - name: Record the actual replica name and unique replication probe
+      ansible.builtin.set_fact:
+        ad_replica_hostname: >-
+          {{ (ad_promotion_interpreter.stdout | from_json).hostname }}
+        ad_replication_probe: >-
+          {{ (ad_promotion_interpreter.stdout | from_json).probe }}
+
+    - name: Read the source domain identity and functional level
+      sustainablelobster.legacy_ad.object_info:
+        identity: '{{ ad_domain_dn }}'
+        properties: [msDS-Behavior-Version]
+      register: ad_source_domain
+
+    - name: Read the source forest functional level
+      sustainablelobster.legacy_ad.object_info:
+        identity: 'CN=Partitions,{{ ad_configuration_dn }}'
+        properties: [msDS-Behavior-Version]
+      register: ad_source_forest
+
+    - name: Read the independent running server-role marker
+      sustainablelobster.legacy_windows.win_reg_stat:
+        path: 'HKLM:\SYSTEM\CurrentControlSet\Control\ProductOptions'
+        name: ProductType
+      register: ad_role_before
+
+    - name: Refuse to replace an existing controller
+      ansible.builtin.assert:
+        that: ad_role_before.value == 'ServerNT'
+
+    - name: Predict the concrete promotion without changing the guest
+      sustainablelobster.legacy_ad.domain_controller: &ad_native_promotion
+        state: domain_controller
+        dns_domain_name: '{{ ad_new_domain_name }}'
+        domain_admin_user: '{{ ad_domain_username }}'
+        domain_admin_password: '{{ ad_domain_password }}'
+        safe_mode_password: '{{ ad_safe_mode_password }}'
+        replication_source_dc: '{{ ad_domain_server }}'
+        install_dns: true
+      check_mode: true
+      register: ad_promotion_preview
+      no_log: true
+
+    - name: Read the role marker after prediction
+      sustainablelobster.legacy_windows.win_reg_stat:
+        path: 'HKLM:\SYSTEM\CurrentControlSet\Control\ProductOptions'
+        name: ProductType
+      register: ad_role_after_preview
+
+    - name: Verify prediction leaves the native role unchanged
+      ansible.builtin.assert:
+        that:
+          - ad_promotion_preview.changed
+          - ad_promotion_preview.reboot_required
+          - ad_role_after_preview.value == ad_role_before.value
+
+    - name: Perform native promotion and the shared verified Windows reboot
+      sustainablelobster.legacy_ad.domain_controller:
+        <<: *ad_native_promotion
+        reboot: true
+      register: ad_promotion_created
+      no_log: true
+
+    - name: Read the independent running controller marker
+      sustainablelobster.legacy_windows.win_reg_stat:
+        path: 'HKLM:\SYSTEM\CurrentControlSet\Control\ProductOptions'
+        name: ProductType
+      register: ad_role_after
+
+    - name: Verify the actual role transition and handled reboot
+      ansible.builtin.assert:
+        that:
+          - ad_promotion_created.changed
+          - not ad_promotion_created.reboot_required
+          - ad_role_after.value == 'LanmanNT'
+
+    - name: Read domain identity through a fresh authenticated replica bind
+      sustainablelobster.legacy_ad.object_info:
+        domain_server: '{{ ad_replica_server }}'
+        identity: '{{ ad_domain_dn }}'
+        properties: [msDS-Behavior-Version]
+      register: ad_replica_domain
+
+    - name: Read the replica's forest functional level
+      sustainablelobster.legacy_ad.object_info:
+        domain_server: '{{ ad_replica_server }}'
+        identity: 'CN=Partitions,{{ ad_configuration_dn }}'
+        properties: [msDS-Behavior-Version]
+      register: ad_replica_forest
+
+    - name: Read the newly registered controller identity from the replica
+      sustainablelobster.legacy_ad.object_info:
+        domain_server: '{{ ad_replica_server }}'
+        ldap_filter: '(sAMAccountName={{ ad_replica_hostname }}$)'
+        search_base: 'OU=Domain Controllers,{{ ad_domain_dn }}'
+        properties: [dNSHostName, userAccountControl]
+      register: ad_replica_account
+
+    - name: Read the replica's directory server object
+      sustainablelobster.legacy_ad.object_info:
+        domain_server: '{{ ad_replica_server }}'
+        ldap_filter: >-
+          (&(objectClass=server)(cn={{ ad_replica_hostname }}))
+        search_base: 'CN=Sites,{{ ad_configuration_dn }}'
+      register: ad_replica_server_object
+
+    - name: Read the replica's NTDS identity
+      sustainablelobster.legacy_ad.object_info:
+        domain_server: '{{ ad_replica_server }}'
+        identity: >-
+          CN=NTDS Settings,
+          {{- ad_replica_server_object.objects[0].DistinguishedName }}
+      register: ad_replica_ntds
+
+    - name: Require the correct directory and real controller identity
+      ansible.builtin.assert:
+        that:
+          - ad_replica_domain.objects == ad_source_domain.objects
+          - ad_replica_forest.objects == ad_source_forest.objects
+          - ad_replica_account.objects | length == 1
+          - >-
+            ad_replica_account.objects[0].dNSHostName | lower ==
+            (ad_replica_hostname ~ '.' ~ ad_new_domain_name) | lower
+          - >-
+            'ADS_UF_SERVER_TRUST_ACCOUNT' in
+            ad_replica_account.objects[0].userAccountControl_AnsibleFlags
+          - ad_replica_server_object.objects | length == 1
+          - ad_replica_ntds.objects | length == 1
+          - ad_replica_ntds.objects[0].ObjectClass == 'nTDSDSA'
+
+    - name: Independently require the replication probe's initial absence
+      sustainablelobster.legacy_ad.object_info:
+        identity: 'OU={{ ad_replication_probe }},{{ ad_domain_dn }}'
+      register: ad_replication_initial
+
+    - name: Refuse to acquire any preexisting replication probe
+      ansible.builtin.assert:
+        that: ad_replication_initial.objects == []
+
+    - name: Exercise real ongoing replication of one uniquely owned object
+      block:
+        - name: Create the unique replication probe on the source controller
+          sustainablelobster.legacy_ad.ou:
+            name: '{{ ad_replication_probe }}'
+            path: '{{ ad_domain_dn }}'
+          register: ad_replication_created
+
+        - name: Require acquisition of a new immutable object identity
+          ansible.builtin.assert:
+            that:
+              - ad_replication_created.changed
+              - ad_replication_created.object_guid is not none
+              - >-
+                ad_replication_created.object_guid !=
+                '00000000-0000-0000-0000-000000000000'
+
+        - name: Observe the same object and GUID on the fresh replica
+          sustainablelobster.legacy_ad.object_info:
+            domain_server: '{{ ad_replica_server }}'
+            identity: '{{ ad_replication_created.distinguished_name }}'
+          register: ad_replication_observed
+          until: >-
+            ad_replication_observed.objects | length == 1 and
+            ad_replication_observed.objects[0].ObjectGUID ==
+            ad_replication_created.object_guid
+          retries: 20
+          delay: 3
+
+      always:
+        - name: Clean up only an identity acquired by successful creation
+          when:
+            - ad_replication_created is defined
+            - ad_replication_created is succeeded
+            - ad_replication_created.changed
+            - ad_replication_created.object_guid is not none
+            - >-
+              ad_replication_created.object_guid !=
+              '00000000-0000-0000-0000-000000000000'
+          block:
+            - name: Re-read only the acquired object by immutable identity
+              sustainablelobster.legacy_ad.object_info:
+                identity: '{{ ad_replication_created.object_guid }}'
+              register: ad_replication_owned
+
+            - name: Require the acquired identity and class before cleanup
+              ansible.builtin.assert:
+                that:
+                  - ad_replication_owned.objects | length <= 1
+                  - >-
+                    ad_replication_owned.objects == [] or
+                    (ad_replication_owned.objects[0].ObjectClass ==
+                    'organizationalUnit' and
+                    ad_replication_owned.objects[0].ObjectGUID ==
+                    ad_replication_created.object_guid and
+                    ad_replication_owned.objects[0].DistinguishedName | lower ==
+                    ad_replication_created.distinguished_name | lower)
+
+            - name: Remove only the verified acquired GUID
+              sustainablelobster.legacy_ad.ou:
+                identity: '{{ ad_replication_created.object_guid }}'
+                state: absent
+              when: ad_replication_owned.objects | length == 1
+
+    - name: Verify deletion actually replicates to the new controller
+      sustainablelobster.legacy_ad.object_info:
+        domain_server: '{{ ad_replica_server }}'
+        identity: 'OU={{ ad_replication_probe }},{{ ad_domain_dn }}'
+      register: ad_replication_absent
+      until: ad_replication_absent.objects == []
+      retries: 20
+      delay: 3
+
+    - name: Repeat the native promotion request
+      sustainablelobster.legacy_ad.domain_controller: *ad_native_promotion
+      register: ad_promotion_repeated
+      no_log: true
+
+    - name: Verify existing-domain idempotence
+      ansible.builtin.assert:
+        that:
+          - not ad_promotion_repeated.changed
+          - not ad_promotion_repeated.reboot_required
+
+    - name: Predict demotion after the native operation-master safety check
+      sustainablelobster.legacy_ad.domain_controller:
+        state: member_server
+        domain_admin_user: '{{ ad_domain_username }}'
+        domain_admin_password: '{{ ad_domain_password }}'
+        local_admin_password: '{{ ad_local_admin_password }}'
+      check_mode: true
+      register: ad_demotion_preview
+      no_log: true
+
+    - name: Read the unchanged controller marker after demotion prediction
+      sustainablelobster.legacy_windows.win_reg_stat:
+        path: 'HKLM:\SYSTEM\CurrentControlSet\Control\ProductOptions'
+        name: ProductType
+      register: ad_role_after_demotion_preview
+
+    - name: Verify demotion prediction is nonmutating
+      ansible.builtin.assert:
+        that:
+          - ad_demotion_preview.changed
+          - ad_demotion_preview.reboot_required
+          - ad_role_after_demotion_preview.value == 'LanmanNT'
+
+    - name: Demote only the newly created replica and handle its reboot
+      sustainablelobster.legacy_ad.domain_controller: &ad_native_demotion
+        state: member_server
+        domain_admin_user: '{{ ad_domain_username }}'
+        domain_admin_password: '{{ ad_domain_password }}'
+        local_admin_password: '{{ ad_local_admin_password }}'
+        reboot: true
+      register: ad_demotion_result
+      no_log: true
+
+    - name: Read the independent member-server marker
+      sustainablelobster.legacy_windows.win_reg_stat:
+        path: 'HKLM:\SYSTEM\CurrentControlSet\Control\ProductOptions'
+        name: ProductType
+      register: ad_role_after_demotion
+
+    - name: Verify the demoted replica's NTDS identity is absent on the source
+      sustainablelobster.legacy_ad.object_info:
+        identity: '{{ ad_replica_ntds.objects[0].DistinguishedName }}'
+      register: ad_demoted_ntds
+      until: ad_demoted_ntds.objects == []
+      retries: 20
+      delay: 3
+
+    - name: Repeat the completed demotion request
+      sustainablelobster.legacy_ad.domain_controller: *ad_native_demotion
+      register: ad_demotion_repeated
+      no_log: true
+
+    - name: Verify demotion and its repeat are consistent
+      ansible.builtin.assert:
+        that:
+          - ad_demotion_result.changed
+          - not ad_demotion_result.reboot_required
+          - ad_role_after_demotion.value == 'ServerNT'
+          - not ad_demotion_repeated.changed
+          - not ad_demotion_repeated.reboot_required

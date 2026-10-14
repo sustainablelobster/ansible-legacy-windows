@@ -1,0 +1,133 @@
+---
+# Copyright 2026 sustainablelobster
+# SPDX-License-Identifier: GPL-3.0-or-later
+# This read-only play needs an isolated AD directory and supplied credentials.
+- name: Verify native directory searches on the actual minimum target runtime
+  hosts: legacy_ad
+  gather_facts: false
+  module_defaults:
+    sustainablelobster.legacy_ad.object_info:
+      domain_server: '{{ ad_domain_server }}'
+      domain_username: '{{ ad_domain_username }}'
+      domain_password: '{{ ad_domain_password }}'
+  tasks:
+    - name: Identify the target interpreter
+      sustainablelobster.legacy_windows.win_command:
+        argv:
+          - '{{ ansible_python_interpreter }}'
+          - -c
+          - 'import json, sys; print(json.dumps(list(sys.version_info[:3])))'
+      register: ad_runtime
+      changed_when: false
+
+    - name: Require the actual minimum target interpreter
+      ansible.builtin.assert:
+        that: ad_runtime.stdout | from_json == [3, 4, 4]
+
+    - name: Compile the installed closure before importing the AD implementation
+      ansible.builtin.include_tasks: tasks/legacy_ad_compile.yml
+
+    - name: Find the domain naming-context object in check mode
+      sustainablelobster.legacy_ad.object_info:
+        identity: '{{ ad_domain_dn }}'
+      check_mode: true
+      register: ad_domain_object
+
+    - name: Verify default property names and identity
+      ansible.builtin.assert:
+        that:
+          - not ad_domain_object.changed
+          - ad_domain_object.objects | length == 1
+          - >-
+            ad_domain_object.objects[0].keys() | list | sort ==
+            ['DistinguishedName', 'Name', 'ObjectClass', 'ObjectGUID']
+          - >-
+            ad_domain_object.objects[0].DistinguishedName | lower ==
+            ad_domain_dn | lower
+          - ad_domain_object.objects[0].ObjectClass == 'domainDNS'
+
+    - name: Read the same domain by its GUID and request typed attributes
+      sustainablelobster.legacy_ad.object_info:
+        identity: '{{ ad_domain_object.objects[0].ObjectGUID }}'
+        properties:
+          - objectSid
+          - whenCreated
+          - nTSecurityDescriptor
+          - description
+      register: ad_domain_by_guid
+
+    - name: Verify typed values and the unchanged GUID
+      ansible.builtin.assert:
+        that:
+          - not ad_domain_by_guid.changed
+          - ad_domain_by_guid.objects | length == 1
+          - >-
+            ad_domain_by_guid.objects[0].ObjectGUID ==
+            ad_domain_object.objects[0].ObjectGUID
+          - ad_domain_by_guid.objects[0].objectSid.Sid is match('^S-1-5-21-')
+          - >-
+            ad_domain_by_guid.objects[0].whenCreated is
+            match('^[0-9]{4}-[0-9]{2}-[0-9]{2}T.*Z$')
+          - ad_domain_by_guid.objects[0].nTSecurityDescriptor is search('D:')
+
+    - name: Compare expression and LDAP subtree queries
+      sustainablelobster.legacy_ad.object_info:
+        filter: ObjectClass -eq 'organizationalUnit'
+        search_base: '{{ ad_domain_dn }}'
+        properties: ['description']
+      register: ad_expression_objects
+
+    - name: Read the equivalent LDAP query
+      sustainablelobster.legacy_ad.object_info:
+        ldap_filter: (objectClass=organizationalUnit)
+        search_base: '{{ ad_domain_dn }}'
+        properties: ['description']
+      register: ad_ldap_objects
+
+    - name: Compare results without relying on server enumeration order
+      ansible.builtin.assert:
+        that:
+          - not ad_expression_objects.changed
+          - not ad_ldap_objects.changed
+          - >-
+            ad_expression_objects.objects | sort(attribute='ObjectGUID') ==
+            ad_ldap_objects.objects | sort(attribute='ObjectGUID')
+
+    - name: Read one-level objects in the domain container
+      sustainablelobster.legacy_ad.object_info:
+        filter: '*'
+        search_base: '{{ ad_domain_dn }}'
+        search_scope: one_level
+      register: ad_one_level
+
+    - name: Ensure one-level excludes its base object
+      ansible.builtin.assert:
+        that:
+          - not ad_one_level.changed
+          - >-
+            ad_domain_object.objects[0].ObjectGUID not in
+            ad_one_level.objects | map(attribute='ObjectGUID') | list
+
+    - name: Read an absent identity
+      sustainablelobster.legacy_ad.object_info:
+        identity: 'CN=Ansible-Definitely-Absent-Object,{{ ad_domain_dn }}'
+      register: ad_absent
+
+    - name: Verify absent objects do not fail
+      ansible.builtin.assert:
+        that:
+          - not ad_absent.changed
+          - ad_absent.objects == []
+
+    - name: Read an invalid property without failing the query
+      sustainablelobster.legacy_ad.object_info:
+        identity: '{{ ad_domain_dn }}'
+        properties: ['AnsibleDefinitelyInvalidProperty']
+      register: ad_invalid_property
+
+    - name: Require a warning and omitted object for invalid properties
+      ansible.builtin.assert:
+        that:
+          - not ad_invalid_property.changed
+          - ad_invalid_property.objects == []
+          - ad_invalid_property.warnings | length == 1

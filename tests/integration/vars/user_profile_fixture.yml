@@ -3,19 +3,19 @@ user_profile_sources:
   - name: legacy_windows_account
     source: >-
       {{ lookup('file', playbook_dir +
-      '/../../plugins/module_utils/legacy_windows_account.py') }}
+      '/../../legacy_windows/plugins/module_utils/legacy_windows_account.py') }}
   - name: legacy_windows_group
     source: >-
       {{ lookup('file', playbook_dir +
-      '/../../plugins/module_utils/legacy_windows_group.py') }}
+      '/../../legacy_windows/plugins/module_utils/legacy_windows_group.py') }}
   - name: legacy_windows_user
     source: >-
       {{ lookup('file', playbook_dir +
-      '/../../plugins/module_utils/legacy_windows_user.py') }}
+      '/../../legacy_windows/plugins/module_utils/legacy_windows_user.py') }}
   - name: legacy_windows_owner
     source: >-
       {{ lookup('file', playbook_dir +
-      '/../../plugins/module_utils/legacy_windows_owner.py') }}
+      '/../../legacy_windows/plugins/module_utils/legacy_windows_owner.py') }}
 user_profile_program: |
   import sys, types
   for item in {{ user_profile_sources | to_json }}:

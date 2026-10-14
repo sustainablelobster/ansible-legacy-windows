@@ -17,15 +17,18 @@ from ansible.executor.module_common import modify_module  # type: ignore[import-
 from ansible.parsing.dataloader import DataLoader  # type: ignore[import-untyped]
 from ansible.plugins.action import normal  # type: ignore[import-untyped]
 from ansible.template import Templar  # type: ignore[import-untyped]
-
-from plugins.plugin_utils._module import PythonModuleAction
-from plugins.plugin_utils._runas import (
+from ansible_collections.sustainablelobster.legacy_windows.plugins.plugin_utils._runas import (
     NativeRunasAction,
     check_runas,
     runas_command,
     stage_runas,
 )
-from plugins.shell.cmd import ShellModule
+from ansible_collections.sustainablelobster.legacy_windows.plugins.plugin_utils.runtime import (
+    PythonModuleAction,
+)
+from ansible_collections.sustainablelobster.legacy_windows.plugins.shell.cmd import (
+    ShellModule,
+)
 
 _REMOTE = r"C:\Users\Test User\Temp\ansible-tmp-owned"
 
@@ -284,7 +287,8 @@ def _core_async_action(
         # Resolve the source payload without a process-global collection install.
         # Real core modify_module still supplies its command/serialization contract.
         path = str(
-            Path(__file__).resolve().parents[2] / "plugins/modules/win_command.py"
+            Path(__file__).resolve().parents[2]
+            / "legacy_windows/plugins/modules/win_command.py"
         )
         bits = modify_module(
             module_name=module_name,

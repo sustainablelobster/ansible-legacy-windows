@@ -15,9 +15,12 @@ from ansible.errors import AnsibleActionFail  # type: ignore[import-untyped]
 from ansible.parsing.dataloader import DataLoader  # type: ignore[import-untyped]
 from ansible.plugins.action import ActionBase  # type: ignore[import-untyped]
 from ansible.template import Templar  # type: ignore[import-untyped]
-
-from plugins.action.async_status import ActionModule  # pylint: disable=import-error
-from plugins.plugin_utils._runas import NativeRunasExecution
+from ansible_collections.sustainablelobster.legacy_windows.plugins.action.async_status import (
+    ActionModule,  # pylint: disable=import-error
+)
+from ansible_collections.sustainablelobster.legacy_windows.plugins.plugin_utils._runas import (
+    NativeRunasExecution,
+)
 
 _REMOTE = r"C:\Temp\ansible-tmp-status-test"
 _CACHE = r"C:\Users\Test User\.ansible_async"

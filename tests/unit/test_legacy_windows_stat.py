@@ -20,7 +20,7 @@ def stat_helper() -> ModuleType:
 
     :returns: The imported Python 3.4-compatible module.
     """
-    source = ROOT / "plugins/module_utils/legacy_windows_stat.py"
+    source = ROOT / "legacy_windows/plugins/module_utils/legacy_windows_stat.py"
     return load_module(source, "tested_stat_native")
 
 

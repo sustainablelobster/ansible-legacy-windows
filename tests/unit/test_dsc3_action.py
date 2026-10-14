@@ -13,8 +13,9 @@ import pytest
 # Ansible's action interfaces do not distribute Python typing metadata.
 from ansible.errors import AnsibleActionFail  # type: ignore[import-untyped]
 from ansible.plugins.action import normal  # type: ignore[import-untyped]
-
-from plugins.action.dsc3 import ActionModule
+from ansible_collections.sustainablelobster.legacy_windows.plugins.action.dsc3 import (
+    ActionModule,
+)
 
 
 @pytest.fixture(name="action_case")

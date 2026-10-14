@@ -1,0 +1,142 @@
+---
+# Copyright 2026 sustainablelobster
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Destructive role test: only on an explicitly owned disposable guest.
+# The lab runner must independently clean the created domain/replica metadata
+# and restore or remove the guest; promotion has no generic rollback operation.
+- name: Verify native domain promotion on the minimum target interpreter
+  hosts: legacy_ad_new_forest
+  gather_facts: false
+  vars:
+    ad_native_observer: >-
+      {{ lookup('ansible.builtin.file',
+         'fixtures/legacy_ad_domain_observer.py') }}
+  tasks:
+    - name: Require the runner's disposable role-test declaration
+      ansible.builtin.assert:
+        that: ad_owned_role_test | default(false) | bool
+        fail_msg: This play requires an owned disposable role-test guest.
+
+    - name: Identify the actual target interpreter
+      sustainablelobster.legacy_windows.win_command:
+        argv:
+          - '{{ ansible_python_interpreter }}'
+          - -c
+          - 'import json,sys; print(json.dumps(list(sys.version_info[:3])))'
+      register: ad_promotion_interpreter
+      changed_when: false
+
+    - name: Require actual minimum-interpreter execution
+      ansible.builtin.assert:
+        that: (ad_promotion_interpreter.stdout | from_json) == [3, 4, 4]
+
+    - name: Read independent native state before promotion
+      sustainablelobster.legacy_windows.win_command:
+        argv: ['{{ ansible_python_interpreter }}', '-']
+        stdin: '{{ ad_native_observer }}'
+      register: ad_promotion_before_output
+      changed_when: false
+
+    - name: Record the original boot identity and existing answer directories
+      ansible.builtin.set_fact:
+        ad_promotion_before: >-
+          {{ ad_promotion_before_output.stdout | from_json }}
+
+    - name: Refuse to replace an existing controller
+      ansible.builtin.assert:
+        that: ad_promotion_before.role == 2
+
+    - name: Predict the concrete promotion without changing the guest
+      sustainablelobster.legacy_ad.domain: &ad_native_promotion
+        dns_domain_name: '{{ ad_new_domain_name }}'
+        domain_netbios_name: '{{ ad_new_domain_netbios }}'
+        safe_mode_password: '{{ ad_safe_mode_password }}'
+        create_dns_delegation: '{{ ad_create_dns_delegation | default(omit) }}'
+        database_path: '{{ ad_database_path | default(omit) }}'
+        log_path: '{{ ad_log_path | default(omit) }}'
+        sysvol_path: '{{ ad_sysvol_path | default(omit) }}'
+        domain_mode: '{{ ad_domain_mode | default(omit) }}'
+        forest_mode: '{{ ad_forest_mode | default(omit) }}'
+        install_dns: true
+        reboot: true
+        reboot_timeout: '{{ ad_reboot_timeout | default(600) }}'
+      check_mode: true
+      register: ad_promotion_preview
+      no_log: true
+
+    - name: Read native state after prediction
+      sustainablelobster.legacy_windows.win_command:
+        argv: ['{{ ansible_python_interpreter }}', '-']
+        stdin: '{{ ad_native_observer }}'
+      register: ad_promotion_preview_output
+      changed_when: false
+
+    - name: Verify prediction leaves the native role unchanged
+      ansible.builtin.assert:
+        that:
+          - ad_promotion_preview.changed
+          - not ad_promotion_preview.reboot_required
+          - >-
+            ad_promotion_preview_output.stdout | from_json ==
+            ad_promotion_before
+
+    - name: Perform native promotion and the shared verified Windows reboot
+      sustainablelobster.legacy_ad.domain: *ad_native_promotion
+      register: ad_promotion_created
+      no_log: true
+
+    - name: Read the active controller and functional levels independently
+      sustainablelobster.legacy_windows.win_command:
+        argv: ['{{ ansible_python_interpreter }}', '-', 'directory']
+        stdin: '{{ ad_native_observer }}'
+      register: ad_promotion_after_output
+      changed_when: false
+
+    - name: Record independently observed promotion results
+      ansible.builtin.set_fact:
+        ad_promotion_after: '{{ ad_promotion_after_output.stdout | from_json }}'
+
+    - name: Verify the actual role transition and handled reboot
+      ansible.builtin.assert:
+        that:
+          - ad_promotion_created.changed
+          - not ad_promotion_created.reboot_required
+          - ad_promotion_after.role == 5
+          - ad_promotion_after.boot_id != ad_promotion_before.boot_id
+          - ad_promotion_after.hostname == ad_promotion_before.hostname
+          - ad_promotion_after.domain | lower == ad_new_domain_name | lower
+          - ad_promotion_after.dns_service_state == 'Running'
+          - >-
+            ad_promotion_after.answer_directories ==
+            ad_promotion_before.answer_directories
+
+    - name: Verify the requested Windows 2003 domain functional level
+      ansible.builtin.assert:
+        that: ad_promotion_after.domain_level == 2
+      when: ad_domain_mode | default('') | lower == 'win2003'
+
+    - name: Verify the requested Windows 2003 forest functional level
+      ansible.builtin.assert:
+        that: ad_promotion_after.forest_level == 2
+      when: ad_forest_mode | default('') | lower == 'win2003'
+
+    - name: Repeat the native promotion request
+      sustainablelobster.legacy_ad.domain: *ad_native_promotion
+      register: ad_promotion_repeated
+      no_log: true
+
+    - name: Read native state after the unchanged repeat
+      sustainablelobster.legacy_windows.win_command:
+        argv: ['{{ ansible_python_interpreter }}', '-', 'directory']
+        stdin: '{{ ad_native_observer }}'
+      register: ad_promotion_repeat_output
+      changed_when: false
+
+    - name: Verify existing-domain idempotence
+      ansible.builtin.assert:
+        that:
+          - not ad_promotion_repeated.changed
+          - not ad_promotion_repeated.reboot_required
+          - >-
+            ad_promotion_repeat_output.stdout | from_json ==
+            ad_promotion_after

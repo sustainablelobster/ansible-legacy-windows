@@ -35,14 +35,21 @@ FILENAME = "sustainablelobster-legacy_windows-1.0.0.tar.gz"
 CHANGELOG = "# Changelog\n\n## 1.0.0\n\n- Verified release.\n\n## 0.9.0\n\n- Old.\n"
 
 
-def _archive(path: Path, version: str = "1.0.0", changelog: str = CHANGELOG) -> None:
+def _archive(
+    path: Path,
+    version: str = "1.0.0",
+    changelog: str = CHANGELOG,
+    collection: str = "legacy_windows",
+    dependencies: dict[str, str] | None = None,
+) -> None:
     contents = {
         "MANIFEST.json": json.dumps(
             {
                 "collection_info": {
                     "namespace": "sustainablelobster",
-                    "name": "legacy_windows",
+                    "name": collection,
                     "version": version,
+                    "dependencies": dependencies or {},
                 }
             }
         ),
@@ -64,22 +71,22 @@ def release_source(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     :param monkeypatch: Fixture restoring source and environment substitutions.
     :returns: Source directory containing a collection candidate.
     """
-    root = tmp_path / "source"
-    root.mkdir()
+    root = tmp_path / "source" / "legacy_windows"
+    root.mkdir(parents=True)
     (root / "galaxy.yml").write_text(
         "namespace: sustainablelobster\nname: legacy_windows\nversion: 1.0.0\n",
         encoding="utf-8",
     )
     (root / "CHANGELOG.md").write_text(CHANGELOG, encoding="utf-8")
     _archive(root / FILENAME)
-    monkeypatch.setattr(ci_release, "ROOT", root)
+    monkeypatch.setattr(ci_release, "ROOT", root.parent)
     for name, value in {
         "GITHUB_SHA": COMMIT,
         "GITHUB_EVENT_NAME": "push",
         "GITHUB_REPOSITORY": ci_release.REPOSITORY,
         "GITHUB_REF_TYPE": "tag",
-        "GITHUB_REF_NAME": "v1.0.0",
-        "GITHUB_REF": "refs/tags/v1.0.0",
+        "GITHUB_REF_NAME": "legacy_windows/v1.0.0",
+        "GITHUB_REF": "refs/tags/legacy_windows/v1.0.0",
     }.items():
         monkeypatch.setenv(name, value)
     monkeypatch.delenv("GITHUB_OUTPUT", raising=False)
@@ -95,7 +102,7 @@ def release_candidate(source: Path, tmp_path: Path) -> tuple[Path, str]:
     :returns: Candidate directory and upstream-job SHA-256.
     """
     output = tmp_path / "package"
-    ci_release.package(source / FILENAME, output, "v1.0.0")
+    ci_release.package(source / FILENAME, output, "legacy_windows/v1.0.0")
     digest = hashlib.sha256((source / FILENAME).read_bytes()).hexdigest()
     return output, digest
 
@@ -216,7 +223,7 @@ def test_package_preserves_archive_and_reports_exact_digest(
     output_file = tmp_path / "github-output"
     monkeypatch.setenv("GITHUB_OUTPUT", str(output_file))
     output = tmp_path / "package"
-    ci_release.package(source / FILENAME, output, "v1.0.0")
+    ci_release.package(source / FILENAME, output, "legacy_windows/v1.0.0")
     digest = hashlib.sha256((source / FILENAME).read_bytes()).hexdigest()
     assert (output / FILENAME).read_bytes() == (source / FILENAME).read_bytes()
     assert (output / "SHA256SUMS").read_text() == f"{digest}  {FILENAME}\n"
@@ -226,6 +233,7 @@ def test_package_preserves_archive_and_reports_exact_digest(
         "version": "1.0.0",
         "sha256": digest,
         "commit": COMMIT,
+        "collection": "sustainablelobster.legacy_windows",
     }
     assert output_file.read_text() == (
         f"filename={FILENAME}\nversion=1.0.0\nsha256={digest}\n"
@@ -233,13 +241,22 @@ def test_package_preserves_archive_and_reports_exact_digest(
 
 
 @pytest.mark.parametrize(
-    "tag", ["1.0.0", "v01.0.0", "v1.0.0-rc.1", "v1.0.0+build", "v1.0.1"]
+    "tag",
+    [
+        "1.0.0",
+        "v1.0.0",
+        "legacy_ad/v1.0.0",
+        "legacy_windows/v01.0.0",
+        "legacy_windows/v1.0.0-rc.1",
+        "legacy_windows/v1.0.0+build",
+        "legacy_windows/v1.0.1",
+    ],
 )
 def test_package_rejects_wrong_tags_before_creating_output(
     source: Path, tmp_path: Path, tag: str
 ) -> None:
     output = tmp_path / "package"
-    with pytest.raises(SystemExit, match="Tag and collection version"):
+    with pytest.raises(SystemExit):
         ci_release.package(source / FILENAME, output, tag)
     assert not output.exists()
 
@@ -281,7 +298,8 @@ def test_package_rejects_missing_or_empty_release_notes(
         ("GITHUB_REPOSITORY", "someone/fork"),
         ("GITHUB_REF_TYPE", "branch"),
         ("GITHUB_REF", "refs/heads/v1.0.0"),
-        ("GITHUB_REF_NAME", "v1.0.0-rc.1"),
+        ("GITHUB_REF_NAME", "v1.0.0"),
+        ("GITHUB_REF_NAME", "legacy_windows/v1.0.0-rc.1"),
         ("GITHUB_SHA", "b" * 40),
     ],
 )
@@ -336,7 +354,16 @@ def test_publish_checks_tag_and_attaches_only_verified_assets(
     assert github.assets[FILENAME] == (candidate[0] / FILENAME).read_bytes()
     assert github.calls[-2][1] == "api"
     assert "/git/" in github.calls[-2][2]
-    assert github.calls[-1][1:4] == ["release", "edit", "v1.0.0"]
+    assert github.calls[-1][1:4] == ["release", "edit", "legacy_windows/v1.0.0"]
+    endpoints = [call[2] for call in github.calls if call[1] == "api"]
+    assert any(
+        endpoint.endswith("git/ref/tags/legacy_windows%2Fv1.0.0")
+        for endpoint in endpoints
+    )
+    assert any(
+        endpoint.endswith("releases/tags/legacy_windows%2Fv1.0.0")
+        for endpoint in endpoints
+    )
 
 
 def test_tag_moved_before_any_mutation_is_rejected(
@@ -363,7 +390,10 @@ def test_release_lookup_errors_do_not_create_a_release(
     candidate: tuple[Path, str], github: Github, error: str
 ) -> None:
     github.failure = (
-        ("api", f"repos/{ci_release.REPOSITORY}/releases/tags/v1.0.0"),
+        (
+            "api",
+            f"repos/{ci_release.REPOSITORY}/releases/tags/legacy_windows%2Fv1.0.0",
+        ),
         error,
     )
     with pytest.raises(SystemExit, match="GitHub command failed"):
@@ -376,7 +406,12 @@ def test_failed_upload_resumes_original_draft_without_replacement(
     candidate: tuple[Path, str], github: Github
 ) -> None:
     github.failure = (
-        ("release", "upload", "v1.0.0", str(candidate[0] / "SHA256SUMS")),
+        (
+            "release",
+            "upload",
+            "legacy_windows/v1.0.0",
+            str(candidate[0] / "SHA256SUMS"),
+        ),
         "upload failed",
     )
     with pytest.raises(SystemExit, match="upload failed"):
@@ -441,12 +476,14 @@ def test_package_cli_uses_same_validation(
         [
             "ci_release.py",
             "package",
+            "--collection",
+            "legacy_windows",
             "--artifact",
             str(source / FILENAME),
             "--output-dir",
             str(output),
             "--tag",
-            "v1.0.0",
+            "legacy_windows/v1.0.0",
         ],
     )
     ci_release.main()
@@ -459,7 +496,7 @@ def test_package_never_overwrites_prior_candidate(
     output = candidate[0]
     before = {path.name: path.read_bytes() for path in output.iterdir()}
     with pytest.raises(SystemExit, match="must be empty"):
-        ci_release.package(source / FILENAME, output, "v1.0.0")
+        ci_release.package(source / FILENAME, output, "legacy_windows/v1.0.0")
     assert {path.name: path.read_bytes() for path in output.iterdir()} == before
 
 
@@ -469,7 +506,7 @@ def test_package_requires_tested_commit_before_creating_output(
     monkeypatch.delenv("GITHUB_SHA")
     output = tmp_path / "package"
     with pytest.raises(SystemExit, match="tested commit"):
-        ci_release.package(source / FILENAME, output, "v1.0.0")
+        ci_release.package(source / FILENAME, output, "legacy_windows/v1.0.0")
     assert not output.exists()
 
 
@@ -600,15 +637,21 @@ def _galaxy_metadata(
     )
 
 
-class GalaxyPublisher:
+# Each independent API phase is observable state: discovery, existing versions,
+# dependency lookups, upload and import. Combining them would obscure failures.
+class GalaxyPublisher:  # pylint: disable=too-many-instance-attributes
     """Model Galaxy discovery, immutable versions and asynchronous imports."""
 
-    def __init__(self, digest: str) -> None:
+    def __init__(self, digest: str, collection: str = "legacy_windows") -> None:
         self.created = False
+        self.collection = collection
         self.metadata: CollectionVersionMetadata | None = None
         self.imported_metadata: CollectionVersionMetadata | None = _galaxy_metadata(
-            digest
+            digest, name=collection
         )
+        self.runtime_versions = ["1.1.0"]
+        self.runtime_metadata = _galaxy_metadata("b" * 64, version="1.1.0")
+        self.runtime_queries: list[tuple[str, str, str | None]] = []
         self.errors: dict[str, AnsibleError] = {}
         self.uploads: list[tuple[Path, bytes]] = []
         self.waits: list[tuple[str, int]] = []
@@ -636,12 +679,35 @@ class GalaxyPublisher:
         :raises AnsibleError: If version lookup is configured to fail.
         :raises GalaxyError: If the version does not exist.
         """
-        assert (namespace, name, version) == (*ci_release.IDENTITY, "1.0.0")
+        if self.collection == "legacy_ad" and name == "legacy_windows":
+            self.runtime_queries.append((namespace, name, version))
+            if "runtime_metadata" in self.errors:
+                raise self.errors["runtime_metadata"]
+            return self.runtime_metadata
+        assert (namespace, name, version) == (
+            ci_release.NAMESPACE,
+            self.collection,
+            "1.0.0",
+        )
         if "lookup" in self.errors:
             raise self.errors["lookup"]
         if self.metadata is None:
             raise _galaxy_error(404, "version not found")
         return self.metadata
+
+    def get_collection_versions(self, namespace: str, name: str) -> list[str]:
+        """Return published runtime versions without uploading anything.
+
+        :param namespace: Namespace of the required Windows collection.
+        :param name: Name of the required Windows collection.
+        :returns: Versions made available by the test server.
+        :raises AnsibleError: If the runtime version listing fails.
+        """
+        assert (namespace, name) == ("sustainablelobster", "legacy_windows")
+        self.runtime_queries.append((namespace, name, None))
+        if "runtime_versions" in self.errors:
+            raise self.errors["runtime_versions"]
+        return self.runtime_versions
 
     def publish_collection(self, archive: str) -> str:
         """Record the uploaded archive and return its asynchronous import task.
@@ -669,8 +735,7 @@ class GalaxyPublisher:
         self.metadata = self.imported_metadata
 
 
-@pytest.fixture(name="galaxy")
-def fake_galaxy(
+def _install_fake_galaxy(
     candidate: tuple[Path, str],
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -682,7 +747,8 @@ def fake_galaxy(
     :param tmp_path: Isolated storage for Ansible's local token-file lookup.
     :returns: Stateful fake API for observing version and import behavior.
     """
-    galaxy = GalaxyPublisher(candidate[1])
+    manifest = json.loads((candidate[0] / "release-manifest.json").read_text())
+    galaxy = GalaxyPublisher(candidate[1], manifest["collection"].split(".")[1])
     monkeypatch.setenv("GALAXY_API_KEY", "test-galaxy-token")
     monkeypatch.setattr(
         ansible_constants, "GALAXY_TOKEN_PATH", str(tmp_path / "galaxy-token")
@@ -703,6 +769,22 @@ def fake_galaxy(
 
     monkeypatch.setattr(ci_release, "GalaxyAPI", _create_api)
     return galaxy
+
+
+@pytest.fixture(name="galaxy")
+def fake_galaxy(
+    candidate: tuple[Path, str],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> GalaxyPublisher:
+    """Install the Windows publication API fake.
+
+    :param candidate: Prepared Windows archive and package-job digest.
+    :param monkeypatch: Fixture restoring API substitutions.
+    :param tmp_path: Isolated local token-file lookup directory.
+    :returns: Stateful Windows publication API fake.
+    """
+    return _install_fake_galaxy(candidate, monkeypatch, tmp_path)
 
 
 @pytest.mark.parametrize("token", [None, "", " \t\n"])
@@ -731,7 +813,8 @@ def test_galaxy_publish_requires_token_before_remote_mutations(
         ("GITHUB_REPOSITORY", "someone/fork"),
         ("GITHUB_REF_TYPE", "branch"),
         ("GITHUB_REF", "refs/heads/v1.0.0"),
-        ("GITHUB_REF_NAME", "v1.0.0-rc.1"),
+        ("GITHUB_REF_NAME", "v1.0.0"),
+        ("GITHUB_REF_NAME", "legacy_windows/v1.0.0-rc.1"),
         ("GITHUB_SHA", "b" * 40),
     ],
 )
@@ -1103,4 +1186,218 @@ def test_galaxy_publish_uses_pinned_client_for_authenticated_import(
     assert len(uploads) == 1 and import_tasks == [task_url]
     ci_release.publish_galaxy(*candidate)
     assert len(uploads) == 1 and import_tasks == [task_url]
+    assert github.release is None and github.assets == {}
+
+
+@pytest.fixture(name="ad_candidate")
+def ad_release_candidate(
+    source: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> tuple[Path, str]:
+    """Prepare AD's own archive, dependency and independent tag.
+
+    :param source: Existing Windows collection source fixture.
+    :param tmp_path: Isolated temporary test directory.
+    :param monkeypatch: Fixture restoring the originating tag environment.
+    :returns: AD candidate directory and its package-job SHA-256.
+    """
+    root = source.parent / "legacy_ad"
+    root.mkdir()
+    dependency = {"sustainablelobster.legacy_windows": ">=1.1.0,<2.0.0"}
+    (root / "galaxy.yml").write_text(
+        "namespace: sustainablelobster\nname: legacy_ad\nversion: 1.0.0\n"
+        "dependencies:\n  sustainablelobster.legacy_windows: '>=1.1.0,<2.0.0'\n",
+        encoding="utf-8",
+    )
+    (root / "CHANGELOG.md").write_text(CHANGELOG, encoding="utf-8")
+    artifact = root / "sustainablelobster-legacy_ad-1.0.0.tar.gz"
+    _archive(artifact, collection="legacy_ad", dependencies=dependency)
+    monkeypatch.setenv("GITHUB_REF_NAME", "legacy_ad/v1.0.0")
+    monkeypatch.setenv("GITHUB_REF", "refs/tags/legacy_ad/v1.0.0")
+    output = tmp_path / "ad-package"
+    ci_release.package(artifact, output, "legacy_ad/v1.0.0", "legacy_ad")
+    return output, hashlib.sha256(artifact.read_bytes()).hexdigest()
+
+
+@pytest.fixture(name="ad_galaxy")
+def fake_ad_galaxy(
+    ad_candidate: tuple[Path, str],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> GalaxyPublisher:
+    """Expose the same API contract for AD and its published Windows runtime.
+
+    :param ad_candidate: Prepared AD archive and package-job digest.
+    :param monkeypatch: Fixture restoring API substitutions.
+    :param tmp_path: Isolated local token-file lookup directory.
+    :returns: Stateful AD publication API fake.
+    """
+    return _install_fake_galaxy(ad_candidate, monkeypatch, tmp_path)
+
+
+@pytest.mark.parametrize("command", ["preflight", "publish", "publish_galaxy"])
+@pytest.mark.parametrize("versions", [[], ["1.0.2"], ["2.0.0"], ["1.1.0-rc.1"]])
+def test_ad_requires_a_published_compatible_stable_runtime_before_mutations(
+    ad_candidate: tuple[Path, str],
+    github: Github,
+    ad_galaxy: GalaxyPublisher,
+    command: str,
+    versions: list[str],
+) -> None:
+    ad_galaxy.runtime_versions = versions
+    with pytest.raises(SystemExit, match="before publishing legacy_ad"):
+        getattr(ci_release, command)(*ad_candidate)
+    assert github.release is None and github.assets == {}
+    assert all(call[1] == "api" for call in github.calls)
+    assert ad_galaxy.uploads == [] and ad_galaxy.waits == []
+
+
+@pytest.mark.parametrize("command", ["preflight", "publish", "publish_galaxy"])
+@pytest.mark.parametrize("status", [401, 403, 429, 500])
+def test_ad_dependency_lookup_errors_never_trigger_publication(
+    ad_candidate: tuple[Path, str],
+    github: Github,
+    ad_galaxy: GalaxyPublisher,
+    command: str,
+    status: int,
+) -> None:
+    ad_galaxy.errors["runtime_versions"] = _galaxy_error(status, "runtime unavailable")
+    with pytest.raises(AnsibleError, match="runtime unavailable"):
+        getattr(ci_release, command)(*ad_candidate)
+    assert github.release is None and github.assets == {}
+    assert ad_galaxy.uploads == []
+
+
+@pytest.mark.parametrize("field,value", [("name", "other"), ("artifact_sha256", "")])
+def test_ad_dependency_requires_published_matching_metadata(
+    ad_candidate: tuple[Path, str],
+    github: Github,
+    ad_galaxy: GalaxyPublisher,
+    field: str,
+    value: str,
+) -> None:
+    setattr(ad_galaxy.runtime_metadata, field, value)
+    with pytest.raises(SystemExit):
+        ci_release.publish(*ad_candidate)
+    assert github.release is None and ad_galaxy.uploads == []
+
+
+def test_ad_preflight_is_read_only_and_uses_its_archive_dependency(
+    ad_candidate: tuple[Path, str], github: Github, ad_galaxy: GalaxyPublisher
+) -> None:
+    ci_release.preflight(*ad_candidate)
+    assert ad_galaxy.runtime_queries == [
+        ("sustainablelobster", "legacy_windows", None),
+        ("sustainablelobster", "legacy_windows", "1.1.0"),
+    ]
+    assert github.release is None and github.assets == {}
+    assert ad_galaxy.uploads == []
+
+
+def test_ad_publishes_only_its_candidate_with_escaped_tag_api_paths(
+    ad_candidate: tuple[Path, str], github: Github, ad_galaxy: GalaxyPublisher
+) -> None:
+    ci_release.publish(*ad_candidate)
+    assert github.release is not None
+    assert github.release["tag_name"] == "legacy_ad/v1.0.0"
+    assert set(github.assets) == {
+        "sustainablelobster-legacy_ad-1.0.0.tar.gz",
+        "SHA256SUMS",
+    }
+    endpoints = [call[2] for call in github.calls if call[1] == "api"]
+    assert any(
+        endpoint.endswith("git/ref/tags/legacy_ad%2Fv1.0.0") for endpoint in endpoints
+    )
+    assert any(
+        endpoint.endswith("releases/tags/legacy_ad%2Fv1.0.0") for endpoint in endpoints
+    )
+    ci_release.publish_galaxy(*ad_candidate)
+    assert [path.name for path, _ in ad_galaxy.uploads] == [
+        "sustainablelobster-legacy_ad-1.0.0.tar.gz"
+    ]
+    before = list(ad_galaxy.uploads)
+    ci_release.publish_galaxy(*ad_candidate)
+    assert ad_galaxy.uploads == before
+
+
+@pytest.mark.parametrize(
+    "tag",
+    [
+        "v1.0.0",
+        "legacy_windows/v1.0.0",
+        "legacy_ad/v1.0.1",
+        "legacy_ad/v01.0.0",
+    ],
+)
+def test_ad_candidate_rejects_other_collection_or_version_tags(
+    ad_candidate: tuple[Path, str],
+    github: Github,
+    monkeypatch: pytest.MonkeyPatch,
+    tag: str,
+) -> None:
+    monkeypatch.setenv("GITHUB_REF_NAME", tag)
+    monkeypatch.setenv("GITHUB_REF", "refs/tags/" + tag)
+    with pytest.raises(SystemExit):
+        ci_release.publish(*ad_candidate)
+    assert github.calls == []
+
+
+def test_source_and_archive_dependencies_must_match_before_packaging(
+    source: Path, tmp_path: Path
+) -> None:
+    _archive(source / FILENAME, dependencies={"example.collection": ">=1.0.0"})
+    output = tmp_path / "package"
+    with pytest.raises(SystemExit, match="dependencies disagree"):
+        ci_release.package(source / FILENAME, output, "legacy_windows/v1.0.0")
+    assert not output.exists()
+
+
+def test_ad_preflight_uses_pinned_client_pagination_and_dependency_metadata(
+    ad_candidate: tuple[Path, str],
+    github: Github,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("GALAXY_API_KEY", "test-galaxy-token")
+    monkeypatch.setattr(ansible_constants, "GALAXY_TOKEN_PATH", str(tmp_path / "token"))
+    monkeypatch.setattr(ansible_constants, "GALAXY_CACHE_DIR", str(tmp_path / "cache"))
+    runtime_url = (
+        "https://galaxy.ansible.com/api/v3/collections/"
+        "sustainablelobster/legacy_windows/versions/"
+    )
+    next_url = runtime_url + "?offset=100&limit=100"
+    requests: list[str] = []
+
+    def _open_url(url: str, **options: Any) -> io.BytesIO:
+        requests.append(url)
+        assert options["validate_certs"] is True
+        assert options["headers"]["Authorization"] == "Token test-galaxy-token"
+        assert options["method"] in (None, "GET") and options["data"] is None
+        payload: dict[str, Any]
+        if url == "https://galaxy.ansible.com/api/":
+            payload = {"available_versions": {"v3": "v3/"}}
+        elif url.startswith(runtime_url + "?limit="):
+            payload = {
+                "data": [{"version": "1.0.2"}, {"version": "1.1.0-rc.1"}],
+                "links": {"next": next_url},
+            }
+        elif url == next_url:
+            payload = {"data": [{"version": "1.1.0"}], "links": {"next": None}}
+        else:
+            assert url == runtime_url + "1.1.0/"
+            payload = {
+                "namespace": {"name": "sustainablelobster"},
+                "collection": {"name": "legacy_windows"},
+                "version": "1.1.0",
+                "artifact": {"sha256": "c" * 64},
+                "download_url": "https://galaxy.ansible.com/download/runtime.tar.gz",
+                "metadata": {"dependencies": {}},
+                "href": url,
+            }
+        return io.BytesIO(json.dumps(payload).encode())
+
+    monkeypatch.setattr(galaxy_api, "open_url", _open_url)
+    ci_release.preflight(*ad_candidate)
+    assert len(requests) == 4
+    assert requests[-2:] == [next_url, runtime_url + "1.1.0/"]
+    assert all(call[1] == "api" for call in github.calls)
     assert github.release is None and github.assets == {}

@@ -1,0 +1,1643 @@
+{
+  "fragments": {
+    "action_reboot": {
+      "reboot": {
+        "default": false,
+        "type": "bool"
+      },
+      "reboot_timeout": {
+        "default": 600,
+        "type": "int"
+      }
+    },
+    "ad_object": {
+      "attributes": {
+        "default": {},
+        "suboptions": {
+          "add": {
+            "default": {},
+            "type": "dict"
+          },
+          "remove": {
+            "default": {},
+            "type": "dict"
+          },
+          "set": {
+            "default": {},
+            "type": "dict"
+          }
+        },
+        "type": "dict"
+      },
+      "description": {
+        "type": "str"
+      },
+      "display_name": {
+        "type": "str"
+      },
+      "domain_credentials": {
+        "default": [],
+        "elements": "dict",
+        "suboptions": {
+          "name": {
+            "type": "str"
+          },
+          "password": {
+            "required": true,
+            "type": "str"
+          },
+          "username": {
+            "required": true,
+            "type": "str"
+          }
+        },
+        "type": "list"
+      },
+      "domain_password": {
+        "type": "str"
+      },
+      "domain_server": {
+        "type": "str"
+      },
+      "domain_username": {
+        "type": "str"
+      },
+      "identity": {
+        "type": "str"
+      },
+      "name": {
+        "type": "str"
+      },
+      "path": {
+        "type": "str"
+      },
+      "protect_from_deletion": {
+        "type": "bool"
+      },
+      "state": {
+        "choices": [
+          "absent",
+          "present"
+        ],
+        "default": "present",
+        "type": "str"
+      }
+    }
+  },
+  "modules": {
+    "computer": {
+      "fragments": [
+        "ad_object"
+      ],
+      "options": {
+        "delegates": {
+          "aliases": [
+            "principals_allowed_to_delegate"
+          ],
+          "suboptions": {
+            "add": {
+              "elements": "raw",
+              "type": "list"
+            },
+            "lookup_failure_action": {
+              "choices": [
+                "fail",
+                "ignore",
+                "warn"
+              ],
+              "default": "fail",
+              "type": "str"
+            },
+            "remove": {
+              "elements": "raw",
+              "type": "list"
+            },
+            "set": {
+              "elements": "raw",
+              "type": "list"
+            }
+          },
+          "type": "dict"
+        },
+        "dns_hostname": {
+          "type": "str"
+        },
+        "do_not_append_dollar_to_sam": {
+          "default": false,
+          "type": "bool"
+        },
+        "enabled": {
+          "type": "bool"
+        },
+        "kerberos_encryption_types": {
+          "suboptions": {
+            "add": {
+              "choices": [
+                "aes128",
+                "aes256",
+                "des",
+                "rc4"
+              ],
+              "elements": "str",
+              "type": "list"
+            },
+            "remove": {
+              "choices": [
+                "aes128",
+                "aes256",
+                "des",
+                "rc4"
+              ],
+              "elements": "str",
+              "type": "list"
+            },
+            "set": {
+              "choices": [
+                "aes128",
+                "aes256",
+                "des",
+                "rc4"
+              ],
+              "elements": "str",
+              "type": "list"
+            }
+          },
+          "type": "dict"
+        },
+        "location": {
+          "type": "str"
+        },
+        "managed_by": {
+          "type": "raw"
+        },
+        "sam_account_name": {
+          "type": "str"
+        },
+        "spn": {
+          "aliases": [
+            "spns"
+          ],
+          "suboptions": {
+            "add": {
+              "elements": "str",
+              "type": "list"
+            },
+            "remove": {
+              "elements": "str",
+              "type": "list"
+            },
+            "set": {
+              "elements": "str",
+              "type": "list"
+            }
+          },
+          "type": "dict"
+        },
+        "trusted_for_delegation": {
+          "type": "bool"
+        },
+        "upn": {
+          "type": "str"
+        }
+      },
+      "returns": {
+        "distinguished_name": {
+          "returned": "always",
+          "type": "str"
+        },
+        "object_guid": {
+          "returned": "always",
+          "type": "str"
+        },
+        "sid": {
+          "returned": "always",
+          "type": "str"
+        }
+      }
+    },
+    "cs_authority": {
+      "fragments": [],
+      "options": {
+        "aia": {
+          "elements": "dict",
+          "suboptions": {
+            "add_to_certificate_aia": {
+              "default": false,
+              "type": "bool"
+            },
+            "add_to_certificate_ocsp": {
+              "default": false,
+              "type": "bool"
+            },
+            "uri": {
+              "required": true,
+              "type": "str"
+            }
+          },
+          "type": "list"
+        },
+        "cdp": {
+          "elements": "dict",
+          "suboptions": {
+            "add_to_certificate_cdp": {
+              "default": false,
+              "type": "bool"
+            },
+            "add_to_crl_cdp": {
+              "default": false,
+              "type": "bool"
+            },
+            "add_to_crl_idp": {
+              "default": false,
+              "type": "bool"
+            },
+            "add_to_freshest_crl": {
+              "default": false,
+              "type": "bool"
+            },
+            "publish_delta_to_server": {
+              "default": false,
+              "type": "bool"
+            },
+            "publish_to_server": {
+              "default": false,
+              "type": "bool"
+            },
+            "uri": {
+              "required": true,
+              "type": "str"
+            }
+          },
+          "type": "list"
+        },
+        "restart_service": {
+          "default": true,
+          "type": "bool"
+        }
+      },
+      "returns": {}
+    },
+    "cs_template": {
+      "fragments": [],
+      "options": {
+        "certificate_name_flag": {
+          "elements": "str",
+          "type": "list"
+        },
+        "display_name": {
+          "type": "str"
+        },
+        "domain_server": {
+          "type": "str"
+        },
+        "enrollment_flag": {
+          "elements": "str",
+          "type": "list"
+        },
+        "extended_key_usages": {
+          "elements": "str",
+          "type": "list"
+        },
+        "key_size": {
+          "type": "int"
+        },
+        "key_usage": {
+          "elements": "str",
+          "type": "list"
+        },
+        "name": {
+          "required": true,
+          "type": "str"
+        },
+        "private_key_flag": {
+          "elements": "str",
+          "type": "list"
+        },
+        "publish_to_ca": {
+          "elements": "str",
+          "type": "list"
+        },
+        "renewal_period_days": {
+          "type": "int"
+        },
+        "schema_version": {
+          "choices": [
+            2,
+            3,
+            4
+          ],
+          "type": "int"
+        },
+        "source_template": {
+          "type": "str"
+        },
+        "state": {
+          "choices": [
+            "present",
+            "absent"
+          ],
+          "default": "present",
+          "type": "str"
+        },
+        "validity_period_days": {
+          "type": "int"
+        }
+      },
+      "returns": {
+        "distinguished_name": {
+          "returned": "always",
+          "type": "str"
+        },
+        "template_oid": {
+          "returned": "always",
+          "type": "str"
+        }
+      }
+    },
+    "debug_ldap_client": {
+      "fragments": [],
+      "options": {},
+      "returns": {
+        "dns": {
+          "contains": {
+            "default_port": {
+              "returned": "dnspython is installed",
+              "type": "int"
+            },
+            "default_server": {
+              "returned": "dnspython is installed",
+              "type": "str"
+            },
+            "exception": {
+              "returned": "dnspython is installed",
+              "type": "str"
+            },
+            "records": {
+              "contains": {
+                "port": {
+                  "returned": "dnspython is installed and default_realm is found",
+                  "type": "int"
+                },
+                "priority": {
+                  "returned": "dnspython is installed and default_realm is found",
+                  "type": "int"
+                },
+                "target": {
+                  "returned": "dnspython is installed and default_realm is found",
+                  "type": "str"
+                },
+                "weight": {
+                  "returned": "dnspython is installed and default_realm is found",
+                  "type": "int"
+                }
+              },
+              "returned": "dnspython is installed",
+              "type": "list"
+            }
+          },
+          "returned": "always",
+          "type": "complex"
+        },
+        "kerberos": {
+          "contains": {
+            "default_cc": {
+              "contains": {
+                "creds": {
+                  "contains": {
+                    "client": {
+                      "returned": "krb5 >= 0.5.0 is installed",
+                      "type": "str"
+                    },
+                    "server": {
+                      "returned": "krb5 >= 0.5.0 is installed",
+                      "type": "str"
+                    }
+                  },
+                  "returned": "krb5 is installed",
+                  "type": "complex"
+                },
+                "exception": {
+                  "returned": "krb5 is installed",
+                  "type": "str"
+                },
+                "name": {
+                  "returned": "krb5 is installed",
+                  "type": "str"
+                },
+                "principal": {
+                  "returned": "krb5 is installed",
+                  "type": "str"
+                }
+              },
+              "returned": "krb5 is installed",
+              "type": "complex"
+            },
+            "default_realm": {
+              "returned": "krb5 is installed",
+              "type": "str"
+            },
+            "exception": {
+              "returned": "krb5 is installed",
+              "type": "str"
+            }
+          },
+          "returned": "always",
+          "type": "complex"
+        },
+        "packages": {
+          "contains": {
+            "dnspython": {
+              "returned": "always",
+              "type": "str"
+            },
+            "dpapi_ng": {
+              "returned": "always",
+              "type": "str"
+            },
+            "krb5": {
+              "returned": "always",
+              "type": "str"
+            },
+            "pyspnego": {
+              "returned": "always",
+              "type": "str"
+            },
+            "sansldap": {
+              "returned": "always",
+              "type": "str"
+            }
+          },
+          "returned": "always",
+          "type": "complex"
+        }
+      }
+    },
+    "domain": {
+      "fragments": [
+        "action_reboot"
+      ],
+      "options": {
+        "create_dns_delegation": {
+          "type": "bool"
+        },
+        "database_path": {
+          "type": "path"
+        },
+        "dns_domain_name": {
+          "required": true,
+          "type": "str"
+        },
+        "domain_mode": {
+          "type": "str"
+        },
+        "domain_netbios_name": {
+          "type": "str"
+        },
+        "forest_mode": {
+          "type": "str"
+        },
+        "install_dns": {
+          "default": true,
+          "type": "bool"
+        },
+        "log_path": {
+          "type": "path"
+        },
+        "safe_mode_password": {
+          "required": true,
+          "type": "str"
+        },
+        "sysvol_path": {
+          "type": "path"
+        }
+      },
+      "returns": {
+        "reboot_required": {
+          "returned": "always",
+          "type": "bool"
+        }
+      }
+    },
+    "domain_child": {
+      "fragments": [
+        "action_reboot"
+      ],
+      "options": {
+        "create_dns_delegation": {
+          "type": "bool"
+        },
+        "database_path": {
+          "type": "path"
+        },
+        "dns_domain_name": {
+          "type": "str"
+        },
+        "domain_admin_password": {
+          "required": true,
+          "type": "str"
+        },
+        "domain_admin_user": {
+          "required": true,
+          "type": "str"
+        },
+        "domain_mode": {
+          "type": "str"
+        },
+        "domain_type": {
+          "choices": [
+            "child",
+            "tree"
+          ],
+          "default": "child",
+          "type": "str"
+        },
+        "install_dns": {
+          "type": "bool"
+        },
+        "log_path": {
+          "type": "path"
+        },
+        "parent_domain_name": {
+          "type": "str"
+        },
+        "replication_source_dc": {
+          "type": "str"
+        },
+        "safe_mode_password": {
+          "required": true,
+          "type": "str"
+        },
+        "site_name": {
+          "type": "str"
+        },
+        "sysvol_path": {
+          "type": "path"
+        }
+      },
+      "returns": {
+        "reboot_required": {
+          "returned": "always",
+          "type": "bool"
+        }
+      }
+    },
+    "domain_controller": {
+      "fragments": [
+        "action_reboot"
+      ],
+      "options": {
+        "database_path": {
+          "type": "path"
+        },
+        "dns_domain_name": {
+          "type": "str"
+        },
+        "domain_admin_password": {
+          "required": true,
+          "type": "str"
+        },
+        "domain_admin_user": {
+          "required": true,
+          "type": "str"
+        },
+        "domain_log_path": {
+          "type": "path"
+        },
+        "install_dns": {
+          "type": "bool"
+        },
+        "install_media_path": {
+          "type": "path"
+        },
+        "local_admin_password": {
+          "type": "str"
+        },
+        "read_only": {
+          "default": false,
+          "type": "bool"
+        },
+        "replication_source_dc": {
+          "type": "str"
+        },
+        "safe_mode_password": {
+          "type": "str"
+        },
+        "site_name": {
+          "type": "str"
+        },
+        "state": {
+          "choices": [
+            "domain_controller",
+            "member_server"
+          ],
+          "required": true,
+          "type": "str"
+        },
+        "sysvol_path": {
+          "type": "path"
+        }
+      },
+      "returns": {
+        "reboot_required": {
+          "returned": "always",
+          "type": "bool"
+        }
+      }
+    },
+    "domain_trust": {
+      "fragments": [],
+      "options": {
+        "direction": {
+          "choices": [
+            "inbound",
+            "outbound",
+            "bidirectional"
+          ],
+          "type": "str"
+        },
+        "domain_server": {
+          "type": "str"
+        },
+        "name": {
+          "required": true,
+          "type": "str"
+        },
+        "selective_authentication": {
+          "type": "bool"
+        },
+        "state": {
+          "choices": [
+            "present",
+            "absent"
+          ],
+          "default": "present",
+          "type": "str"
+        },
+        "trust_password": {
+          "type": "str"
+        },
+        "type": {
+          "choices": [
+            "external",
+            "forest"
+          ],
+          "type": "str"
+        }
+      },
+      "returns": {
+        "distinguished_name": {
+          "returned": "success and trust exists",
+          "type": "str"
+        }
+      }
+    },
+    "fs_claim_rule": {
+      "fragments": [],
+      "options": {
+        "authorization_rules": {
+          "suboptions": {
+            "update": {
+              "choices": [
+                "set",
+                "append"
+              ],
+              "default": "set",
+              "type": "str"
+            },
+            "value": {
+              "elements": "str",
+              "required": true,
+              "type": "list"
+            }
+          },
+          "type": "dict"
+        },
+        "name": {
+          "required": true,
+          "type": "str"
+        },
+        "state": {
+          "choices": [
+            "present",
+            "absent"
+          ],
+          "default": "present",
+          "type": "str"
+        },
+        "transform_rules": {
+          "suboptions": {
+            "update": {
+              "choices": [
+                "set",
+                "append"
+              ],
+              "default": "set",
+              "type": "str"
+            },
+            "value": {
+              "elements": "str",
+              "required": true,
+              "type": "list"
+            }
+          },
+          "type": "dict"
+        }
+      },
+      "returns": {
+        "authorization_rules": {
+          "returned": "always",
+          "type": "str"
+        },
+        "transform_rules": {
+          "returned": "always",
+          "type": "str"
+        }
+      }
+    },
+    "fs_trust": {
+      "fragments": [],
+      "options": {
+        "access_control_policy_name": {
+          "type": "str"
+        },
+        "auto_update_enabled": {
+          "type": "bool"
+        },
+        "enabled": {
+          "type": "bool"
+        },
+        "encrypt_claims": {
+          "type": "bool"
+        },
+        "identifier": {
+          "elements": "str",
+          "type": "list"
+        },
+        "metadata_file": {
+          "type": "str"
+        },
+        "metadata_url": {
+          "type": "str"
+        },
+        "monitoring_enabled": {
+          "type": "bool"
+        },
+        "name": {
+          "required": true,
+          "type": "str"
+        },
+        "notes": {
+          "type": "str"
+        },
+        "saml_endpoint": {
+          "elements": "str",
+          "type": "list"
+        },
+        "signature_algorithm": {
+          "choices": [
+            "rsa_sha1",
+            "rsa_sha256"
+          ],
+          "type": "str"
+        },
+        "state": {
+          "choices": [
+            "present",
+            "absent"
+          ],
+          "default": "present",
+          "type": "str"
+        },
+        "token_lifetime": {
+          "type": "int"
+        },
+        "wsfed_endpoint": {
+          "type": "str"
+        }
+      },
+      "returns": {
+        "enabled": {
+          "returned": "success and state is present",
+          "type": "bool"
+        },
+        "identifier": {
+          "elements": "str",
+          "returned": "success and state is present",
+          "type": "list"
+        },
+        "monitoring_enabled": {
+          "returned": "success and state is present",
+          "type": "bool"
+        }
+      }
+    },
+    "gpo": {
+      "fragments": [],
+      "options": {
+        "domain_server": {
+          "type": "str"
+        },
+        "enabled": {
+          "type": "bool"
+        },
+        "enforced": {
+          "type": "bool"
+        },
+        "guid": {
+          "type": "str"
+        },
+        "name": {
+          "type": "str"
+        },
+        "order": {
+          "type": "int"
+        },
+        "state": {
+          "choices": [
+            "present",
+            "absent"
+          ],
+          "default": "present",
+          "type": "str"
+        },
+        "target": {
+          "required": true,
+          "type": "str"
+        }
+      },
+      "returns": {}
+    },
+    "group": {
+      "fragments": [
+        "ad_object"
+      ],
+      "options": {
+        "category": {
+          "choices": [
+            "distribution",
+            "security"
+          ],
+          "type": "str"
+        },
+        "homepage": {
+          "type": "str"
+        },
+        "managed_by": {
+          "type": "raw"
+        },
+        "members": {
+          "suboptions": {
+            "add": {
+              "elements": "raw",
+              "type": "list"
+            },
+            "lookup_failure_action": {
+              "choices": [
+                "fail",
+                "ignore",
+                "warn"
+              ],
+              "default": "fail",
+              "type": "str"
+            },
+            "remove": {
+              "elements": "raw",
+              "type": "list"
+            },
+            "set": {
+              "elements": "raw",
+              "type": "list"
+            }
+          },
+          "type": "dict"
+        },
+        "sam_account_name": {
+          "type": "str"
+        },
+        "scope": {
+          "choices": [
+            "domainlocal",
+            "global",
+            "universal"
+          ],
+          "type": "str"
+        }
+      },
+      "returns": {
+        "distinguished_name": {
+          "returned": "always",
+          "type": "str"
+        },
+        "object_guid": {
+          "returned": "always",
+          "type": "str"
+        },
+        "sid": {
+          "returned": "always",
+          "type": "str"
+        }
+      }
+    },
+    "kds_root_key": {
+      "fragments": [],
+      "options": {
+        "effective_time_hours": {
+          "default": 10,
+          "type": "int"
+        },
+        "key_id": {
+          "type": "str"
+        },
+        "match_by": {
+          "choices": [
+            "any",
+            "key_id",
+            "never"
+          ],
+          "default": "any",
+          "type": "str"
+        },
+        "state": {
+          "choices": [
+            "present",
+            "absent"
+          ],
+          "default": "present",
+          "type": "str"
+        }
+      },
+      "returns": {
+        "key_id": {
+          "returned": "always",
+          "type": "str"
+        }
+      }
+    },
+    "kds_root_key_info": {
+      "fragments": [],
+      "options": {
+        "key_id": {
+          "required": false,
+          "type": "str"
+        }
+      },
+      "returns": {
+        "kds_root_keys": {
+          "contains": {
+            "creation_time": {
+              "returned": "always",
+              "type": "str"
+            },
+            "effective_time": {
+              "returned": "always",
+              "type": "str"
+            },
+            "key_id": {
+              "returned": "always",
+              "type": "str"
+            },
+            "version_number": {
+              "returned": "always",
+              "type": "int"
+            }
+          },
+          "returned": "always",
+          "type": "list"
+        }
+      }
+    },
+    "membership": {
+      "fragments": [
+        "action_reboot"
+      ],
+      "options": {
+        "dns_domain_name": {
+          "type": "str"
+        },
+        "domain_admin_password": {
+          "type": "str"
+        },
+        "domain_admin_user": {
+          "type": "str"
+        },
+        "domain_ou_path": {
+          "type": "str"
+        },
+        "domain_server": {
+          "type": "str"
+        },
+        "hostname": {
+          "type": "str"
+        },
+        "offline_join_blob": {
+          "type": "str"
+        },
+        "state": {
+          "choices": [
+            "domain",
+            "workgroup"
+          ],
+          "required": true,
+          "type": "str"
+        },
+        "workgroup_name": {
+          "type": "str"
+        }
+      },
+      "returns": {
+        "reboot_required": {
+          "returned": "always",
+          "type": "bool"
+        }
+      }
+    },
+    "object": {
+      "fragments": [
+        "ad_object"
+      ],
+      "options": {
+        "type": {
+          "type": "str"
+        }
+      },
+      "returns": {
+        "distinguished_name": {
+          "returned": "always",
+          "type": "str"
+        },
+        "object_guid": {
+          "returned": "always",
+          "type": "str"
+        }
+      }
+    },
+    "object_info": {
+      "fragments": [],
+      "options": {
+        "domain_password": {
+          "type": "str"
+        },
+        "domain_server": {
+          "type": "str"
+        },
+        "domain_username": {
+          "type": "str"
+        },
+        "filter": {
+          "type": "str"
+        },
+        "identity": {
+          "type": "str"
+        },
+        "include_deleted": {
+          "default": false,
+          "type": "bool"
+        },
+        "ldap_filter": {
+          "type": "str"
+        },
+        "properties": {
+          "elements": "str",
+          "type": "list"
+        },
+        "search_base": {
+          "type": "str"
+        },
+        "search_scope": {
+          "choices": [
+            "base",
+            "one_level",
+            "subtree"
+          ],
+          "type": "str"
+        }
+      },
+      "returns": {
+        "objects": {
+          "elements": "dict",
+          "returned": "always",
+          "type": "list"
+        }
+      }
+    },
+    "offline_join": {
+      "fragments": [],
+      "options": {
+        "blob_path": {
+          "type": "str"
+        },
+        "domain_server": {
+          "type": "str"
+        },
+        "identity": {
+          "type": "str"
+        },
+        "name": {
+          "type": "str"
+        },
+        "path": {
+          "type": "str"
+        },
+        "provision_root_ca_certs": {
+          "default": false,
+          "type": "bool"
+        }
+      },
+      "returns": {
+        "blob": {
+          "returned": "always",
+          "type": "str"
+        }
+      }
+    },
+    "ou": {
+      "fragments": [
+        "ad_object"
+      ],
+      "options": {
+        "city": {
+          "type": "str"
+        },
+        "country": {
+          "type": "str"
+        },
+        "managed_by": {
+          "type": "raw"
+        },
+        "postal_code": {
+          "type": "str"
+        },
+        "state_province": {
+          "type": "str"
+        },
+        "street": {
+          "type": "str"
+        }
+      },
+      "returns": {
+        "distinguished_name": {
+          "returned": "always",
+          "type": "str"
+        },
+        "object_guid": {
+          "returned": "always",
+          "type": "str"
+        }
+      }
+    },
+    "pso": {
+      "fragments": [
+        "ad_object"
+      ],
+      "options": {
+        "complexity_enabled": {
+          "type": "bool"
+        },
+        "lockout_threshold": {
+          "type": "int"
+        },
+        "min_password_length": {
+          "type": "int"
+        },
+        "precedence": {
+          "type": "int"
+        },
+        "subjects": {
+          "elements": "str",
+          "type": "list"
+        }
+      },
+      "returns": {
+        "distinguished_name": {
+          "returned": "always",
+          "type": "str"
+        },
+        "object_guid": {
+          "returned": "always",
+          "type": "str"
+        }
+      }
+    },
+    "service_account": {
+      "fragments": [
+        "ad_object"
+      ],
+      "options": {
+        "allowed_to_retrieve_password": {
+          "suboptions": {
+            "add": {
+              "elements": "raw",
+              "type": "list"
+            },
+            "lookup_failure_action": {
+              "choices": [
+                "fail",
+                "ignore",
+                "warn"
+              ],
+              "default": "fail",
+              "type": "str"
+            },
+            "remove": {
+              "elements": "raw",
+              "type": "list"
+            },
+            "set": {
+              "elements": "raw",
+              "type": "list"
+            }
+          },
+          "type": "dict"
+        },
+        "delegates": {
+          "aliases": [
+            "principals_allowed_to_delegate"
+          ],
+          "suboptions": {
+            "add": {
+              "elements": "raw",
+              "type": "list"
+            },
+            "lookup_failure_action": {
+              "choices": [
+                "fail",
+                "ignore",
+                "warn"
+              ],
+              "default": "fail",
+              "type": "str"
+            },
+            "remove": {
+              "elements": "raw",
+              "type": "list"
+            },
+            "set": {
+              "elements": "raw",
+              "type": "list"
+            }
+          },
+          "type": "dict"
+        },
+        "dns_hostname": {
+          "type": "str"
+        },
+        "do_not_append_dollar_to_sam": {
+          "default": false,
+          "type": "bool"
+        },
+        "enabled": {
+          "type": "bool"
+        },
+        "kerberos_encryption_types": {
+          "suboptions": {
+            "add": {
+              "choices": [
+                "aes128",
+                "aes256",
+                "des",
+                "rc4"
+              ],
+              "elements": "str",
+              "type": "list"
+            },
+            "remove": {
+              "choices": [
+                "aes128",
+                "aes256",
+                "des",
+                "rc4"
+              ],
+              "elements": "str",
+              "type": "list"
+            },
+            "set": {
+              "choices": [
+                "aes128",
+                "aes256",
+                "des",
+                "rc4"
+              ],
+              "elements": "str",
+              "type": "list"
+            }
+          },
+          "type": "dict"
+        },
+        "outbound_auth_only": {
+          "default": false,
+          "type": "bool"
+        },
+        "sam_account_name": {
+          "type": "str"
+        },
+        "spn": {
+          "aliases": [
+            "spns"
+          ],
+          "suboptions": {
+            "add": {
+              "elements": "str",
+              "type": "list"
+            },
+            "remove": {
+              "elements": "str",
+              "type": "list"
+            },
+            "set": {
+              "elements": "str",
+              "type": "list"
+            }
+          },
+          "type": "dict"
+        },
+        "trusted_for_delegation": {
+          "type": "bool"
+        },
+        "upn": {
+          "type": "str"
+        }
+      },
+      "returns": {
+        "distinguished_name": {
+          "returned": "always",
+          "type": "str"
+        },
+        "object_guid": {
+          "returned": "always",
+          "type": "str"
+        },
+        "sid": {
+          "returned": "always",
+          "type": "str"
+        }
+      }
+    },
+    "site": {
+      "fragments": [
+        "ad_object"
+      ],
+      "options": {
+        "automatic_inter_site_topology_generation_enabled": {
+          "type": "bool"
+        },
+        "automatic_topology_generation_enabled": {
+          "type": "bool"
+        },
+        "managed_by": {
+          "type": "raw"
+        },
+        "universal_group_caching_enabled": {
+          "type": "bool"
+        }
+      },
+      "returns": {
+        "distinguished_name": {
+          "returned": "always",
+          "type": "str"
+        },
+        "object_guid": {
+          "returned": "always",
+          "type": "str"
+        }
+      }
+    },
+    "site_link": {
+      "fragments": [
+        "ad_object"
+      ],
+      "options": {
+        "cost": {
+          "type": "int"
+        },
+        "intersite_transport_protocol": {
+          "choices": [
+            "IP",
+            "SMTP"
+          ],
+          "default": "IP",
+          "type": "str"
+        },
+        "replication_frequency": {
+          "type": "int"
+        },
+        "sites_included": {
+          "elements": "str",
+          "type": "list"
+        }
+      },
+      "returns": {
+        "distinguished_name": {
+          "returned": "always",
+          "type": "str"
+        },
+        "object_guid": {
+          "returned": "always",
+          "type": "str"
+        }
+      }
+    },
+    "site_subnet": {
+      "fragments": [
+        "ad_object"
+      ],
+      "options": {
+        "location": {
+          "type": "str"
+        },
+        "site": {
+          "type": "str"
+        }
+      },
+      "returns": {
+        "distinguished_name": {
+          "returned": "always",
+          "type": "str"
+        },
+        "object_guid": {
+          "returned": "always",
+          "type": "str"
+        }
+      }
+    },
+    "user": {
+      "fragments": [
+        "ad_object"
+      ],
+      "options": {
+        "account_locked": {
+          "choices": [
+            false
+          ],
+          "type": "bool"
+        },
+        "city": {
+          "type": "str"
+        },
+        "company": {
+          "type": "str"
+        },
+        "country": {
+          "type": "str"
+        },
+        "delegates": {
+          "aliases": [
+            "principals_allowed_to_delegate"
+          ],
+          "suboptions": {
+            "add": {
+              "elements": "raw",
+              "type": "list"
+            },
+            "lookup_failure_action": {
+              "choices": [
+                "fail",
+                "ignore",
+                "warn"
+              ],
+              "default": "fail",
+              "type": "str"
+            },
+            "remove": {
+              "elements": "raw",
+              "type": "list"
+            },
+            "set": {
+              "elements": "raw",
+              "type": "list"
+            }
+          },
+          "type": "dict"
+        },
+        "email": {
+          "type": "str"
+        },
+        "enabled": {
+          "type": "bool"
+        },
+        "firstname": {
+          "type": "str"
+        },
+        "groups": {
+          "suboptions": {
+            "add": {
+              "elements": "raw",
+              "type": "list"
+            },
+            "lookup_failure_action": {
+              "aliases": [
+                "missing_behaviour"
+              ],
+              "choices": [
+                "fail",
+                "ignore",
+                "warn"
+              ],
+              "default": "fail",
+              "type": "str"
+            },
+            "permissions_failure_action": {
+              "choices": [
+                "fail",
+                "ignore",
+                "warn"
+              ],
+              "default": "fail",
+              "type": "str"
+            },
+            "remove": {
+              "elements": "raw",
+              "type": "list"
+            },
+            "set": {
+              "elements": "raw",
+              "type": "list"
+            }
+          },
+          "type": "dict"
+        },
+        "password": {
+          "type": "str"
+        },
+        "password_expired": {
+          "type": "bool"
+        },
+        "password_never_expires": {
+          "type": "bool"
+        },
+        "postal_code": {
+          "type": "str"
+        },
+        "sam_account_name": {
+          "type": "str"
+        },
+        "spn": {
+          "aliases": [
+            "spns"
+          ],
+          "suboptions": {
+            "add": {
+              "elements": "str",
+              "type": "list"
+            },
+            "remove": {
+              "elements": "str",
+              "type": "list"
+            },
+            "set": {
+              "elements": "str",
+              "type": "list"
+            }
+          },
+          "type": "dict"
+        },
+        "state_province": {
+          "type": "str"
+        },
+        "street": {
+          "type": "str"
+        },
+        "surname": {
+          "aliases": [
+            "lastname"
+          ],
+          "type": "str"
+        },
+        "update_password": {
+          "choices": [
+            "always",
+            "on_create",
+            "when_changed"
+          ],
+          "default": "always",
+          "type": "str"
+        },
+        "upn": {
+          "type": "str"
+        },
+        "user_cannot_change_password": {
+          "type": "bool"
+        }
+      },
+      "returns": {
+        "distinguished_name": {
+          "returned": "always",
+          "type": "str"
+        },
+        "object_guid": {
+          "returned": "always",
+          "type": "str"
+        },
+        "sid": {
+          "returned": "always",
+          "type": "str"
+        }
+      }
+    }
+  },
+  "reference": {
+    "collection": "microsoft.ad",
+    "commit": "0449b870af3054ea8b02c5d5b70764138ce34bb7",
+    "license": "GPL-3.0-or-later",
+    "version": "1.12.1"
+  }
+}

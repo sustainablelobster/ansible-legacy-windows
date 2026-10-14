@@ -5,7 +5,8 @@ dns_zone_boundary_program: |
   wmi = types.ModuleType('dns_zone_boundary_wmi')
   exec({{ lookup('file',
       (dns_zone_source_root | default(playbook_dir + '/../..')) +
-      '/plugins/module_utils/legacy_windows_wmi.py') | to_json }}, wmi.__dict__)
+      '/legacy_windows/' +
+      'plugins/module_utils/legacy_windows_wmi.py') | to_json }}, wmi.__dict__)
   with wmi.WmiConnection() as connection:
       services = connection.query('SELECT * FROM Win32_Service',
           ['Name', 'DisplayName', 'StartMode', 'PathName', 'StartName',

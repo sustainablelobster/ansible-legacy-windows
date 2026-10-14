@@ -3,28 +3,34 @@ hotfix_helper_sources:
   - - legacy_windows_regex
     - >-
       {{ lookup('file', playbook_dir +
-      '/../../plugins/module_utils/legacy_windows_regex.py') | b64encode }}
+      '/../../legacy_windows/' +
+      'plugins/module_utils/legacy_windows_regex.py') | b64encode }}
   - - legacy_windows_find_match
     - >-
       {{ lookup('file', playbook_dir +
-      '/../../plugins/module_utils/legacy_windows_find_match.py') | b64encode }}
+      '/../../legacy_windows/' +
+      'plugins/module_utils/legacy_windows_find_match.py') | b64encode }}
   - - legacy_windows_wmi
     - >-
       {{ lookup('file', playbook_dir +
-      '/../../plugins/module_utils/legacy_windows_wmi.py') | b64encode }}
+      '/../../legacy_windows/' +
+      'plugins/module_utils/legacy_windows_wmi.py') | b64encode }}
   - - legacy_windows_service
     - >-
       {{ lookup('file', playbook_dir +
-      '/../../plugins/module_utils/legacy_windows_service.py') | b64encode }}
+      '/../../legacy_windows/' +
+      'plugins/module_utils/legacy_windows_service.py') | b64encode }}
   - - legacy_windows_hotfix_command
     - >-
       {{ lookup('file', playbook_dir +
-      '/../../plugins/module_utils/legacy_windows_hotfix_command.py') |
+      '/../../legacy_windows/' +
+      'plugins/module_utils/legacy_windows_hotfix_command.py') |
       b64encode }}
   - - legacy_windows_hotfix
     - >-
       {{ lookup('file', playbook_dir +
-      '/../../plugins/module_utils/legacy_windows_hotfix.py') | b64encode }}
+      '/../../legacy_windows/' +
+      'plugins/module_utils/legacy_windows_hotfix.py') | b64encode }}
 hotfix_program: |
   {{ hotfix_fixture }}
 hotfix_fixture: |

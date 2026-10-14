@@ -20,9 +20,9 @@ def classic_server(monkeypatch: pytest.MonkeyPatch) -> Any:
     :param monkeypatch: Scoped sibling imports and native boundaries.
     :returns: Helper, connection, actual row state and observed mutation calls.
     """
-    monkeypatch.syspath_prepend(str(ROOT / "plugins/module_utils"))
+    monkeypatch.syspath_prepend(str(ROOT / "legacy_windows/plugins/module_utils"))
     helper = load_module(
-        ROOT / "plugins/module_utils/legacy_windows_dns_record.py",
+        ROOT / "legacy_windows/plugins/module_utils/legacy_windows_dns_record.py",
         "classic_records_test",
     )
     state: dict[str, Any] = {

@@ -24,9 +24,10 @@ def native_provider(monkeypatch: pytest.MonkeyPatch) -> Any:
     :param monkeypatch: Scoped native imports and runtime values.
     :returns: Helper, library, backing array and observable native calls.
     """
-    monkeypatch.syspath_prepend(str(ROOT / "plugins/module_utils"))
+    monkeypatch.syspath_prepend(str(ROOT / "legacy_windows/plugins/module_utils"))
     module = load_module(
-        ROOT / "plugins/module_utils/legacy_windows_capability_manage.py",
+        ROOT
+        / "legacy_windows/plugins/module_utils/legacy_windows_capability_manage.py",
         "manage_tested",
     )
     rows = (module.metadata._Capability * 3)(
@@ -102,7 +103,8 @@ def test_native_version_ignores_manifest_limited_python_version(
     native_version = provider.module._windows_version
     # Load an unpatched copy so the real native record binding is exercised.
     module = load_module(
-        ROOT / "plugins/module_utils/legacy_windows_capability_manage.py",
+        ROOT
+        / "legacy_windows/plugins/module_utils/legacy_windows_capability_manage.py",
         "version_tested",
     )
 
@@ -130,7 +132,8 @@ def test_actual_version_failure_reports_ntstatus_without_silent_guess(
     provider: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     module = load_module(
-        ROOT / "plugins/module_utils/legacy_windows_capability_manage.py",
+        ROOT
+        / "legacy_windows/plugins/module_utils/legacy_windows_capability_manage.py",
         "version_failed",
     )
     library = SimpleNamespace(RtlGetVersion=Mock(return_value=-1073741823))

@@ -8,7 +8,7 @@
   vars:
     route_wmi_source: >-
       {{ lookup('ansible.builtin.file', playbook_dir ~
-         '/../../plugins/module_utils/legacy_windows_wmi.py') }}
+         '/../../legacy_windows/plugins/module_utils/legacy_windows_wmi.py') }}
     route_script: >-
       {{ route_wmi_source ~ ('%c' | format(10)) ~ route_fixture }}
   tasks:

@@ -22,7 +22,7 @@ def source_plugins(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str,
     :param monkeypatch: Fixture restoring the packaging checker's configuration.
     :returns: Exact plugin paths and bytes expected in the collection.
     """
-    root = tmp_path / "source"
+    root = tmp_path / "source" / "legacy_windows"
     contents = {
         "plugins/modules/win_ping.py": b"print('pong')\n",
         "plugins/action/win_ping.py": b"# controller action\n",
@@ -35,7 +35,7 @@ def source_plugins(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str,
     cache = root / "plugins/modules/__pycache__/win_ping.pyc"
     cache.parent.mkdir()
     cache.write_bytes(b"cache")
-    monkeypatch.setattr(checker, "ROOT", root)
+    monkeypatch.setattr(checker, "ROOT", root.parent)
     monkeypatch.setattr(checker, "LICENSE_AND_NOTICE_FILES", ("LICENSE",))
     monkeypatch.setattr(
         checker, "REQUIRED_FILES", {"MANIFEST.json", "FILES.json", "LICENSE"}
@@ -43,12 +43,18 @@ def source_plugins(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str,
     return contents
 
 
-def _archive(tmp_path: Path, plugins: dict[str, bytes]) -> Path:
+def _archive(
+    tmp_path: Path,
+    plugins: dict[str, bytes],
+    *,
+    collection: str = "legacy_windows",
+    extra: dict[str, bytes] | None = None,
+) -> Path:
     manifest = json.dumps(
         {
             "collection_info": {
                 "namespace": "sustainablelobster",
-                "name": "legacy_windows",
+                "name": collection,
                 "license": [],
                 "license_file": "LICENSE",
             }
@@ -59,6 +65,7 @@ def _archive(tmp_path: Path, plugins: dict[str, bytes]) -> Path:
         "MANIFEST.json": manifest,
         "FILES.json": b"{}",
         "LICENSE": b"license bytes\n",
+        **(extra or {}),
     }
     path = tmp_path / "collection.tar"
     with tarfile.open(path, "w") as archive:
@@ -72,7 +79,7 @@ def _archive(tmp_path: Path, plugins: dict[str, bytes]) -> Path:
 def test_source_inventory_includes_untracked_plugins_not_caches(
     plugins: dict[str, bytes],
 ) -> None:
-    assert checker._plugin_files(checker.ROOT) == plugins
+    assert checker._plugin_files(checker.ROOT / "legacy_windows") == plugins
 
 
 def test_archive_accepts_exact_plugin_paths_and_bytes(
@@ -136,3 +143,61 @@ def test_archive_rejects_github_directory(
         archive.addfile(directory)
     with pytest.raises(SystemExit, match="excluded path: \\.github"):
         checker._inspect_archive(artifact, plugins)
+
+
+@pytest.fixture(name="ad_contents")
+def ad_source_files(plugins: dict[str, bytes]) -> dict[str, bytes]:
+    """Supply the AD collection's own files rather than Windows notices.
+
+    :param plugins: The common byte-exact plugin inventory fixture.
+    :returns: AD-owned documents and attribution expected in its archive.
+    """
+    contents = {
+        name: (name + "\n").encode()
+        for name in checker._required_files("legacy_ad")
+        if name not in ("MANIFEST.json", "FILES.json", "LICENSE")
+    }
+    contents["LICENSE"] = b"license bytes\n"
+    root = checker.ROOT / "legacy_ad"
+    for name, data in {**plugins, **contents}.items():
+        path = root / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
+    return contents
+
+
+def test_ad_archive_preserves_its_own_plugins_and_notices(
+    tmp_path: Path, plugins: dict[str, bytes], ad_contents: dict[str, bytes]
+) -> None:
+    artifact = _archive(tmp_path, plugins, collection="legacy_ad", extra=ad_contents)
+    manifest = checker._inspect_archive(artifact, plugins, collection="legacy_ad")
+    assert json.loads(manifest)["collection_info"]["name"] == "legacy_ad"
+    assert b"ansible-windows" not in manifest
+
+
+def test_ad_archive_rejects_a_windows_collection_identity(
+    tmp_path: Path, plugins: dict[str, bytes], ad_contents: dict[str, bytes]
+) -> None:
+    artifact = _archive(tmp_path, plugins, extra=ad_contents)
+    with pytest.raises(SystemExit, match="wrong collection identity"):
+        checker._inspect_archive(artifact, plugins, collection="legacy_ad")
+
+
+def test_ad_archive_rejects_an_altered_upstream_license(
+    tmp_path: Path, plugins: dict[str, bytes], ad_contents: dict[str, bytes]
+) -> None:
+    altered = dict(ad_contents)
+    notice = "LICENSES/microsoft-ad-GPL-3.0-or-later.txt"
+    altered[notice] = b"altered upstream terms\n"
+    artifact = _archive(tmp_path, plugins, collection="legacy_ad", extra=altered)
+    with pytest.raises(SystemExit, match="license or notice differs from source"):
+        checker._inspect_archive(artifact, plugins, collection="legacy_ad")
+
+
+@pytest.mark.parametrize("sibling", ["legacy_ad", "legacy_windows"])
+def test_collection_archive_rejects_a_nested_sibling_collection(
+    tmp_path: Path, plugins: dict[str, bytes], sibling: str
+) -> None:
+    included = dict(plugins, **{sibling + "/galaxy.yml": b"wrong collection\n"})
+    with pytest.raises(SystemExit, match="excluded path"):
+        checker._inspect_archive(_archive(tmp_path, included), plugins)

@@ -1,0 +1,252 @@
+---
+# Copyright 2026 sustainablelobster
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Requires an isolated writable directory; changes only uniquely named OUs.
+- name: Verify native OU lifecycles on the minimum Windows target runtime
+  hosts: legacy_ad
+  gather_facts: false
+  module_defaults:
+    group/sustainablelobster.legacy_ad.domain:
+      domain_server: '{{ ad_domain_server }}'
+      domain_username: '{{ ad_domain_username }}'
+      domain_password: '{{ ad_domain_password }}'
+  tasks:
+    - name: Allocate unique test OU names and identify the interpreter
+      sustainablelobster.legacy_windows.win_command:
+        argv:
+          - '{{ ansible_python_interpreter }}'
+          - -c
+          - >-
+            import json, sys, uuid;
+            print(json.dumps({"python": list(sys.version_info[:3]),
+            "name": "Ansible-Owned-" + uuid.uuid4().hex}))
+      register: ad_ou_runtime
+      changed_when: false
+
+    - name: Require Python 3.4.4 and record owned names
+      ansible.builtin.assert:
+        that: (ad_ou_runtime.stdout | from_json).python == [3, 4, 4]
+
+    - name: Record the unique fixture name
+      ansible.builtin.set_fact:
+        ad_ou_name: '{{ (ad_ou_runtime.stdout | from_json).name }}'
+
+    - name: Compile the installed closure before importing the AD implementation
+      ansible.builtin.include_tasks: tasks/legacy_ad_compile.yml
+
+    - name: Exercise owned OUs and restore their absence
+      block:
+        - name: Preview creation of the protected parent OU
+          sustainablelobster.legacy_ad.ou:
+            name: '{{ ad_ou_name }}'
+            path: '{{ ad_domain_dn }}'
+            description: Initial description
+          check_mode: true
+          diff: true
+          register: ad_ou_preview
+
+        - name: Confirm prediction did not create a directory object
+          sustainablelobster.legacy_ad.object_info:
+            identity: 'OU={{ ad_ou_name }},{{ ad_domain_dn }}'
+          register: ad_ou_before
+
+        - name: Verify creation prediction and absence
+          ansible.builtin.assert:
+            that:
+              - ad_ou_preview.changed
+              - >-
+                ad_ou_preview.object_guid ==
+                '00000000-0000-0000-0000-000000000000'
+              - ad_ou_before.objects == []
+
+        - name: Create the protected parent OU
+          sustainablelobster.legacy_ad.ou: &ad_parent_request
+            name: '{{ ad_ou_name }}'
+            path: '{{ ad_domain_dn }}'
+            description: Initial description
+          register: ad_ou_parent
+
+        - name: Repeat the same request
+          sustainablelobster.legacy_ad.ou: *ad_parent_request
+          register: ad_ou_repeated
+
+        - name: Read the created object's native properties
+          sustainablelobster.legacy_ad.object_info:
+            identity: '{{ ad_ou_parent.object_guid }}'
+            properties: ['description', 'ProtectedFromAccidentalDeletion']
+          register: ad_ou_observed
+
+        - name: Verify idempotence and default deletion protection
+          ansible.builtin.assert:
+            that:
+              - ad_ou_parent.changed
+              - not ad_ou_repeated.changed
+              - ad_ou_observed.objects | length == 1
+              - ad_ou_observed.objects[0].Description == 'Initial description'
+              - ad_ou_observed.objects[0].ProtectedFromAccidentalDeletion
+
+        - name: Create a protected child OU
+          sustainablelobster.legacy_ad.ou:
+            name: Child
+            path: '{{ ad_ou_parent.distinguished_name }}'
+          register: ad_ou_child
+
+        - name: Preview a generic container inside the owned OU
+          sustainablelobster.legacy_ad.object:
+            name: Generic
+            type: container
+            path: '{{ ad_ou_parent.distinguished_name }}'
+            description: Generic container
+          check_mode: true
+          register: ad_generic_preview
+
+        - name: Create the generic container
+          sustainablelobster.legacy_ad.object: &ad_generic_request
+            name: Generic
+            type: container
+            path: '{{ ad_ou_parent.distinguished_name }}'
+            description: Generic container
+          register: ad_generic_created
+
+        - name: Repeat generic object creation
+          sustainablelobster.legacy_ad.object: *ad_generic_request
+          register: ad_generic_repeated
+
+        - name: Attempt OU removal using the generic object's identity
+          sustainablelobster.legacy_ad.ou:
+            identity: '{{ ad_generic_created.object_guid }}'
+            state: absent
+          register: ad_wrong_class
+
+        - name: Independently verify the generic object still exists
+          sustainablelobster.legacy_ad.object_info:
+            identity: '{{ ad_generic_created.object_guid }}'
+            properties: ['Description']
+          register: ad_generic_observed
+
+        - name: Verify generic prediction, idempotence and class-safe OU lookup
+          ansible.builtin.assert:
+            that:
+              - ad_generic_preview.changed
+              - ad_generic_created.changed
+              - not ad_generic_repeated.changed
+              - not ad_wrong_class.changed
+              - ad_generic_observed.objects | length == 1
+              - ad_generic_observed.objects[0].ObjectClass == 'container'
+              - >-
+                ad_generic_observed.objects[0].Description ==
+                'Generic container'
+
+        - name: Rename the generic object without changing its identity
+          sustainablelobster.legacy_ad.object:
+            identity: '{{ ad_generic_created.object_guid }}'
+            type: container
+            name: GenericRenamed
+          register: ad_generic_renamed
+
+        - name: Verify generic rename preserved the GUID
+          ansible.builtin.assert:
+            that:
+              - ad_generic_renamed.changed
+              - ad_generic_renamed.object_guid == ad_generic_created.object_guid
+
+        - name: Preview attribute changes
+          sustainablelobster.legacy_ad.ou:
+            identity: '{{ ad_ou_parent.object_guid }}'
+            description: Updated description
+            attributes:
+              set:
+                businessCategory: ['first', 'second']
+          check_mode: true
+          register: ad_ou_update_preview
+
+        - name: Apply attribute changes
+          sustainablelobster.legacy_ad.ou: &ad_parent_update
+            identity: '{{ ad_ou_parent.object_guid }}'
+            description: Updated description
+            attributes:
+              set:
+                businessCategory: ['first', 'second']
+          register: ad_ou_updated
+
+        - name: Repeat attribute changes
+          sustainablelobster.legacy_ad.ou: *ad_parent_update
+          register: ad_ou_update_repeated
+
+        - name: Verify attribute update idempotence
+          ansible.builtin.assert:
+            that:
+              - ad_ou_update_preview.changed
+              - ad_ou_updated.changed
+              - not ad_ou_update_repeated.changed
+
+        - name: Apply a case-only description change
+          sustainablelobster.legacy_ad.ou: &ad_case_update
+            identity: '{{ ad_ou_parent.object_guid }}'
+            description: UPDATED description
+          register: ad_ou_case_updated
+
+        - name: Repeat the case-only change
+          sustainablelobster.legacy_ad.ou: *ad_case_update
+          register: ad_ou_case_repeated
+
+        - name: Observe the case-only description independently
+          sustainablelobster.legacy_ad.object_info:
+            identity: '{{ ad_ou_parent.object_guid }}'
+            properties: ['Description']
+          register: ad_ou_case_observed
+
+        - name: Verify case-only updates and repeat-run stability
+          ansible.builtin.assert:
+            that:
+              - ad_ou_case_updated.changed
+              - not ad_ou_case_repeated.changed
+              - >-
+                ad_ou_case_observed.objects[0].Description ==
+                'UPDATED description'
+
+        - name: Rename the child OU while preserving its GUID
+          sustainablelobster.legacy_ad.ou:
+            identity: '{{ ad_ou_child.object_guid }}'
+            name: Renamed
+          register: ad_ou_renamed
+
+        - name: Require the renamed child retained its GUID
+          ansible.builtin.assert:
+            that:
+              - ad_ou_renamed.changed
+              - ad_ou_renamed.object_guid == ad_ou_child.object_guid
+
+        - name: Preview removal of the protected subtree
+          sustainablelobster.legacy_ad.ou:
+            identity: '{{ ad_ou_parent.object_guid }}'
+            state: absent
+          check_mode: true
+          register: ad_ou_delete_preview
+
+        - name: Remove the protected subtree and its generic object
+          sustainablelobster.legacy_ad.ou:
+            identity: '{{ ad_ou_parent.object_guid }}'
+            state: absent
+          register: ad_ou_deleted
+
+        - name: Repeat subtree removal
+          sustainablelobster.legacy_ad.ou:
+            name: '{{ ad_ou_name }}'
+            path: '{{ ad_domain_dn }}'
+            state: absent
+          register: ad_ou_delete_repeated
+
+        - name: Verify deletion predictions and repeat runs
+          ansible.builtin.assert:
+            that:
+              - ad_ou_delete_preview.changed
+              - ad_ou_deleted.changed
+              - not ad_ou_delete_repeated.changed
+
+      always:
+        - name: Remove any remaining uniquely owned parent subtree
+          sustainablelobster.legacy_ad.ou:
+            name: '{{ ad_ou_name }}'
+            path: '{{ ad_domain_dn }}'
+            state: absent

@@ -24,7 +24,7 @@ def system_helper(monkeypatch: pytest.MonkeyPatch) -> Any:
     :returns: The fixed-purpose SYSTEM token helper.
     """
     result = load_module(
-        ROOT / "plugins/module_utils/legacy_windows_system_token.py",
+        ROOT / "legacy_windows/plugins/module_utils/legacy_windows_system_token.py",
         "tested_system_token",
     )
     monkeypatch.setattr(ctypes, "WinError", native_error, raising=False)

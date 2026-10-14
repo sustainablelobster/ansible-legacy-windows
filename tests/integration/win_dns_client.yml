@@ -8,7 +8,7 @@
   vars:
     dns_client_wmi_source: >-
       {{ lookup('ansible.builtin.file', playbook_dir ~
-         '/../../plugins/module_utils/legacy_windows_wmi.py') }}
+         '/../../legacy_windows/plugins/module_utils/legacy_windows_wmi.py') }}
     dns_client_script: >-
       {{ dns_client_wmi_source ~ ('%c' | format(10)) ~ dns_client_fixture }}
   tasks:

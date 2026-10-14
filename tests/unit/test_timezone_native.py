@@ -44,9 +44,9 @@ def timezone_helper(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
     :param monkeypatch: Scoped helper imports and native-collation substitute.
     :returns: Imported timezone helper without executing native operations.
     """
-    monkeypatch.syspath_prepend(str(ROOT / "plugins/module_utils"))
+    monkeypatch.syspath_prepend(str(ROOT / "legacy_windows/plugins/module_utils"))
     helper = load_module(
-        ROOT / "plugins/module_utils/legacy_windows_timezone.py",
+        ROOT / "legacy_windows/plugins/module_utils/legacy_windows_timezone.py",
         "tested_timezone_native",
     )
     monkeypatch.setattr(

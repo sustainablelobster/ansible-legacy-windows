@@ -20,7 +20,7 @@ def regex_helper(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
     :param monkeypatch: Restore the sibling-module search path after each test.
     :returns: The isolated regex helper.
     """
-    source = ROOT / "plugins/module_utils/legacy_windows_regex.py"
+    source = ROOT / "legacy_windows/plugins/module_utils/legacy_windows_regex.py"
     monkeypatch.syspath_prepend(str(source.parent))
     spec = importlib.util.spec_from_file_location("tested_regex", source)
     assert spec is not None and spec.loader is not None

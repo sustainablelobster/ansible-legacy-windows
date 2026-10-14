@@ -18,7 +18,8 @@
       observer={'__name__':'regex_legacy_protection',
                 'WMI_SOURCE':base64.b64decode(
                 {{ lookup('file', playbook_dir +
-                '/../../plugins/module_utils/legacy_windows_wmi.py') |
+                '/../../legacy_windows/' +
+                'plugins/module_utils/legacy_windows_wmi.py') |
                 b64encode | to_json }}).decode('utf-8')}
       exec(base64.b64decode({{ lookup('file', playbook_dir +
       '/fixtures/native_async.py') | b64encode | to_json }}).decode('utf-8'),
@@ -194,8 +195,8 @@
         argv:
           - '{{ ansible_playbook_python }}'
           - >-
-            {{ regex_legacy_verifier | default(
-            playbook_dir + '/../../scripts/' +
+            {{ regex_legacy_verifier |
+            default(playbook_dir + '/../../scripts/' +
             'verify_regex_selection_legacy_capture.py') }}
           - '{{ regex_legacy_capture }}'
       delegate_to: localhost

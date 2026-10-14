@@ -9,7 +9,8 @@ package_signature_paths_program: |
   helper=types.ModuleType('{{ name }}')
   sys.modules[helper.__name__]=helper
   source='{{ lookup("file",
-      playbook_dir + "/../../plugins/module_utils/" + name + ".py")
+      playbook_dir + "/../../legacy_windows/" +
+      "plugins/module_utils/" + name + ".py")
       | b64encode }}'
   exec(compile(base64.b64decode(source),helper.__name__+'.py','exec'),helper.__dict__)
   {% endfor %}

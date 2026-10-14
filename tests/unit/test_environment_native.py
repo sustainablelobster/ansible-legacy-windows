@@ -20,7 +20,7 @@ def environment_helper() -> ModuleType:
 
     :returns: Imported target helper.
     """
-    path = ROOT / "plugins/module_utils/legacy_windows_environment.py"
+    path = ROOT / "legacy_windows/plugins/module_utils/legacy_windows_environment.py"
     return load_module(path, "tested_environment_native")
 
 

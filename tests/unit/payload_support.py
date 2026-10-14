@@ -14,7 +14,7 @@ from typing import Any
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
-HELPER = ROOT / "plugins" / "module_utils" / "legacy_windows_module.py"
+HELPER = ROOT / "legacy_windows/plugins" / "module_utils" / "legacy_windows_module.py"
 
 
 def load_module(source: Path, name: str) -> ModuleType:
@@ -48,7 +48,7 @@ def load_payload(name: str, monkeypatch: pytest.MonkeyPatch) -> ModuleType:
     :returns: The payload without executing its JSON entry point.
     """
     monkeypatch.syspath_prepend(str(HELPER.parent))
-    source = ROOT / "plugins" / "modules" / (name + ".py")
+    source = ROOT / "legacy_windows/plugins" / "modules" / (name + ".py")
     module = load_module(source, "tested_" + name)
     helper = sys.modules["legacy_windows_module"]
     monkeypatch.setattr(helper, "_number_symbols", lambda: (".", "+", "-"))
@@ -93,7 +93,7 @@ def run_payload(
     """
     payload_directory = tmp_path / "payload"
     payload_directory.mkdir(exist_ok=True)
-    source = ROOT / "plugins" / "modules" / (name + ".py")
+    source = ROOT / "legacy_windows/plugins" / "modules" / (name + ".py")
     module_path = payload_directory / source.name
     shutil.copyfile(source, module_path)
     shutil.copyfile(HELPER, payload_directory / HELPER.name)

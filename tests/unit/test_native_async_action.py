@@ -16,9 +16,15 @@ from ansible.errors import AnsibleActionFail  # type: ignore[import-untyped]
 from ansible.parsing.dataloader import DataLoader  # type: ignore[import-untyped]
 from ansible.plugins.action import normal  # type: ignore[import-untyped]
 from ansible.template import Templar  # type: ignore[import-untyped]
-
-from plugins.plugin_utils._module import PythonModuleAction
-from plugins.plugin_utils._runas import NativeRunasAction
+from ansible_collections.sustainablelobster.legacy_windows.plugins.plugin_utils import (
+    runtime,
+)
+from ansible_collections.sustainablelobster.legacy_windows.plugins.plugin_utils._runas import (
+    NativeRunasAction,
+)
+from ansible_collections.sustainablelobster.legacy_windows.plugins.plugin_utils.runtime import (
+    PythonModuleAction,
+)
 
 _REMOTE = r"C:\Users\Test User\Temp\ansible-tmp-owned"
 _ROOT = Path(__file__).resolve().parents[2]
@@ -185,7 +191,8 @@ def test_automatic_poll_rejected_before_staging(
     # Real default loader resolution runs in a fresh-process regression. Do not
     # initialize its process-global collection finder before other unit fixtures.
     monkeypatch.setattr(
-        "plugins.plugin_utils._module.action_loader",
+        runtime,
+        "action_loader",
         SimpleNamespace(get=lambda name, class_only: SimpleNamespace()),
     )
     with pytest.raises(AnsibleActionFail, match="action_plugins.*ansible.cfg"):
@@ -201,7 +208,8 @@ def test_automatic_poll_preserves_task_and_core_launch_with_explicit_handler(
     action, events = _action(monkeypatch)
     action._task.poll = poll
     monkeypatch.setattr(
-        "plugins.plugin_utils._module.action_loader",
+        runtime,
+        "action_loader",
         SimpleNamespace(
             get=lambda name, class_only: SimpleNamespace(
                 _supports_native_windows_polling=True
@@ -382,7 +390,9 @@ def test_private_wrapper_uses_real_want_json_configuration_and_effective_vars(
             "ansible_win_async_startup_timeout": 19,
         }
     bits, path = action._configure_module("ansible.legacy.async_wrapper", {}, variables)
-    assert path == str(_ROOT / "plugins/module_utils/legacy_windows_async_wrapper.py")
+    assert path == str(
+        _ROOT / "legacy_windows/plugins/module_utils/legacy_windows_async_wrapper.py"
+    )
     assert bits.module_style == "non_native_want_json"
     assert bits.shebang == r"#!C:\Python34\python.exe"
     assert b"_STARTUP_TIMEOUT = 11\n" in bits.b_module_data

@@ -17,9 +17,10 @@ def native_helper(monkeypatch: pytest.MonkeyPatch) -> Any:
     :param monkeypatch: Scoped helper imports and native boundary replacements.
     :returns: Helper, connection recorder and provider object.
     """
-    monkeypatch.syspath_prepend(str(ROOT / "plugins/module_utils"))
+    monkeypatch.syspath_prepend(str(ROOT / "legacy_windows/plugins/module_utils"))
     helper = load_module(
-        ROOT / "plugins/module_utils/legacy_windows_dhcp_lease.py", "dhcp_native_test"
+        ROOT / "legacy_windows/plugins/module_utils/legacy_windows_dhcp_lease.py",
+        "dhcp_native_test",
     )
     connection = MagicMock()
     monkeypatch.setattr(helper, "WmiConnection", lambda _: connection)

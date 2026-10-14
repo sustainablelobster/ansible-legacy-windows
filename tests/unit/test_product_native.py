@@ -25,9 +25,10 @@ def product_helper(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
     :param monkeypatch: Scoped import path and decoder substitution.
     :returns: Reader imported with the development interpreter.
     """
-    monkeypatch.syspath_prepend(str(ROOT / "plugins/module_utils"))
+    monkeypatch.syspath_prepend(str(ROOT / "legacy_windows/plugins/module_utils"))
     helper = load_module(
-        ROOT / "plugins/module_utils/legacy_windows_product.py", "tested_product"
+        ROOT / "legacy_windows/plugins/module_utils/legacy_windows_product.py",
+        "tested_product",
     )
     monkeypatch.setattr(helper, "decode_product_key", Mock(return_value="decoded key"))
     return helper

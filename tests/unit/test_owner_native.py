@@ -27,9 +27,10 @@ def owner_helper(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
     :param monkeypatch: Scoped import-path changes.
     :returns: Independently loaded owner helper.
     """
-    monkeypatch.syspath_prepend(str(ROOT / "plugins/module_utils"))
+    monkeypatch.syspath_prepend(str(ROOT / "legacy_windows/plugins/module_utils"))
     return load_module(
-        ROOT / "plugins/module_utils/legacy_windows_owner.py", "tested_owner_native"
+        ROOT / "legacy_windows/plugins/module_utils/legacy_windows_owner.py",
+        "tested_owner_native",
     )
 
 

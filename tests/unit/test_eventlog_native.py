@@ -21,9 +21,9 @@ def native_helper(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
     :param monkeypatch: Scoped helper import path.
     :returns: Loaded target helper.
     """
-    monkeypatch.syspath_prepend(str(ROOT / "plugins/module_utils"))
+    monkeypatch.syspath_prepend(str(ROOT / "legacy_windows/plugins/module_utils"))
     return load_module(
-        ROOT / "plugins/module_utils/legacy_windows_eventlog.py",
+        ROOT / "legacy_windows/plugins/module_utils/legacy_windows_eventlog.py",
         "tested_eventlog_native",
     )
 

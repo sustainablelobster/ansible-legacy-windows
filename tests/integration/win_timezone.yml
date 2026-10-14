@@ -19,7 +19,7 @@
         timezone_helper_sources: >-
           {{ timezone_helper_sources | default({}) |
              combine({item: lookup('ansible.builtin.file', playbook_dir ~
-             '/../../plugins/module_utils/' ~ item ~ '.py')}) }}
+             '/../../legacy_windows/plugins/module_utils/' ~ item ~ '.py')}) }}
       loop: '{{ timezone_helper_names }}'
       when: item not in (timezone_helper_sources | default({}))
 

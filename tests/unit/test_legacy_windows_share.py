@@ -19,7 +19,8 @@ import pytest
 from tests.unit.payload_support import load_module, native_error
 
 SOURCE = (
-    Path(__file__).resolve().parents[2] / "plugins/module_utils/legacy_windows_share.py"
+    Path(__file__).resolve().parents[2]
+    / "legacy_windows/plugins/module_utils/legacy_windows_share.py"
 )
 EMPTY_ACL = struct.pack("<BBHHH", 2, 0, 8, 0, 0)
 EVERYONE = bytes.fromhex("010100000000000100000000")

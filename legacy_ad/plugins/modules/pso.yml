@@ -1,0 +1,101 @@
+---
+# Copyright 2026 sustainablelobster
+# Interface documentation derived from microsoft.ad.
+# Original documentation Copyright 2026 Ansible Project.
+# SPDX-License-Identifier: GPL-3.0-or-later
+DOCUMENTATION:
+  module: pso
+  short_description: Manage Active Directory Password Settings Objects
+  version_added: '1.0.0'
+  description:
+    - Create, update, rename or remove password settings objects and their
+      explicit subjects.
+    - Fine-grained password policies apply independently of the Default
+      Domain Policy.
+  options:
+    precedence:
+      description:
+        - Policy precedence; lower values take priority.
+        - Required only when creating a PSO.
+      type: int
+    min_password_length:
+      description: Minimum password length enforced by the PSO.
+      type: int
+    complexity_enabled:
+      description: Whether password complexity requirements are enabled.
+      type: bool
+    lockout_threshold:
+      description:
+        - Failed-logon count before lockout, or zero to disable lockout.
+      type: int
+    subjects:
+      description:
+        - Users or global groups identified by DN, GUID, SID, SAM name or UPN.
+        - Replaces all explicit subjects when provided; an empty list clears
+          them.
+        - Omission preserves existing subject assignments.
+      type: list
+      elements: str
+  extends_documentation_fragment:
+    - sustainablelobster.legacy_ad.ad_object
+    - ansible.builtin.action_common_attributes
+  notes:
+    - Requires PSO schema attributes and Windows Server 2008 domain functional
+      level or later, regardless of the execution host's Windows version.
+    - Policies are stored in the domain's Password Settings Container and
+      cannot move elsewhere.
+    - New policies use measured upstream cmdlet defaults, not the current
+      domain policy.
+    - Those defaults enable reversible encryption, matching upstream;
+      override C(msDS-PasswordReversibleEncryptionEnabled) through O(attributes)
+      if required.
+    - Subjects are validated before policy changes. Completed property writes
+      and subject additions remain if a later operation fails.
+    - This module does not reset passwords or change domain functional levels.
+    - Check mode matches upstream WhatIf behavior for integer inputs; actual
+      writes remain subject to the directory's attribute constraints.
+  attributes:
+    check_mode:
+      support: full
+    diff_mode:
+      support: full
+    platform:
+      platforms: [windows]
+  author:
+    - sustainablelobster
+    - Ron Gershburg (@rgershbu)
+EXAMPLES: |
+  - name: Create a policy for the IT administrators
+    sustainablelobster.legacy_ad.pso:
+      name: IT-Admins-Policy
+      precedence: 100
+      min_password_length: 20
+      complexity_enabled: true
+      lockout_threshold: 5
+      subjects: [IT-Admins]
+      attributes:
+        set:
+          msDS-PasswordReversibleEncryptionEnabled: false
+
+  - name: Update a policy without changing its subjects
+    sustainablelobster.legacy_ad.pso:
+      name: IT-Admins-Policy
+      lockout_threshold: 10
+
+  - name: Remove the policy
+    sustainablelobster.legacy_ad.pso:
+      name: IT-Admins-Policy
+      state: absent
+RETURN:
+  object_guid:
+    description:
+      - Object GUID, null when an absent object is missing, or all zeros for
+        predicted creation.
+    returned: always
+    type: str
+  distinguished_name:
+    description:
+      - Managed PSO distinguished name, or null when an absent object is
+        missing.
+    returned: always
+    type: str

@@ -4,15 +4,18 @@ dns_record_fixture_program: |
   for helper_name, source in (
       ('legacy_windows_wmi', {{ lookup('ansible.builtin.file',
           (dns_record_source_root | default(playbook_dir + '/../..')) +
-          '/plugins/module_utils/legacy_windows_wmi.py', rstrip=false) |
+          '/legacy_windows/' +
+          'plugins/module_utils/legacy_windows_wmi.py', rstrip=false) |
           to_json }}),
       ('legacy_windows_dns_classic', {{ lookup('ansible.builtin.file',
           (dns_record_source_root | default(playbook_dir + '/../..')) +
-          '/plugins/module_utils/legacy_windows_dns_classic.py', rstrip=false) |
+          '/legacy_windows/' +
+          'plugins/module_utils/legacy_windows_dns_classic.py', rstrip=false) |
           to_json }}),
       ('legacy_windows_dns_record', {{ lookup('ansible.builtin.file',
           (dns_record_source_root | default(playbook_dir + '/../..')) +
-          '/plugins/module_utils/legacy_windows_dns_record.py', rstrip=false) |
+          '/legacy_windows/' +
+          'plugins/module_utils/legacy_windows_dns_record.py', rstrip=false) |
           to_json }})):
       helper = types.ModuleType(helper_name)
       sys.modules[helper_name] = helper

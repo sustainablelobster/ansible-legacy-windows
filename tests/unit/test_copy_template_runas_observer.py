@@ -27,7 +27,8 @@ def test_system_observer_restores_existing_privilege_and_closes_token(
     monkeypatch.setitem(sys.modules, "legacy_windows_account", ModuleType("account"))
     monkeypatch.setitem(sys.modules, "legacy_windows_s4u", ModuleType("s4u"))
     helper = load_module(
-        ROOT / "plugins/module_utils/legacy_windows_runas_token.py", "observer_token"
+        ROOT / "legacy_windows/plugins/module_utils/legacy_windows_runas_token.py",
+        "observer_token",
     )
     monkeypatch.setitem(sys.modules, "legacy_windows_runas_token", helper)
     attributes = [0]

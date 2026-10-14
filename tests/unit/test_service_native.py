@@ -21,7 +21,8 @@ def service_helper() -> ModuleType:
     :returns: Imported service helper.
     """
     return load_module(
-        ROOT / "plugins/module_utils/legacy_windows_service.py", "tested_service_native"
+        ROOT / "legacy_windows/plugins/module_utils/legacy_windows_service.py",
+        "tested_service_native",
     )
 
 

@@ -86,7 +86,8 @@
         - name: Stage the frozen maintained launcher and watchdog helpers
           sustainablelobster.legacy_windows.win_copy:
             src: >-
-              {{ native_async_launch_source + '/plugins/module_utils/' + item }}
+              {{ native_async_launch_source + '/legacy_windows/' +
+              'plugins/module_utils/' + item }}
             dest: '{{ native_async_launch_workspace.path }}\helpers\{{ item }}'
           loop:
             - legacy_windows_async_native.py

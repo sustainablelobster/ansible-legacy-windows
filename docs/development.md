@@ -1,5 +1,9 @@
 # Development
 
+This checkout contains two independently versioned Galaxy collections:
+`legacy_windows/` and `legacy_ad/`. Development tools and tests live at the
+repository root. Run the commands below from that root.
+
 ## Environment
 
 Install Nix on x86-64 Linux with the `nix-command` and `flakes` features enabled.
@@ -23,29 +27,38 @@ just lint check
 pytest
 ```
 
-`just build` writes the collection archive to `dist/`, replacing an archive
-of the same version. Archives contain plugins and user documentation, not
+`just build` writes both collection archives to `dist/`, replacing archives
+of the same version. Use `just build legacy_windows` or `just build legacy_ad`
+to select one. Archives contain plugins and user documentation, not
 tests, developer tools, or private files.
 
 `just lint` checks tracked and untracked nonignored files through pre-commit.
 Some hooks format files. For focused work, use
 `pre-commit run --files <paths>`. Neither command stages files.
 
-`just check` builds in a disposable directory, verifies all plugin paths and
-bytes, checks licenses and private-file exclusions, and installs offline.
-Check an existing archive with:
+`just check` builds both in a disposable directory, verifies all plugin paths
+and bytes, checks licenses and private-file exclusions, and installs offline
+with dependency resolution enabled. `just check legacy_ad` includes the Windows
+runtime needed by AD; `just check legacy_windows` checks Windows alone.
+Check an existing Windows archive with:
 
 ```console
-python scripts/check_collection.py --artifact dist/sustainablelobster-legacy_windows-1.0.2.tar.gz
+python scripts/check_collection.py --collection legacy_windows --artifact dist/sustainablelobster-legacy_windows-1.1.0.tar.gz
 ```
+
+To check existing AD archives, supply both its archive and the compatible
+Windows runtime archive using repeated `--artifact` arguments. The checker
+installs those exact archives together; it does not rebuild them or bypass
+dependency resolution.
 
 Pytest exercises controller and developer behavior using Nix Python.
 Routine checks do not contact Windows or establish target compatibility.
 Pytest exposes the current checkout through a disposable collection namespace
 before initializing Ansible's shared loader. It does not require an installed
 copy of the collection or a prior lint run.
-The Ansible-lint hook refreshes the checkout's offline installation under
-`.ansible/collections`; do not use that changing installation for live tests.
+Pre-commit refreshes both collections under `.ansible/collections` before
+running lint and type-check tools. These tools resolve collection imports
+through that offline installation; do not use it for live tests.
 
 Install commit hooks explicitly if you want them:
 
@@ -60,15 +73,18 @@ configuration to make checks pass.
 ## GitHub CI and releases
 
 The source checkout's `.github/workflows/ci.yml` runs on pull requests, pushes
-to `main` and `v1`, tags beginning with `v`, and manual dispatch. All jobs use
-Ubuntu 24.04 x86-64 and the development environment pinned by `flake.lock`.
+to `main` and `v1`, tags matching `legacy_windows/v*` or `legacy_ad/v*`, and
+manual dispatch.
+All jobs use Ubuntu 24.04 x86-64 and the development environment pinned by
+`flake.lock`.
 The three quality jobs run in parallel:
 
 - **Lint** runs `just lint` and rejects tracked-file changes from hooks.
 - **Unit tests** runs the full `pytest -ra` suite, including its skip summary,
   and records JUnit results.
-- **Package** runs `just build`, checks that exact archive, and installs it
-  offline. It does not rebuild the archive during verification.
+- **Package** runs `just build`, checks both exact archives and their offline
+  dependency resolution, then retains one verified release bundle per
+  collection. It does not rebuild archives during verification.
 
 CI does not contact Windows hosts or the lab. These checks establish controller
 and packaging behavior, not legacy Windows execution or target compatibility.
@@ -79,15 +95,16 @@ of the locked toolchain and hook configuration. Only trusted branch pushes save
 caches; test outcomes are never cached. Pre-commit caches, test reports and
 release bundles use directories under `RUNNER_TEMP`, outside the checkout.
 Superseded branch and pull-request runs are canceled, but tag runs and active
-publication are not. Explicit test reports and the verified package bundle are
+publication are not. Test reports and the two verified package bundles are
 retained for 30 days. Private inventories and whole workspaces are not uploaded.
 
 ### Repository setup
 
 After committing and pushing the complete reviewed source, configure branch
 rules to require the `Lint`, `Unit tests`, and `Package` checks for `main` and
-`v1` where used. Protect `v*` tags against unauthorized creation, updates, and
-deletion. Review workflow changes as release-sensitive code.
+`v1` where used. Protect both `legacy_windows/v*` and `legacy_ad/v*` tags
+against unauthorized creation, updates and deletion. Review workflow changes
+as release-sensitive code.
 
 Actions are pinned to full commit SHAs; update each pin to a verified release
 from its original repository and retain its version comment. `actionlint` and
@@ -102,8 +119,7 @@ present on the repository's default branch.
 [GitHub requires workflow-write permission](https://docs.github.com/en/rest/releases/releases#create-a-release)
 to release a commit whose workflow files differ from that branch, which
 `GITHUB_TOKEN` cannot receive. Merge workflow changes into the default branch
-before tagging a release, including this first CI implementation. Manual
-dispatch and pull requests never publish.
+before tagging a release. Manual dispatch and pull requests never publish.
 
 For Galaxy, obtain an API token from an account authorized to publish in the
 `sustainablelobster` namespace and store it as the repository Actions secret
@@ -114,34 +130,103 @@ secret fails before either GitHub or Galaxy publication begins.
 
 ### Publish a version
 
-Update `galaxy.yml` and add a nonempty matching `## X.Y.Z` section to
-`CHANGELOG.md`. Complete review and local checks, commit the complete intended
-source, push it, and verify branch CI before creating the release tag. For
-version 1.0.2, the publication commands after those checks are:
+Update the selected collection's `galaxy.yml` and add a nonempty matching
+`## X.Y.Z` section to its `CHANGELOG.md`. Complete review, local checks and
+required Windows execution evidence before committing and publishing the
+intended source. Verify branch CI before creating a release tag.
+
+The two collections have independent versions and tag names:
+
+| Collection                          | Metadata                    | Release tag             |
+| ----------------------------------- | --------------------------- | ----------------------- |
+| `sustainablelobster.legacy_windows` | `legacy_windows/galaxy.yml` | `legacy_windows/vX.Y.Z` |
+| `sustainablelobster.legacy_ad`      | `legacy_ad/galaxy.yml`      | `legacy_ad/vX.Y.Z`      |
+
+For example, a reviewed Windows 1.1.0 release uses:
 
 ```console
-git tag -a v1.0.2 -m 'Release 1.0.2'
-git push origin v1.0.2
+git tag -a legacy_windows/v1.1.0 -m 'Release legacy_windows 1.1.0'
+git push origin legacy_windows/v1.1.0
 ```
 
-Pushing a stable `vX.Y.Z` tag in the originating repository automatically
-publishes to GitHub Releases and Ansible Galaxy after all three quality jobs
-pass. Tags must exactly match `galaxy.yml` and the archive manifest. Leading-zero
-versions, prereleases, and build metadata are rejected. The workflow never
-rewrites versions or creates tags itself.
+For AD 1.0.0, after that version is ready and its Windows runtime dependency
+has been published to Galaxy:
+
+```console
+git tag -a legacy_ad/v1.0.0 -m 'Release legacy_ad 1.0.0'
+git push origin legacy_ad/v1.0.0
+```
+
+Pushing a single stable tag in the originating repository publishes that
+collection to GitHub Releases and Galaxy after all three quality jobs pass.
+For a coordinated pair, use the procedure below. Each tag must exactly match
+its collection's metadata and archive manifest.
+Leading-zero versions, prereleases and build metadata are rejected. The
+workflow never rewrites versions or creates tags itself.
+Bare `vX.Y.Z` tags no longer trigger releases. Existing historical tags and
+releases are not renamed or removed.
 
 `scripts/ci_release.py` prepares the verified archive, checksum, release notes,
-and a manifest recording its tested commit. Publication downloads this exact
-bundle and checks the archive against the package job's recorded SHA-256. It
-also confirms that the remote tag still resolves to the tested commit. A draft
-GitHub Release becomes public only after its archive and checksum attachments
-are complete. Download the collection archive attachment for installation;
-GitHub's automatic source archives are not collection packages.
+and a manifest recording its collection identity and tested commit. Candidate
+preparation uses `package --collection legacy_windows` or
+`package --collection legacy_ad`, with `--artifact`, an empty `--output-dir`
+and an optional matching `--tag`.
+
+Publication downloads both bundles using their exact artifact IDs, preserving
+their separate directories and package-job SHA-256 values. The `publish-tagged`
+command selects the eligible release or pair and confirms that each selected
+remote tag still resolves to the tested commit. It never rebuilds an archive.
+Before AD publication, `preflight` checks its declared Windows dependency
+against stable versions already published to Galaxy; an uploaded CI candidate
+does not satisfy this prerequisite. Discovery, authentication and lookup
+failures stop publication. Both publishing commands repeat their own required
+guards when invoked independently.
+The `preflight`, `publish` and `publish-galaxy` commands take `--package-dir`
+and the verified package job's `--sha256`; they never rebuild the collection.
+
+A draft GitHub Release becomes public only after its archive and checksum
+attachments are complete. Download the collection archive attachment for
+installation; GitHub's automatic source archives are not collection packages.
 
 Galaxy receives the same verified archive after GitHub publication. The script
 uses the Galaxy client supplied by the locked Ansible dependency, applies a
 ten-minute import timeout, and verifies the published version's SHA-256 against
 the package job. Upload acceptance alone does not count as successful publication.
+
+### Publish both collections together
+
+Create both version tags on the same reviewed commit, then push both in one
+[atomic push](https://git-scm.com/docs/git-push#Documentation/git-push.txt---atomic).
+The following commands create the annotated tags at the current commit:
+
+```console
+git tag -a legacy_windows/v1.1.0 -m 'Release legacy_windows 1.1.0'
+git tag -a legacy_ad/v1.0.0 -m 'Release legacy_ad 1.0.0'
+git push --atomic origin legacy_windows/v1.1.0 legacy_ad/v1.0.0
+```
+
+GitHub's [tag-push triggers](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#push)
+can create separate CI runs. Publication is serialized by tested commit, and
+the AD-tagged run coordinates the pair. The matching Windows-tagged run defers
+instead of publishing a second, independently rebuilt archive. The coordinator
+validates both bundles, same-commit tags and dependency compatibility, then:
+
+1. Publishes the checked Windows archive to GitHub and Galaxy.
+2. Waits for successful Galaxy import and verifies the published archive hash.
+3. Runs AD's dependency preflight, then publishes its checked archive to GitHub
+   and Galaxy.
+
+If Windows fails, AD is not published. The pair uses only the coordinator's
+verified artifacts, and neither workflow creates or moves tags. Both tags must
+match the versions in the same checkout; tags on different commits remain
+independent releases. Manual dispatch and pull requests never publish.
+
+If the exact Windows version has already reached Galaxy from a standalone
+release, a later AD run uses that published dependency rather than republishing
+its newly built Windows archive. If an earlier Windows release stopped partway
+through publication, retry its original publication job and artifacts before
+retrying AD. Matching partial publication from the coordinator's own retained
+bundle can be resumed without replacing assets.
 
 ### Retry publication
 
@@ -167,12 +252,25 @@ original artifact; a different published package needs a new reviewed version.
 ## Windows integration tests
 
 Use only authorized hosts. Prepare a private inventory using the
-[connection example](../README.md#connect-and-run-a-task). Choose a playbook
-whose prerequisites and mutations fit the target; inspect its variables first.
-Integration playbooks target the `legacy_windows` inventory group. Use that
-group name instead of `windows` in the README example inventory. Keep the
-inventory outside the checkout and replace `/path/to/private/inventory.yml`
-below with its location.
+[connection example](../legacy_windows/README.md#connect-and-run-a-task).
+Choose a playbook whose prerequisites and mutations fit the target; inspect its
+variables first.
+The Windows release smoke targets `legacy_windows`; AD directory playbooks
+target `legacy_ad`, and membership tests target `legacy_ad_members`. Check the
+chosen playbook's `hosts` and variables when preparing inventory. Keep it out
+of version control and collection artifacts, and replace
+`/path/to/private/inventory.yml` below with its private location.
+
+AD promotion, membership and servicing tests require disposable fixtures and
+appropriate recovery plans. Use an isolated test network for directory
+services. Guest access does not by itself authorize changes to host networking
+or unrelated systems. Routine local checks and hosted CI never invoke these
+tests automatically.
+
+The offline-join fixture also requires `nltest` on the designated member's
+`PATH`. It uses `nltest /sc_query` to observe the resulting secure-channel
+status independently of the module. This is a test prerequisite, not a
+collection runtime dependency; the module uses native Windows APIs.
 
 Configurable controller evidence directories default to temporary storage
 (`TMPDIR`, or `/tmp` when it is unset). To retain captures in a chosen directory,
@@ -191,15 +289,18 @@ cleanup finish:
 
 ```console
 integration_collections="$(mktemp -d)"
-ansible-galaxy collection install . --offline --no-deps --force --collections-path "$integration_collections"
+ansible-galaxy collection install ./legacy_windows ./legacy_ad --offline --force --collections-path "$integration_collections"
 ANSIBLE_COLLECTIONS_PATH="$integration_collections" ansible-playbook -i /path/to/private/inventory.yml tests/integration/release_smoke.yml --limit legacy_windows
 ```
 
 The release smoke exercises connectivity, commands, temporary paths,
 Unicode/binary copying, metadata, file reads, idempotence and check mode.
-Other playbooks exercise individual modules. Integration fixtures themselves
-must remain compatible with the minimum target version, Python 3.4.4. The
-release smoke accepts Python 3.4.4 or newer; probes specifically verifying
+Other playbooks exercise individual modules; for an existing AD directory,
+`tests/integration/legacy_ad_object_info.yml` performs read-only directory
+queries and minimum-runtime checks. Supply its directory connection variables
+in the private inventory. Integration fixtures themselves must remain
+compatible with the minimum target version, Python 3.4.4. The release smoke
+accepts Python 3.4.4 or newer; probes specifically verifying
 the compatibility floor still require the actual 3.4.4 runtime.
 
 Coordinate exclusive access when tests mutate or inspect shared guest state.
@@ -213,26 +314,39 @@ After tests and target cleanup finish, remove the disposable installation:
 rm -rf -- "$integration_collections"
 ```
 
-Keep inventories, connection settings, logs, captures and snapshots outside the
-checkout and collection archives. Preserve failed captures and recovery records.
+Keep inventories, connection settings, logs, captures and snapshots in private
+storage or the session's designated ignored workspace, never in version
+control or collection archives. Preserve failed captures and recovery records.
 Historical development records are not product restrictions or release
 requirements.
 
 ## Code and compatibility
 
-- `plugins/modules` and `plugins/module_utils`: Windows payloads and helpers,
-  including their Python 3.4.4-compatible imports.
-- `plugins/action`, `plugins/plugin_utils` and `plugins/filter`: controller code.
+- Each collection's `plugins/modules`: module interfaces and Windows payloads
+  where applicable. AD's `debug_ldap_client` runs entirely on the controller.
+- Each collection's `plugins/module_utils`: Windows helpers and their
+  Python 3.4.4-compatible imports.
+- Each collection's `plugins/action`, `plugins/plugin_utils`, `plugins/filter`
+  and `plugins/inventory`, where present: controller code.
 - `tests/unit`: local behavior tests.
 - `tests/integration`: explicitly invoked Windows tests.
 - `scripts`: developer tools.
 
-The reference release is `ansible.windows` 3.8.0, tag `3.8.0`, commit
-`ff0ac96011ee196742901f34c0dd134acddbe89a`. Preserve familiar interfaces where
-practical; use the standard library and native Windows APIs rather than
-recreating PowerShell or .NET internals.
+The recorded reference releases are:
 
-`meta/runtime.yml` is Ansible collection metadata. Its `requires_ansible`
+- `ansible.windows` 3.8.0, tag `3.8.0`, commit
+  `ff0ac96011ee196742901f34c0dd134acddbe89a`.
+- `microsoft.ad` 1.12.1, tag `1.12.1`, commit
+  `0449b870af3054ea8b02c5d5b70764138ce34bb7`.
+
+Preserve familiar interfaces where practical; use the standard library and
+native Windows APIs rather than recreating PowerShell or .NET internals.
+Windows owns the shared
+[execution runtime](../legacy_windows/docs/runtime.md); AD imports that
+controller contract and stages its own native helpers alongside Windows
+helpers. Controller LDAP dependencies must not become Windows payload imports.
+
+Each collection's `meta/runtime.yml` is Ansible metadata. Its `requires_ansible`
 field declares the minimum controller `ansible-core` version, not a Windows
 version, target Python version, or connection-plugin allowlist.
 

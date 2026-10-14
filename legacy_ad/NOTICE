@@ -1,0 +1,17 @@
+sustainablelobster.legacy_ad
+
+Project contributions are licensed under GNU GPL version 3 or later.
+Copyright (c) 2026 sustainablelobster.
+
+The reference release is microsoft.ad 1.12.1, tag 1.12.1, commit
+0449b870af3054ea8b02c5d5b70764138ce34bb7:
+https://github.com/ansible-collections/microsoft.ad/tree/1.12.1
+
+Incorporated module documentation, controller filters, LDAP inventory,
+controller LDAP utilities, diagnostic action, and documentation fragments
+retain their original Ansible Project and individual author notices.
+The upstream GPL license is included verbatim in
+LICENSES/microsoft-ad-GPL-3.0-or-later.txt.
+
+Development tools and separately installed controller libraries are not
+distributed as collection files.

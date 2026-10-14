@@ -1,0 +1,219 @@
+---
+# Copyright 2026 sustainablelobster
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Requires an isolated writable directory; deletes only its unique fixture OU.
+- name: Verify native group links on the minimum Windows target interpreter
+  hosts: legacy_ad
+  gather_facts: false
+  module_defaults:
+    group/sustainablelobster.legacy_ad.domain:
+      domain_server: '{{ ad_domain_server }}'
+      domain_username: '{{ ad_domain_username }}'
+      domain_password: '{{ ad_domain_password }}'
+  tasks:
+    - name: Allocate the unique group fixture and identify the interpreter
+      sustainablelobster.legacy_windows.win_command:
+        argv:
+          - '{{ ansible_python_interpreter }}'
+          - -c
+          - >-
+            import json, sys, uuid;
+            print(json.dumps({"python": list(sys.version_info[:3]),
+            "name": "LWAD-G-" + uuid.uuid4().hex[:8]}))
+      register: ad_group_runtime
+      changed_when: false
+
+    - name: Require the actual minimum interpreter
+      ansible.builtin.assert:
+        that: (ad_group_runtime.stdout | from_json).python == [3, 4, 4]
+
+    - name: Record the owned fixture name
+      ansible.builtin.set_fact:
+        ad_group_name: '{{ (ad_group_runtime.stdout | from_json).name }}'
+
+    - name: Exercise group lifecycle and links inside the owned fixture
+      block:
+        - name: Create the unique fixture OU
+          sustainablelobster.legacy_ad.ou:
+            name: '{{ ad_group_name }}'
+            path: '{{ ad_domain_dn }}'
+          register: ad_group_ou
+
+        - name: Create the first disabled membership principal
+          sustainablelobster.legacy_ad.user:
+            name: '{{ ad_group_name }}-A'
+            path: '{{ ad_group_ou.distinguished_name }}'
+          register: ad_group_user_a
+
+        - name: Create the second disabled membership principal
+          sustainablelobster.legacy_ad.user:
+            name: '{{ ad_group_name }}-B'
+            path: '{{ ad_group_ou.distinguished_name }}'
+          register: ad_group_user_b
+
+        - name: Predict group creation without modifying the directory
+          sustainablelobster.legacy_ad.group:
+            name: '{{ ad_group_name }}'
+            path: '{{ ad_group_ou.distinguished_name }}'
+            scope: global
+          check_mode: true
+          diff: true
+          register: ad_group_preview
+
+        - name: Read predicted absence
+          sustainablelobster.legacy_ad.object_info:
+            identity: '{{ ad_group_preview.distinguished_name }}'
+          register: ad_group_absent
+
+        - name: Verify creation prediction stayed nonmutating
+          ansible.builtin.assert:
+            that:
+              - ad_group_preview.changed
+              - ad_group_preview.sid == 'S-1-5-0000'
+              - ad_group_absent.objects == []
+
+        - name: Create a protected security group with its first member
+          sustainablelobster.legacy_ad.group: &ad_group_create
+            name: '{{ ad_group_name }}'
+            path: '{{ ad_group_ou.distinguished_name }}'
+            scope: global
+            category: security
+            protect_from_deletion: true
+            members:
+              set: ['{{ ad_group_user_a.object_guid }}']
+          register: ad_group_created
+
+        - name: Repeat the initial group request
+          sustainablelobster.legacy_ad.group: *ad_group_create
+          register: ad_group_repeated
+
+        - name: Read the observed native group values
+          sustainablelobster.legacy_ad.object_info:
+            identity: '{{ ad_group_created.object_guid }}'
+            properties: ['groupType', 'member', 'objectSid']
+          register: ad_group_observed
+
+        - name: Verify group type identity membership and idempotence
+          ansible.builtin.assert:
+            that:
+              - ad_group_created.changed
+              - not ad_group_repeated.changed
+              - ad_group_observed.objects[0].groupType == -2147483646
+              - >-
+                ad_group_observed.objects[0].member ==
+                [ad_group_user_a.distinguished_name]
+              - >-
+                ad_group_observed.objects[0].objectSid.Sid ==
+                ad_group_created.sid
+
+        - name: Preview replacement of the group-owned member links
+          sustainablelobster.legacy_ad.group:
+            identity: '{{ ad_group_created.object_guid }}'
+            members:
+              set: ['{{ ad_group_user_b.sid }}']
+          check_mode: true
+          register: ad_group_link_preview
+
+        - name: Read unchanged membership after the preview
+          sustainablelobster.legacy_ad.object_info:
+            identity: '{{ ad_group_created.object_guid }}'
+            properties: ['member']
+          register: ad_group_after_preview
+
+        - name: Verify the link preview did not change native membership
+          ansible.builtin.assert:
+            that:
+              - ad_group_link_preview.changed
+              - >-
+                ad_group_after_preview.objects[0].member ==
+                [ad_group_user_a.distinguished_name]
+
+        - name: Apply membership replacement and group category conversion
+          sustainablelobster.legacy_ad.group: &ad_group_update
+            identity: '{{ ad_group_created.object_guid }}'
+            scope: universal
+            category: distribution
+            members:
+              set: ['{{ ad_group_user_b.sid }}']
+          register: ad_group_updated
+
+        - name: Repeat the updated group request
+          sustainablelobster.legacy_ad.group: *ad_group_update
+          register: ad_group_update_repeated
+
+        - name: Read the updated native group state
+          sustainablelobster.legacy_ad.object_info:
+            identity: '{{ ad_group_created.object_guid }}'
+            properties: ['groupType', 'member']
+          register: ad_group_updated_observed
+
+        - name: Verify updated type and membership are idempotent
+          ansible.builtin.assert:
+            that:
+              - ad_group_updated.changed
+              - not ad_group_update_repeated.changed
+              - ad_group_updated_observed.objects[0].groupType == 8
+              - >-
+                ad_group_updated_observed.objects[0].member ==
+                [ad_group_user_b.distinguished_name]
+
+        - name: Apply a raw type update without named category or scope
+          sustainablelobster.legacy_ad.group: &ad_group_raw_type
+            identity: '{{ ad_group_created.object_guid }}'
+            attributes:
+              set:
+                groupType: {type: int, value: -2147483640}
+          diff: true
+          register: ad_group_raw_updated
+
+        - name: Repeat the raw type update without named group options
+          sustainablelobster.legacy_ad.group: *ad_group_raw_type
+          register: ad_group_raw_repeated
+
+        - name: Independently read the raw-updated group type
+          sustainablelobster.legacy_ad.object_info:
+            identity: '{{ ad_group_created.object_guid }}'
+            properties: [groupType]
+          register: ad_group_raw_observed
+
+        - name: Require the raw update to preserve its intended value
+          ansible.builtin.assert:
+            that:
+              - ad_group_raw_updated.changed
+              - not ad_group_raw_repeated.changed
+              - ad_group_raw_observed.objects[0].groupType == -2147483640
+
+        - name: Rename the protected group while retaining its identity
+          sustainablelobster.legacy_ad.group:
+            identity: '{{ ad_group_created.object_guid }}'
+            name: '{{ ad_group_name }}-New'
+          register: ad_group_renamed
+
+        - name: Remove the renamed protected group
+          sustainablelobster.legacy_ad.group:
+            identity: '{{ ad_group_created.object_guid }}'
+            state: absent
+          register: ad_group_deleted
+
+        - name: Repeat group deletion
+          sustainablelobster.legacy_ad.group:
+            identity: '{{ ad_group_created.object_guid }}'
+            state: absent
+          register: ad_group_delete_repeated
+
+        - name: Verify rename and deletion preserved the observed identifiers
+          ansible.builtin.assert:
+            that:
+              - ad_group_renamed.changed
+              - ad_group_renamed.object_guid == ad_group_created.object_guid
+              - ad_group_renamed.sid == ad_group_created.sid
+              - ad_group_deleted.changed
+              - ad_group_deleted.sid == ad_group_created.sid
+              - not ad_group_delete_repeated.changed
+
+      always:
+        - name: Remove only the unique fixture OU and any remaining accounts
+          sustainablelobster.legacy_ad.ou:
+            name: '{{ ad_group_name }}'
+            path: '{{ ad_domain_dn }}'
+            state: absent

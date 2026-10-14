@@ -8,7 +8,12 @@ from pathlib import Path
 
 import pytest
 
-MODULE = Path(__file__).resolve().parents[2] / "plugins" / "modules" / "win_ping.py"
+MODULE = (
+    Path(__file__).resolve().parents[2]
+    / "legacy_windows/plugins"
+    / "modules"
+    / "win_ping.py"
+)
 HELPER = MODULE.parent.parent / "module_utils" / "legacy_windows_module.py"
 
 

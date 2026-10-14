@@ -23,7 +23,8 @@ def profile_provider(monkeypatch: pytest.MonkeyPatch) -> Any:
     :returns: Helper and substitutable library calls.
     """
     module = load_module(
-        ROOT / "plugins/module_utils/legacy_windows_user_profile.py", "tested_profiles"
+        ROOT / "legacy_windows/plugins/module_utils/legacy_windows_user_profile.py",
+        "tested_profiles",
     )
 
     def _directory(output: Any, size: Any) -> int:

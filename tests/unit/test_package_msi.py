@@ -21,7 +21,8 @@ def installer_provider(monkeypatch: pytest.MonkeyPatch) -> Any:
     :returns: Loaded helper, library and COM boundary.
     """
     module = load_module(
-        ROOT / "plugins/module_utils/legacy_windows_package_msi.py", "tested_msi"
+        ROOT / "legacy_windows/plugins/module_utils/legacy_windows_package_msi.py",
+        "tested_msi",
     )
     ole = SimpleNamespace(
         CoInitializeEx=Mock(return_value=0),

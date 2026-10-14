@@ -20,7 +20,9 @@ import pytest
 from ansible.errors import AnsibleError  # type: ignore[import-untyped]
 
 # Pylint cannot resolve this source-only collection namespace in its hook process.
-from plugins.shell.cmd import ShellModule  # pylint: disable=import-error
+from ansible_collections.sustainablelobster.legacy_windows.plugins.shell.cmd import (
+    ShellModule,  # pylint: disable=import-error
+)
 
 
 @pytest.fixture(name="shell")

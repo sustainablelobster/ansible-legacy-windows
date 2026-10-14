@@ -29,12 +29,15 @@ def public_payload(monkeypatch: pytest.MonkeyPatch) -> Any:
     """
     root = Path(__file__).resolve().parents[2]
     monkeypatch.syspath_prepend(str(HELPER.parent))
-    monkeypatch.syspath_prepend(str(root / "plugins/module_utils"))
+    monkeypatch.syspath_prepend(str(root / "legacy_windows/plugins/module_utils"))
     decision = load_module(
-        root / "plugins/module_utils/legacy_windows_package.py", "msix_decision"
+        root / "legacy_windows/plugins/module_utils/legacy_windows_package.py",
+        "msix_decision",
     )
     monkeypatch.setitem(sys.modules, "legacy_windows_package", decision)
-    payload = load_module(root / "plugins/modules/win_package.py", "msix_public")
+    payload = load_module(
+        root / "legacy_windows/plugins/modules/win_package.py", "msix_public"
+    )
     installer = MagicMock()
     installer.__enter__.return_value = installer
     installer.product_state.return_value = -1
@@ -47,7 +50,7 @@ def public_payload(monkeypatch: pytest.MonkeyPatch) -> Any:
         installed_status=Mock(return_value={"id": "Owned_Full", "installed": False}),
         PackageManager=Mock(return_value=manager),
         PackageApiError=load_module(
-            root / "plugins/module_utils/legacy_windows_package_msix.py",
+            root / "legacy_windows/plugins/module_utils/legacy_windows_package_msix.py",
             "msix_api_error",
         ).PackageApiError,
     )

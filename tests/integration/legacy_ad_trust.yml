@@ -1,0 +1,643 @@
+---
+# Copyright 2026 sustainablelobster
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Requires two owned forest-root PDCs with peer DNS and private AD connectivity.
+- name: Verify paired forest trust and fresh Kerberos routing on Python 3.4.4
+  hosts: legacy_ad_trust
+  gather_facts: false
+  vars:
+    ad_trust_forests:
+      - key: local
+        host: '{{ inventory_hostname }}'
+        server: '{{ ad_domain_server }}'
+        domain: '{{ ad_domain_name }}'
+        dn: '{{ ad_domain_dn }}'
+        username: '{{ ad_domain_username }}'
+        partner: '{{ ad_trust_target_domain }}'
+        user: '{{ ad_trust_user_name }}-L'
+      - key: peer
+        host: '{{ ad_trust_peer_host }}'
+        server: '{{ ad_trust_peer_server }}'
+        domain: '{{ ad_trust_target_domain }}'
+        dn: '{{ ad_trust_peer_dn }}'
+        username: '{{ ad_trust_peer_username }}'
+        partner: '{{ ad_domain_name }}'
+        user: '{{ ad_trust_user_name }}-P'
+    ad_trust_directory_passwords:
+      local: '{{ ad_domain_password }}'
+      peer: '{{ ad_trust_peer_password }}'
+    ad_trust_user_passwords:
+      local: '{{ ad_trust_local_user_password }}'
+      peer: '{{ ad_trust_peer_user_password }}'
+    ad_trust_authentication:
+      - client: peer
+        host: '{{ ad_trust_peer_host }}'
+        username: '{{ ad_trust_user_name }}-P@{{ ad_trust_target_domain }}'
+        server: '{{ ad_domain_server }}'
+        domain: '{{ ad_domain_name }}'
+        dn: '{{ ad_domain_dn }}'
+      - client: local
+        host: '{{ inventory_hostname }}'
+        username: '{{ ad_trust_user_name }}-L@{{ ad_domain_name }}'
+        server: '{{ ad_trust_peer_server }}'
+        domain: '{{ ad_trust_target_domain }}'
+        dn: '{{ ad_trust_peer_dn }}'
+  tasks:
+    - name: Allocate one unique account prefix before forest loop templating
+      ansible.builtin.command:
+        argv:
+          - '{{ ansible_playbook_python }}'
+          - -c
+          - "import uuid; print('LWAD-T-' + uuid.uuid4().hex[:8])"
+      delegate_to: localhost
+      become: false
+      changed_when: false
+      register: ad_trust_identity
+
+    - name: Freeze the unique authentication account prefix
+      ansible.builtin.set_fact:
+        ad_trust_user_name: '{{ ad_trust_identity.stdout }}'
+
+    - name: Identify both actual native fixture interpreters
+      sustainablelobster.legacy_windows.win_command:
+        argv:
+          - '{{ hostvars[item.host].ansible_python_interpreter }}'
+          - -c
+          - >-
+            import json, sys;
+            print(json.dumps({'python': list(sys.version_info[:3])}))
+      delegate_to: '{{ item.host }}'
+      loop: '{{ ad_trust_forests }}'
+      register: ad_trust_runtime
+      changed_when: false
+
+    - name: Require actual Python 3.4.4 on both forest roots
+      ansible.builtin.assert:
+        that: (item.stdout | from_json).python == [3, 4, 4]
+      loop: '{{ ad_trust_runtime.results }}'
+
+    - name: Independently read both existing local-side relationships
+      sustainablelobster.legacy_ad.object_info: &ad_trust_search
+        domain_server: '{{ item.server }}'
+        domain_username: '{{ item.username }}'
+        domain_password: '{{ ad_trust_directory_passwords[item.key] }}'
+        filter: >-
+          ObjectClass -eq 'trustedDomain' -and
+          trustPartner -eq '{{ item.partner }}'
+        properties:
+          - trustPartner
+          - trustDirection
+          - trustType
+          - trustAttributes
+      delegate_to: '{{ item.host }}'
+      loop: '{{ ad_trust_forests }}'
+      register: ad_trust_initial
+
+    - name: Refuse to replace either existing relationship
+      ansible.builtin.assert:
+        that: item.objects == []
+      loop: '{{ ad_trust_initial.results }}'
+
+    - name: Independently require both unique account identities absent
+      sustainablelobster.legacy_ad.object_info: &ad_trust_user_read
+        identity: 'CN={{ item.user }},CN=Users,{{ item.dn }}'
+        domain_server: '{{ item.server }}'
+        domain_username: '{{ item.username }}'
+        domain_password: '{{ ad_trust_directory_passwords[item.key] }}'
+        properties: ['sAMAccountName', 'objectClass']
+      delegate_to: '{{ item.host }}'
+      loop: '{{ ad_trust_forests }}'
+      register: ad_trust_users_initial
+
+    - name: Refuse to adopt an existing authentication fixture
+      ansible.builtin.assert:
+        that: item.objects == []
+      loop: '{{ ad_trust_users_initial.results }}'
+
+    - name: Locate the exact installed native LDAP helper on the controller
+      ansible.builtin.command:
+        argv:
+          - '{{ ansible_playbook_python }}'
+          - -c
+          - >-
+            import json;
+            from ansible.plugins.loader import init_plugin_loader;
+            init_plugin_loader();
+            import ansible_collections.sustainablelobster.legacy_ad as ad;
+            print(json.dumps(list(ad.__path__)[0]))
+      delegate_to: localhost
+      become: false
+      changed_when: false
+      register: ad_trust_collection
+
+    - name: Exercise paired relationships and clean acquired fixture resources
+      block:
+        - name: Allocate an owned observer directory on each controller
+          sustainablelobster.legacy_windows.win_tempfile:
+            state: directory
+            prefix: legacy-ad-trust-auth-
+          delegate_to: '{{ item.host }}'
+          loop: '{{ ad_trust_forests }}'
+          register: ad_trust_observer_directories
+
+        - name: Record acquired paths without hardcoded session locations
+          ansible.builtin.set_fact:
+            ad_trust_observer_paths: >-
+              {{ dict(ad_trust_observer_directories.results |
+              map(attribute='item.key') |
+              zip(ad_trust_observer_directories.results |
+              map(attribute='path'))) }}
+
+        - name: Stage the exact installed LDAP helper on both controllers
+          sustainablelobster.legacy_windows.win_copy:
+            src: >-
+              {{ ad_trust_collection.stdout | from_json
+              }}/plugins/module_utils/legacy_ad_ldap.py
+            dest: >-
+              {{ ad_trust_observer_paths[item.key] }}\legacy_ad_ldap.py
+          delegate_to: '{{ item.host }}'
+          loop: '{{ ad_trust_forests }}'
+
+        - name: Stage the bounded native authentication observer
+          sustainablelobster.legacy_windows.win_copy:
+            src: '{{ playbook_dir }}/fixtures/legacy_ad_trust_auth.py'
+            dest: >-
+              {{ ad_trust_observer_paths[item.key] }}\legacy_ad_trust_auth.py
+          delegate_to: '{{ item.host }}'
+          loop: '{{ ad_trust_forests }}'
+
+        - name: Stage the exact installed native trust helper for fixture prep
+          sustainablelobster.legacy_windows.win_copy:
+            src: >-
+              {{ ad_trust_collection.stdout | from_json
+              }}/plugins/module_utils/legacy_ad_trust_native.py
+            dest: >-
+              {{ ad_trust_observer_paths[item.key] }}\legacy_ad_trust_native.py
+          delegate_to: '{{ item.host }}'
+          loop: '{{ ad_trust_forests }}'
+
+        - name: Stage the bounded GUID-owned native forest preparation fixture
+          sustainablelobster.legacy_windows.win_copy:
+            src: '{{ playbook_dir }}/fixtures/legacy_ad_trust_forest_prepare.py'
+            dest: >-
+              {{ ad_trust_observer_paths[item.key]
+              }}\legacy_ad_trust_forest_prepare.py
+          delegate_to: '{{ item.host }}'
+          loop: '{{ ad_trust_forests }}'
+
+        - name: Exercise only owned directory resources with bilateral cleanup
+          block:
+            - name: Create one unique enabled authentication user per forest
+              sustainablelobster.legacy_ad.user:
+                name: '{{ item.user }}'
+                path: 'CN=Users,{{ item.dn }}'
+                sam_account_name: '{{ item.user }}'
+                upn: '{{ item.user }}@{{ item.domain }}'
+                password: '{{ ad_trust_user_passwords[item.key] }}'
+                enabled: true
+                domain_server: '{{ item.server }}'
+                domain_username: '{{ item.username }}'
+                domain_password: '{{ ad_trust_directory_passwords[item.key] }}'
+              delegate_to: '{{ item.host }}'
+              loop: '{{ ad_trust_forests }}'
+              no_log: true
+              register: ad_trust_users_created
+
+            - name: Qualify each distinct user's fresh home-forest credentials
+              sustainablelobster.legacy_windows.win_command:
+                argv:
+                  - '{{ hostvars[item.host].ansible_python_interpreter }}'
+                  - >-
+                    {{ ad_trust_observer_paths[item.key]
+                    }}\legacy_ad_trust_auth.py
+                stdin: >-
+                  {{ {'server': item.server,
+                  'username': item.user ~ '@' ~ item.domain,
+                  'password': ad_trust_user_passwords[item.key],
+                  'identity': item.dn} | to_json }}
+              delegate_to: '{{ item.host }}'
+              loop: '{{ ad_trust_forests }}'
+              changed_when: false
+              no_log: true
+              register: ad_trust_home_auth
+
+            - name: Require real home Kerberos principals and protected reads
+              ansible.builtin.assert:
+                that:
+                  - (item.stdout | from_json).package == 'Kerberos'
+                  - (item.stdout | from_json).native_names_status == 0
+                  - (item.stdout | from_json).signing == 1
+                  - (item.stdout | from_json).encryption == 1
+                  - >-
+                    (item.stdout | from_json).client_principal | lower ==
+                    (item.item.user ~ '@' ~ item.item.domain) | lower
+                  - >-
+                    (item.stdout | from_json).service_principal | lower ==
+                    ('ldap/' ~ item.item.server ~ '@' ~ item.item.domain)
+                    | lower
+                  - >-
+                    (item.stdout | from_json).protected_objects | map('lower')
+                    | list == [item.item.dn | lower]
+              loop: '{{ ad_trust_home_auth.results }}'
+              no_log: true
+
+            - name: Observe fresh foreign authentication before trust creation
+              sustainablelobster.legacy_windows.win_command: &trust_auth
+                argv:
+                  - '{{ hostvars[item.host].ansible_python_interpreter }}'
+                  - >-
+                    {{ ad_trust_observer_paths[item.client]
+                    }}\legacy_ad_trust_auth.py
+                stdin: >-
+                  {{ {'server': item.server, 'username': item.username,
+                  'password': ad_trust_user_passwords[item.client],
+                  'identity': item.dn}
+                  | to_json }}
+              delegate_to: '{{ item.host }}'
+              loop: '{{ ad_trust_authentication }}'
+              changed_when: false
+              failed_when: false
+              no_log: true
+              register: ad_trust_auth_before
+
+            - name: Verify denied authentication rather than an observer crash
+              ansible.builtin.assert:
+                that:
+                  - item.rc == 1
+                  - item.stderr is search('Authenticate to Active Directory')
+              loop: '{{ ad_trust_auth_before.results }}'
+              no_log: true
+
+            - name: Predict each absent local side without a TDO write
+              sustainablelobster.legacy_ad.domain_trust: &ad_trust_present
+                name: '{{ item.partner }}'
+                domain_server: '{{ item.server }}'
+                direction: bidirectional
+                type: forest
+                trust_password: '{{ ad_trust_password }}'
+              delegate_to: '{{ item.host }}'
+              loop: '{{ ad_trust_forests }}'
+              check_mode: true
+              no_log: true
+              register: ad_trust_preview
+
+            - name: Require no observed identity in creation predictions
+              ansible.builtin.assert:
+                that:
+                  - item.changed
+                  - item.distinguished_name is none
+              loop: '{{ ad_trust_preview.results }}'
+              no_log: true
+
+            - name: Create both local sides with the same shared trust secret
+              sustainablelobster.legacy_ad.domain_trust: *ad_trust_present
+              delegate_to: '{{ item.host }}'
+              loop: '{{ ad_trust_forests }}'
+              no_log: true
+              register: ad_trust_created
+
+            - name: Repeat both sides without changing the shared secret
+              sustainablelobster.legacy_ad.domain_trust: *ad_trust_present
+              delegate_to: '{{ item.host }}'
+              loop: '{{ ad_trust_forests }}'
+              no_log: true
+              register: ad_trust_repeated
+
+            - name: Independently journal acquired trusted-domain identities
+              sustainablelobster.legacy_ad.object_info: *ad_trust_search
+              delegate_to: '{{ item.host }}'
+              loop: '{{ ad_trust_forests }}'
+              register: ad_trust_acquired
+
+            - name: Verify both creations and repeated directory identities
+              ansible.builtin.assert:
+                that:
+                  - ad_trust_created.results[index].changed
+                  - not item.changed
+                  - item.distinguished_name is string
+                  - >-
+                    item.distinguished_name ==
+                    ad_trust_created.results[index].distinguished_name
+              loop: '{{ ad_trust_repeated.results }}'
+              loop_control:
+                index_var: index
+              no_log: true
+
+            - name: Initialize only acquired Windows trust channels and routing
+              block:
+                - name: Wait boundedly for GUID-owned native forest readiness
+                  sustainablelobster.legacy_windows.win_command:
+                    argv:
+                      - '{{ hostvars[item.host].ansible_python_interpreter }}'
+                      - >-
+                        {{ ad_trust_observer_paths[item.key]
+                        }}\legacy_ad_trust_forest_prepare.py
+                    stdin: >-
+                      {{ {'server': item.server, 'partner': item.partner,
+                      'object_guid': (ad_trust_acquired.results |
+                      selectattr('item.key', 'equalto', item.key) |
+                      first).objects[0].ObjectGUID, 'username': item.username,
+                      'password': ad_trust_directory_passwords[item.key]}
+                      | to_json }}
+                  delegate_to: '{{ item.host }}'
+                  loop: '{{ ad_trust_forests | reverse | list }}'
+                  register: ad_trust_prepared
+                  retries: 6
+                  delay: 2
+                  until: >-
+                    ad_trust_prepared.rc != 0 or
+                    (ad_trust_prepared.stdout | from_json).ready
+                  failed_when: ad_trust_prepared.rc != 0
+                  no_log: true
+              always:
+                - name: Journal only nonsecret native readiness observations
+                  ansible.builtin.debug:
+                    msg: >-
+                      {{ (ad_trust_prepared | default({})).results |
+                      default([]) | map(attribute='stdout') | list }}
+
+            - name: Observe fresh foreign authentication and protected reads
+              sustainablelobster.legacy_windows.win_command: *trust_auth
+              delegate_to: '{{ item.host }}'
+              loop: '{{ ad_trust_authentication }}'
+              changed_when: false
+              failed_when: false
+              no_log: true
+              register: ad_trust_auth_created
+
+            - name: Journal only native authentication results without secrets
+              ansible.builtin.debug:
+                msg:
+                  rc: >-
+                    {{ ad_trust_auth_created.results
+                    | map(attribute='rc') | list }}
+                  stdout: >-
+                    {{ ad_trust_auth_created.results | map(attribute='stdout')
+                    | list }}
+                  stderr: >-
+                    {{ ad_trust_auth_created.results | map(attribute='stderr')
+                    | list }}
+
+            - name: Require successful fresh native authentication on both sides
+              ansible.builtin.assert:
+                that: item.rc == 0
+              loop: '{{ ad_trust_auth_created.results }}'
+              no_log: true
+
+            - name: Require Kerberos routing to each exact foreign service
+              ansible.builtin.assert:
+                that:
+                  - (item.stdout | from_json).python == [3, 4, 4]
+                  - (item.stdout | from_json).package == 'Kerberos'
+                  - (item.stdout | from_json).signing == 1
+                  - (item.stdout | from_json).encryption == 1
+                  - (item.stdout | from_json).native_names_status == 0
+                  - >-
+                    (item.stdout | from_json).client_principal | lower ==
+                    item.item.username | lower
+                  - >-
+                    (item.stdout | from_json).service_principal | lower ==
+                    ('ldap/' ~ item.item.server ~ '@' ~ item.item.domain)
+                    | lower
+                  - >-
+                    (item.stdout | from_json).protected_objects | map('lower')
+                    | list == [item.item.dn | lower]
+              loop: '{{ ad_trust_auth_created.results }}'
+              no_log: true
+
+            - name: Journal only nonsecret native authentication observations
+              ansible.builtin.debug:
+                msg: >-
+                  {{ ad_trust_auth_created.results | map(attribute='stdout')
+                  | map('from_json') | list }}
+
+            - name: Reject changing either existing trust direction
+              sustainablelobster.legacy_ad.domain_trust:
+                name: '{{ item.partner }}'
+                domain_server: '{{ item.server }}'
+                direction: inbound
+                type: forest
+                trust_password: '{{ ad_trust_password }}'
+              delegate_to: '{{ item.host }}'
+              loop: '{{ ad_trust_forests }}'
+              failed_when: false
+              no_log: true
+              register: ad_trust_wrong_direction
+
+            - name: Require an actionable immutable-direction failure
+              ansible.builtin.assert:
+                that:
+                  - not item.changed
+                  - item.msg is search('cannot be changed in-place')
+              loop: '{{ ad_trust_wrong_direction.results }}'
+              no_log: true
+
+            - name: Reject changing either existing trust type
+              sustainablelobster.legacy_ad.domain_trust:
+                name: '{{ item.partner }}'
+                domain_server: '{{ item.server }}'
+                direction: bidirectional
+                type: external
+                trust_password: '{{ ad_trust_password }}'
+              delegate_to: '{{ item.host }}'
+              loop: '{{ ad_trust_forests }}'
+              failed_when: false
+              no_log: true
+              register: ad_trust_wrong_type
+
+            - name: Require an actionable immutable-type failure
+              ansible.builtin.assert:
+                that:
+                  - not item.changed
+                  - item.msg is search('cannot be changed in-place')
+              loop: '{{ ad_trust_wrong_type.results }}'
+              no_log: true
+
+            - name: Predict deletion without removing acquired relationships
+              sustainablelobster.legacy_ad.domain_trust:
+                name: '{{ item.partner }}'
+                domain_server: '{{ item.server }}'
+                state: absent
+              delegate_to: '{{ item.host }}'
+              loop: '{{ ad_trust_forests }}'
+              check_mode: true
+              register: ad_trust_delete_preview
+
+            - name: Predict selective authentication without changes
+              sustainablelobster.legacy_ad.domain_trust: &ad_trust_selective
+                <<: *ad_trust_present
+                selective_authentication: true
+              delegate_to: '{{ item.host }}'
+              loop: '{{ ad_trust_forests }}'
+              check_mode: true
+              no_log: true
+              register: ad_trust_selective_preview
+
+            - name: Read independent TDO state after the nonmutating requests
+              sustainablelobster.legacy_ad.object_info: *ad_trust_search
+              delegate_to: '{{ item.host }}'
+              loop: '{{ ad_trust_forests }}'
+              register: ad_trust_preview_observed
+
+            - name: Require forest flags and nonmutating selective preview
+              ansible.builtin.assert:
+                that:
+                  - ad_trust_selective_preview.results[index].changed
+                  - ad_trust_delete_preview.results[index].changed
+                  - item.objects | length == 1
+                  - item.objects[0].trustDirection == 3
+                  - item.objects[0].trustType == 2
+                  - item.objects[0].trustAttributes == 8
+              loop: '{{ ad_trust_preview_observed.results }}'
+              loop_control:
+                index_var: index
+
+            - name: Enable selective authentication on both owned relationships
+              sustainablelobster.legacy_ad.domain_trust: *ad_trust_selective
+              delegate_to: '{{ item.host }}'
+              loop: '{{ ad_trust_forests }}'
+              no_log: true
+              register: ad_trust_selective_changed
+
+            - name: Repeat selective authentication without changes
+              sustainablelobster.legacy_ad.domain_trust: *ad_trust_selective
+              delegate_to: '{{ item.host }}'
+              loop: '{{ ad_trust_forests }}'
+              no_log: true
+              register: ad_trust_selective_repeated
+
+            - name: Verify selective authentication update and idempotence
+              ansible.builtin.assert:
+                that:
+                  - ad_trust_selective_changed.results[index].changed
+                  - not item.changed
+              loop: '{{ ad_trust_selective_repeated.results }}'
+              loop_control:
+                index_var: index
+              no_log: true
+
+            - name: Read actual selective-authentication trust attributes
+              sustainablelobster.legacy_ad.object_info: *ad_trust_search
+              delegate_to: '{{ item.host }}'
+              loop: '{{ ad_trust_forests }}'
+              register: ad_trust_selective_observed
+
+            - name: Require the selective flag while retaining the forest flag
+              ansible.builtin.assert:
+                that: item.objects[0].trustAttributes == 24
+              loop: '{{ ad_trust_selective_observed.results }}'
+
+          always:
+            - name: Read only initially absent relationship names for cleanup
+              sustainablelobster.legacy_ad.object_info: *ad_trust_search
+              delegate_to: '{{ item.host }}'
+              loop: '{{ ad_trust_forests }}'
+              register: ad_trust_cleanup_observed
+
+            - name: Require unambiguous ownership before local-side removal
+              ansible.builtin.assert:
+                that:
+                  - item.objects | length <= 1
+                  - >-
+                    item.objects == [] or
+                    item.objects[0].trustPartner | lower ==
+                    item.item.partner | lower
+                  - >-
+                    item.objects == [] or ad_trust_acquired is not defined or
+                    item.objects[0].ObjectGUID ==
+                    ad_trust_acquired.results[index].objects[0].ObjectGUID
+              loop: '{{ ad_trust_cleanup_observed.results }}'
+              loop_control:
+                index_var: index
+
+            - name: Remove only initially absent paired fixture relationships
+              sustainablelobster.legacy_ad.domain_trust:
+                name: '{{ item.partner }}'
+                domain_server: '{{ item.server }}'
+                state: absent
+              delegate_to: '{{ item.host }}'
+              loop: '{{ ad_trust_forests }}'
+
+            - name: Read uniquely acquired authentication account identities
+              sustainablelobster.legacy_ad.object_info: *ad_trust_user_read
+              delegate_to: '{{ item.host }}'
+              loop: '{{ ad_trust_forests }}'
+              register: ad_trust_users_cleanup
+
+            - name: Require exact account class and name before GUID deletion
+              ansible.builtin.assert:
+                that:
+                  - item.objects | length <= 1
+                  - >-
+                    item.objects == [] or
+                    (item.objects[0].ObjectClass == 'user' and
+                    item.objects[0].sAMAccountName == item.item.user)
+                  - >-
+                    item.objects == [] or
+                    ad_trust_users_created is not defined or
+                    ad_trust_users_created.results[index].object_guid
+                    is not defined
+                    or item.objects[0].ObjectGUID ==
+                    ad_trust_users_created.results[index].object_guid
+              loop: '{{ ad_trust_users_cleanup.results }}'
+              loop_control:
+                index_var: index
+
+            - name: Remove only acquired authentication users by observed GUID
+              sustainablelobster.legacy_ad.user:
+                identity: '{{ item.objects[0].ObjectGUID }}'
+                state: absent
+                domain_server: '{{ item.item.server }}'
+                domain_username: '{{ item.item.username }}'
+                domain_password: >-
+                  {{ ad_trust_directory_passwords[item.item.key] }}
+              delegate_to: '{{ item.item.host }}'
+              loop: '{{ ad_trust_users_cleanup.results }}'
+              when: item.objects | length == 1
+
+            - name: Independently read relationship and unique account absence
+              sustainablelobster.legacy_ad.object_info:
+                domain_server: '{{ item.server }}'
+                domain_username: '{{ item.username }}'
+                domain_password: '{{ ad_trust_directory_passwords[item.key] }}'
+                filter: >-
+                  (ObjectClass -eq 'trustedDomain' -and
+                  trustPartner -eq '{{ item.partner }}') -or
+                  (ObjectClass -eq 'user' -and
+                  sAMAccountName -eq '{{ item.user }}')
+              delegate_to: '{{ item.host }}'
+              loop: '{{ ad_trust_forests }}'
+              register: ad_trust_final
+
+            - name: Require complete bilateral directory cleanup
+              ansible.builtin.assert:
+                that: item.objects == []
+              loop: '{{ ad_trust_final.results }}'
+
+      always:
+        - name: Remove only acquired native observer directories
+          sustainablelobster.legacy_windows.win_file:
+            path: '{{ item.path }}'
+            state: absent
+          delegate_to: '{{ item.item.host }}'
+          loop: >-
+            {{ (ad_trust_observer_directories | default({})).results
+            | default([]) }}
+          when: item.path is defined
+
+        - name: Independently read acquired observer directory absence
+          sustainablelobster.legacy_windows.win_stat:
+            path: '{{ item.path }}'
+          delegate_to: '{{ item.item.host }}'
+          loop: >-
+            {{ (ad_trust_observer_directories | default({})).results
+            | default([]) }}
+          when: item.path is defined
+          register: ad_trust_staging_absent
+
+        - name: Require complete acquired observer staging cleanup
+          ansible.builtin.assert:
+            that: not item.stat.exists
+          loop: >-
+            {{ ad_trust_staging_absent.results |
+            selectattr('stat', 'defined') | list }}

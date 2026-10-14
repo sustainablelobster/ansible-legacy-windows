@@ -10,7 +10,8 @@
       ansible.builtin.set_fact:
         auto_logon_account_source: >-
           {{ lookup('ansible.builtin.file', playbook_dir ~
-          '/../../plugins/module_utils/legacy_windows_account.py') }}
+          '/../../legacy_windows/' +
+          'plugins/module_utils/legacy_windows_account.py') }}
 
     - name: Require Python 3.4.4 and record existing task directories
       ansible.builtin.raw: >-

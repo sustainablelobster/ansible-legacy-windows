@@ -6,7 +6,8 @@ powershell_async_program: |
   ASYNC_SOURCE = {{ lookup('ansible.builtin.file', playbook_dir +
     '/fixtures/native_async.py') | to_json }}
   WMI_SOURCE = {{ lookup('ansible.builtin.file', playbook_dir +
-    '/../../plugins/module_utils/legacy_windows_wmi.py') | to_json }}
+    '/../../legacy_windows/' +
+    'plugins/module_utils/legacy_windows_wmi.py') | to_json }}
   FILE_SCRIPT = {{ lookup('ansible.builtin.file', playbook_dir +
     '/fixtures/win_powershell_async.ps1') | to_json }}
   {{ lookup('ansible.builtin.file', playbook_dir +

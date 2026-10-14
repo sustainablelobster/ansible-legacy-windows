@@ -22,7 +22,8 @@ def native_api(monkeypatch: pytest.MonkeyPatch) -> Any:
     :returns: Target helper and native call recorder, not Windows proof.
     """
     helper = load_module(
-        ROOT / "plugins/module_utils/legacy_windows_dhcp_api.py", "dhcp_api_test"
+        ROOT / "legacy_windows/plugins/module_utils/legacy_windows_dhcp_api.py",
+        "dhcp_api_test",
     )
     api = MagicMock()
     monkeypatch.setenv("SystemRoot", "owned-system-root")

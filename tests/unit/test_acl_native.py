@@ -71,9 +71,10 @@ def acl_helper(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
     :param monkeypatch: Scoped import and SID replacements.
     :returns: Independently loaded ACL helper.
     """
-    monkeypatch.syspath_prepend(str(ROOT / "plugins/module_utils"))
+    monkeypatch.syspath_prepend(str(ROOT / "legacy_windows/plugins/module_utils"))
     helper = load_module(
-        ROOT / "plugins/module_utils/legacy_windows_acl.py", "tested_acl_native"
+        ROOT / "legacy_windows/plugins/module_utils/legacy_windows_acl.py",
+        "tested_acl_native",
     )
     monkeypatch.setattr(helper.account, "sid_bytes", Mock(return_value=_ace()[8:]))
     return helper
@@ -131,7 +132,9 @@ def test_ordinary_certificate_read_can_upgrade_to_full_and_repeat(
     helper: ModuleType, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setitem(sys.modules, "legacy_windows_acl", helper)
-    payload = load_module(ROOT / "plugins/modules/win_acl.py", "tested_key_upgrade")
+    payload = load_module(
+        ROOT / "legacy_windows/plugins/modules/win_acl.py", "tested_key_upgrade"
+    )
     snapshot = dict(_snapshot(_ace(mask=0x80000000)), kind="certificate")
     writer = Mock(side_effect=snapshot.update)
     full = _ace(mask=0x1F01FF)
@@ -170,7 +173,9 @@ def test_public_insertion_rejects_bypassing_same_principal_restrictions(
     sid = 18 if kind in (9, 10) else 19
     snapshot = dict(_snapshot(restricted), kind=target)
     monkeypatch.setitem(sys.modules, "legacy_windows_acl", helper)
-    payload = load_module(ROOT / "plugins/modules/win_acl.py", "tested_restricted_key")
+    payload = load_module(
+        ROOT / "legacy_windows/plugins/modules/win_acl.py", "tested_restricted_key"
+    )
     writer = Mock()
     deny = kind in (6, 10, 12)
     result = payload._change_rule(
@@ -196,7 +201,9 @@ def test_capi_partial_removal_fails_before_public_mutation_or_prediction(
     )
     snapshot = dict(_snapshot(entry), kind="certificate", certificate_provider="capi")
     monkeypatch.setitem(sys.modules, "legacy_windows_acl", helper)
-    payload = load_module(ROOT / "plugins/modules/win_acl.py", "tested_capi_partial")
+    payload = load_module(
+        ROOT / "legacy_windows/plugins/modules/win_acl.py", "tested_capi_partial"
+    )
     writer = Mock()
     result = payload._change_rule(
         {"state": "absent"}, snapshot, writer, _ace(kind % 9, mask=0x120089), check_mode
@@ -289,7 +296,9 @@ def test_public_callback_request_repeat_and_check_mode_never_adds_unconditional_
 ) -> None:
     kind, target_kind = entry
     monkeypatch.setitem(sys.modules, "legacy_windows_acl", helper)
-    payload = load_module(ROOT / "plugins/modules/win_acl.py", "tested_callback_acl")
+    payload = load_module(
+        ROOT / "legacy_windows/plugins/modules/win_acl.py", "tested_callback_acl"
+    )
     snapshot = dict(_snapshot(_callback(kind)), kind=target_kind)
     writer = Mock(side_effect=snapshot.update)
     result = payload._change_rule(

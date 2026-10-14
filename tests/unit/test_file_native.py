@@ -22,7 +22,7 @@ def file_helper() -> ModuleType:
 
     :returns: The imported helper without accessing Windows.
     """
-    source = ROOT / "plugins/module_utils/legacy_windows_file.py"
+    source = ROOT / "legacy_windows/plugins/module_utils/legacy_windows_file.py"
     return load_module(source, "tested_file_native")
 
 

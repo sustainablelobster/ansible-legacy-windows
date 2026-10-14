@@ -10,7 +10,8 @@
       - legacy_windows_system_token.py
       - legacy_windows_runas_token.py
       - legacy_windows_runas.py
-    runas_acl_helper_source: '{{ playbook_dir }}/../../plugins/module_utils'
+    runas_acl_helper_source: >-
+      {{ playbook_dir + '/../../legacy_windows/plugins/module_utils' }}
     runas_acl_hashes: {}
   tasks:
     - name: Record original staging and require actual Python 3.4.4

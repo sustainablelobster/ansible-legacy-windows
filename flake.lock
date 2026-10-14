@@ -18,7 +18,25 @@
     },
     "root": {
       "inputs": {
-        "nixpkgs": "nixpkgs"
+        "nixpkgs": "nixpkgs",
+        "sansldap": "sansldap"
+      }
+    },
+    "sansldap": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1677479547,
+        "narHash": "sha256-LTqban33v4V4zVHpK4VhPwanhQhSEfg2sLkbmNb3NPY=",
+        "owner": "jborean93",
+        "repo": "sansldap",
+        "rev": "14cc18d9f42cab75ccda12738c748dd5b1f6af72",
+        "type": "github"
+      },
+      "original": {
+        "owner": "jborean93",
+        "ref": "v0.1.0",
+        "repo": "sansldap",
+        "type": "github"
       }
     }
   },

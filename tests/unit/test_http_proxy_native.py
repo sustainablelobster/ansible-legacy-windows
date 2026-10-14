@@ -22,7 +22,7 @@ def proxy_helper() -> ModuleType:
     :returns: Fresh helper imported using the development interpreter.
     """
     return load_module(
-        ROOT / "plugins/module_utils/legacy_windows_http_proxy.py",
+        ROOT / "legacy_windows/plugins/module_utils/legacy_windows_http_proxy.py",
         "tested_http_proxy_native",
     )
 

@@ -30,9 +30,10 @@ def uformat_helper(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
     :param monkeypatch: Scoped target import path.
     :returns: Fresh target formatter with native boundaries left explicit.
     """
-    monkeypatch.syspath_prepend(str(ROOT / "plugins/module_utils"))
+    monkeypatch.syspath_prepend(str(ROOT / "legacy_windows/plugins/module_utils"))
     return load_module(
-        ROOT / "plugins/module_utils/legacy_windows_uformat.py", "tested_uformat"
+        ROOT / "legacy_windows/plugins/module_utils/legacy_windows_uformat.py",
+        "tested_uformat",
     )
 
 

@@ -28,9 +28,9 @@ def certificate_helper(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
     :param monkeypatch: Scoped import-path changes.
     :returns: Certificate helper using the development interpreter.
     """
-    monkeypatch.syspath_prepend(str(ROOT / "plugins/module_utils"))
+    monkeypatch.syspath_prepend(str(ROOT / "legacy_windows/plugins/module_utils"))
     helper = load_module(
-        ROOT / "plugins/module_utils/legacy_windows_certificate.py",
+        ROOT / "legacy_windows/plugins/module_utils/legacy_windows_certificate.py",
         "tested_certificate",
     )
     monkeypatch.setattr(

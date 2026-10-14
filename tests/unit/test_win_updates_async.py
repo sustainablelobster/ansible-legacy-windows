@@ -20,7 +20,9 @@ def async_projector(monkeypatch: pytest.MonkeyPatch) -> Any:
     :param monkeypatch: Scoped import-path and worker boundary substitutions.
     :returns: The real target-side async projector with worker recorders.
     """
-    root = Path(__file__).resolve().parents[2] / "plugins" / "module_utils"
+    root = (
+        Path(__file__).resolve().parents[2] / "legacy_windows/plugins" / "module_utils"
+    )
     monkeypatch.syspath_prepend(str(root))
     module = load_module(root / "legacy_windows_updates_async.py", "updates_async")
     monkeypatch.setattr(

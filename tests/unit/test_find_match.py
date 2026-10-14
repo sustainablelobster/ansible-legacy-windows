@@ -22,7 +22,7 @@ def matching_helper(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
     :param monkeypatch: Fixture restoring the sibling-helper import path.
     :returns: The isolated helper module.
     """
-    source = ROOT / "plugins/module_utils/legacy_windows_find_match.py"
+    source = ROOT / "legacy_windows/plugins/module_utils/legacy_windows_find_match.py"
     monkeypatch.syspath_prepend(str(source.parent))
     spec = importlib.util.spec_from_file_location("tested_find_match", source)
     assert spec is not None and spec.loader is not None

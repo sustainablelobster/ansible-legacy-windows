@@ -23,9 +23,10 @@ def hotfix_provider(monkeypatch: pytest.MonkeyPatch) -> Any:
     :param monkeypatch: Scoped imports and library replacement.
     :returns: Helper, provider, buffers and resource events.
     """
-    monkeypatch.syspath_prepend(str(ROOT / "plugins/module_utils"))
+    monkeypatch.syspath_prepend(str(ROOT / "legacy_windows/plugins/module_utils"))
     module = load_module(
-        ROOT / "plugins/module_utils/legacy_windows_hotfix.py", "tested_hotfix"
+        ROOT / "legacy_windows/plugins/module_utils/legacy_windows_hotfix.py",
+        "tested_hotfix",
     )
     records = (module._Package * 2)()
     records[0].name, records[0].state = "Second", 4

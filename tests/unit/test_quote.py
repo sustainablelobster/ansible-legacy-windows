@@ -10,7 +10,10 @@ import pytest
 from ansible.errors import AnsibleFilterError  # type: ignore[import-untyped]
 
 # Pytest resolves the checkout's source-only plugin namespace.
-from plugins.filter.quote import FilterModule, quote  # pylint: disable=import-error
+from ansible_collections.sustainablelobster.legacy_windows.plugins.filter.quote import (  # pylint: disable=import-error
+    FilterModule,
+    quote,
+)
 
 _SHELLS = (None, "cmd", "powershell")
 

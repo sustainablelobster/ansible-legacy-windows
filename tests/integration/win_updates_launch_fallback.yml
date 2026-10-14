@@ -7,7 +7,8 @@
     - vars/win_updates_runas.yml
   vars:
     updates_launch_system_available: true
-    updates_launch_module_utils: '{{ playbook_dir }}/../../plugins/module_utils'
+    updates_launch_module_utils: >-
+      {{ playbook_dir + '/../../legacy_windows/plugins/module_utils' }}
     updates_launch_cases:
       - {state: searched, check: false}
       - {state: installed, check: true}

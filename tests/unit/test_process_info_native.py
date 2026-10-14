@@ -19,9 +19,9 @@ def process_helper(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
     :param monkeypatch: Scoped target import path.
     :returns: Process reader imported with the development interpreter.
     """
-    monkeypatch.syspath_prepend(str(ROOT / "plugins/module_utils"))
+    monkeypatch.syspath_prepend(str(ROOT / "legacy_windows/plugins/module_utils"))
     helper = load_module(
-        ROOT / "plugins/module_utils/legacy_windows_process_info.py",
+        ROOT / "legacy_windows/plugins/module_utils/legacy_windows_process_info.py",
         "tested_process_info",
     )
     monkeypatch.setattr(

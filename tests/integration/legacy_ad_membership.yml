@@ -1,0 +1,290 @@
+---
+- name: Exercise native membership on a disposable legacy member host
+  hosts: legacy_ad_members
+  gather_facts: false
+  vars:
+    membership_observer: |
+      import ctypes, json, socket, sys, winreg
+      library = ctypes.WinDLL('netapi32')
+      library.NetGetJoinInformation.argtypes = [ctypes.c_wchar_p,
+          ctypes.POINTER(ctypes.c_void_p), ctypes.POINTER(ctypes.c_int)]
+      library.NetGetJoinInformation.restype = ctypes.c_uint32
+      library.NetApiBufferFree.argtypes = [ctypes.c_void_p]
+      library.NetApiBufferFree.restype = ctypes.c_uint32
+      buffer = ctypes.c_void_p()
+      status = ctypes.c_int()
+      code = library.NetGetJoinInformation(None, ctypes.byref(buffer),
+          ctypes.byref(status))
+      if code:
+          raise ctypes.WinError(code)
+      try:
+          name = ctypes.wstring_at(buffer)
+      finally:
+          library.NetApiBufferFree(buffer)
+      names_key = r'SYSTEM\CurrentControlSet\Control\ComputerName'
+      with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,
+          names_key + r'\ComputerName') as key:
+          pending_name = winreg.QueryValueEx(key, 'ComputerName')[0]
+      print(json.dumps({'hostname': socket.gethostname(),
+          'pending_hostname': pending_name,
+          'joined': status.value == 3, 'join_name': name,
+          'python': list(sys.version_info[:3])}))
+  tasks:
+    - name: Read independent native initial state
+      sustainablelobster.legacy_windows.win_command:
+        argv: ['{{ ansible_python_interpreter }}', '-']
+        stdin: '{{ membership_observer }}'
+      register: membership_initial_output
+      changed_when: false
+
+    - name: Record the original state for restoration
+      ansible.builtin.set_fact:
+        membership_initial: '{{ membership_initial_output.stdout | from_json }}'
+
+    - name: Require an isolated workgroup fixture running the minimum Python
+      ansible.builtin.assert:
+        that:
+          - not membership_initial.joined
+          - >-
+            membership_initial.pending_hostname | lower ==
+            membership_initial.hostname | lower
+          - membership_initial.python == [3, 4, 4]
+          - ad_dns_domain is defined
+          - ad_admin_user is defined
+          - ad_admin_password is defined
+          - ad_domain_server is defined
+          - ad_computer_ou is defined
+          - ad_management_host is defined
+
+    - name: Allocate a unique owned computer account name for this run
+      sustainablelobster.legacy_windows.win_command:
+        argv:
+          - '{{ ansible_python_interpreter }}'
+          - -c
+          - import uuid; print('LAD-' + uuid.uuid4().hex[:9].upper())
+      changed_when: false
+      register: membership_name_output
+
+    - name: Retain the unique name throughout join and recovery
+      ansible.builtin.set_fact:
+        membership_test_name: '{{ membership_name_output.stdout | trim }}'
+
+    - name: Check that the intended directory account does not already exist
+      sustainablelobster.legacy_ad.object_info:
+        filter: sAMAccountName -eq '{{ membership_test_name }}$'
+        domain_server: '{{ ad_domain_server }}'
+        domain_username: '{{ ad_admin_user }}'
+        domain_password: '{{ ad_admin_password }}'
+      delegate_to: '{{ ad_management_host }}'
+      register: membership_account_before
+
+    - name: Refuse to reuse or clean up a preexisting directory account
+      ansible.builtin.assert:
+        that: membership_account_before.objects == []
+
+    - name: Check that join-before-rename cannot reuse an original-name account
+      sustainablelobster.legacy_ad.object_info:
+        filter: sAMAccountName -eq '{{ membership_initial.hostname }}$'
+        domain_server: '{{ ad_domain_server }}'
+        domain_username: '{{ ad_admin_user }}'
+        domain_password: '{{ ad_admin_password }}'
+      delegate_to: '{{ ad_management_host }}'
+      register: membership_original_account_before
+
+    - name: Refuse to acquire a preexisting original-name directory account
+      ansible.builtin.assert:
+        that: membership_original_account_before.objects == []
+
+    - name: Verify join rename repeat and leave behavior
+      block:
+        - name: Predict joining with automatic reboot without mutation
+          sustainablelobster.legacy_ad.membership:
+            dns_domain_name: '{{ ad_dns_domain }}'
+            domain_admin_user: '{{ ad_admin_user }}'
+            domain_admin_password: '{{ ad_admin_password }}'
+            domain_server: '{{ ad_domain_server }}'
+            hostname: '{{ membership_test_name }}'
+            state: domain
+            reboot: true
+          check_mode: true
+          diff: true
+          register: membership_prediction
+
+        - name: Read state after the prediction independently
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}', '-']
+            stdin: '{{ membership_observer }}'
+          changed_when: false
+          register: membership_after_prediction
+
+        - name: Require a changed prediction and untouched native state
+          ansible.builtin.assert:
+            that:
+              - membership_prediction is changed
+              - not membership_prediction.reboot_required
+              - >-
+                membership_after_prediction.stdout | from_json ==
+                membership_initial
+
+        - name: Join using an OU and preferred controller without reboot
+          sustainablelobster.legacy_ad.membership:
+            dns_domain_name: '{{ ad_dns_domain }}'
+            domain_admin_user: '{{ ad_admin_user }}'
+            domain_admin_password: '{{ ad_admin_password }}'
+            domain_server: '{{ ad_domain_server }}'
+            domain_ou_path: '{{ ad_computer_ou }}'
+            hostname: '{{ membership_test_name }}'
+            state: domain
+          diff: true
+          register: membership_join
+
+        - name: Require the pending join to request a reboot
+          ansible.builtin.assert:
+            that:
+              - membership_join is changed
+              - membership_join.reboot_required
+
+        - name: Activate the pending membership
+          sustainablelobster.legacy_windows.win_reboot:
+
+        - name: Read the activated name and membership independently
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}', '-']
+            stdin: '{{ membership_observer }}'
+          changed_when: false
+          register: membership_after_join
+
+        - name: Verify active membership and hostname
+          ansible.builtin.assert:
+            that:
+              - (membership_after_join.stdout | from_json).joined
+              - >-
+                (membership_after_join.stdout | from_json).hostname | lower ==
+                membership_test_name | lower
+
+        - name: Repeat the activated domain membership
+          sustainablelobster.legacy_ad.membership:
+            dns_domain_name: '{{ ad_dns_domain }}'
+            domain_admin_user: '{{ ad_admin_user }}'
+            domain_admin_password: '{{ ad_admin_password }}'
+            hostname: '{{ membership_test_name }}'
+            state: domain
+            reboot: true
+          register: membership_repeat
+
+        - name: Require an idempotent domain repeat
+          ansible.builtin.assert:
+            that:
+              - membership_repeat is not changed
+              - not membership_repeat.reboot_required
+
+        - name: Refuse a direct switch to a different domain
+          sustainablelobster.legacy_ad.membership:
+            dns_domain_name: unsupported.other.test
+            domain_admin_user: '{{ ad_admin_user }}'
+            domain_admin_password: '{{ ad_admin_password }}'
+            state: domain
+          register: membership_switch
+          failed_when: >-
+            not membership_switch.failed or
+            'switching domains is not implemented' not in membership_switch.msg
+
+        - name: Leave and activate a new workgroup using automatic reboot
+          sustainablelobster.legacy_ad.membership:
+            workgroup_name: LEGACY-AD
+            domain_admin_user: '{{ ad_admin_user }}'
+            domain_admin_password: '{{ ad_admin_password }}'
+            state: workgroup
+            reboot: true
+          register: membership_leave
+
+        - name: Read the independent workgroup state
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}', '-']
+            stdin: '{{ membership_observer }}'
+          changed_when: false
+          register: membership_after_leave
+
+        - name: Verify completed automatic reboot and workgroup
+          ansible.builtin.assert:
+            that:
+              - membership_leave is changed
+              - not membership_leave.reboot_required
+              - not (membership_after_leave.stdout | from_json).joined
+              - >-
+                (membership_after_leave.stdout | from_json).join_name ==
+                'LEGACY-AD'
+      always:
+        - name: Activate rejected partial join changes before restoration
+          sustainablelobster.legacy_windows.win_reboot:
+          when:
+            - membership_join is defined
+            - membership_join is failed
+            - membership_join.reboot_required | default(false)
+
+        - name: Restore the original workgroup and computer name
+          sustainablelobster.legacy_ad.membership:
+            workgroup_name: '{{ membership_initial.join_name }}'
+            hostname: '{{ membership_initial.hostname }}'
+            domain_admin_user: '{{ ad_admin_user }}'
+            domain_admin_password: '{{ ad_admin_password }}'
+            state: workgroup
+            reboot: true
+
+        - name: Read final native restoration state
+          sustainablelobster.legacy_windows.win_command:
+            argv: ['{{ ansible_python_interpreter }}', '-']
+            stdin: '{{ membership_observer }}'
+          changed_when: false
+          register: membership_final
+
+        - name: Require restoration of the original host state
+          ansible.builtin.assert:
+            that:
+              - membership_final.stdout | from_json == membership_initial
+
+        - name: Locate acquired accounts under the two initially absent names
+          sustainablelobster.legacy_ad.object_info:
+            filter: >-
+              sAMAccountName -eq '{{ membership_test_name }}$' -or
+              sAMAccountName -eq '{{ membership_initial.hostname }}$'
+            domain_server: '{{ ad_domain_server }}'
+            domain_username: '{{ ad_admin_user }}'
+            domain_password: '{{ ad_admin_password }}'
+          delegate_to: '{{ ad_management_host }}'
+          register: membership_owned_account
+
+        - name: Require only computers under the acquired names before cleanup
+          ansible.builtin.assert:
+            that:
+              - membership_owned_account.objects | length <= 2
+              - >-
+                membership_owned_account.objects |
+                rejectattr('ObjectClass', 'equalto', 'computer') | list == []
+
+        - name: Remove only the acquired computer by its immutable identity
+          sustainablelobster.legacy_ad.computer:
+            identity: '{{ item.ObjectGUID }}'
+            state: absent
+            domain_server: '{{ ad_domain_server }}'
+            domain_username: '{{ ad_admin_user }}'
+            domain_password: '{{ ad_admin_password }}'
+          delegate_to: '{{ ad_management_host }}'
+          loop: '{{ membership_owned_account.objects }}'
+          loop_control:
+            label: '{{ item.ObjectGUID }}'
+
+        - name: Independently query the removed owned computer account
+          sustainablelobster.legacy_ad.object_info:
+            filter: >-
+              sAMAccountName -eq '{{ membership_test_name }}$' -or
+              sAMAccountName -eq '{{ membership_initial.hostname }}$'
+            domain_server: '{{ ad_domain_server }}'
+            domain_username: '{{ ad_admin_user }}'
+            domain_password: '{{ ad_admin_password }}'
+          delegate_to: '{{ ad_management_host }}'
+          register: membership_account_cleaned
+
+        - name: Require complete owned computer account cleanup
+          ansible.builtin.assert:
+            that: membership_account_cleaned.objects == []

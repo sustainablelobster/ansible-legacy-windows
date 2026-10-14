@@ -27,9 +27,9 @@ def owned_fixture(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Any:
     :param tmp_path: Private test parent directory.
     :returns: Helper, directory, ownership journal and native state.
     """
-    monkeypatch.syspath_prepend(str(ROOT / "plugins/module_utils"))
+    monkeypatch.syspath_prepend(str(ROOT / "legacy_windows/plugins/module_utils"))
     helper = load_module(
-        ROOT / "plugins/module_utils/legacy_windows_updates_worker.py",
+        ROOT / "legacy_windows/plugins/module_utils/legacy_windows_updates_worker.py",
         "tested_updates_worker",
     )
     root = tmp_path / (helper._PREFIX + "a" * 32)
@@ -69,7 +69,7 @@ def test_native_helper_closure_and_workspace_names_are_explicit(fixture: Any) ->
     assert "legacy_windows_system_token.py" in fixture.helper.HELPERS
     assert "legacy_windows_regex_categories.py" in fixture.helper.HELPERS
     for name in fixture.helper.HELPERS:
-        assert (ROOT / "plugins/module_utils" / name).is_file()
+        assert (ROOT / "legacy_windows/plugins/module_utils" / name).is_file()
     assert "launch.json" in fixture.helper._FILES
 
 
@@ -601,7 +601,7 @@ worker.start({},supervised=True)
             sys.executable,
             "-c",
             program,
-            str(ROOT / "plugins/module_utils"),
+            str(ROOT / "legacy_windows/plugins/module_utils"),
             str(source),
             str(tmp_path),
             str(barrier),

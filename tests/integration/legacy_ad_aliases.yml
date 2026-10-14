@@ -1,0 +1,200 @@
+---
+# Copyright 2026 sustainablelobster
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Requires a writable directory with resource-based delegation attributes.
+# Deletes only the unique OU acquired by this fixture.
+- name: Verify released account alias precedence on the minimum target runtime
+  hosts: legacy_ad
+  gather_facts: false
+  module_defaults:
+    group/sustainablelobster.legacy_ad.domain:
+      domain_server: '{{ ad_domain_server }}'
+      domain_username: '{{ ad_domain_username }}'
+      domain_password: '{{ ad_domain_password }}'
+  tasks:
+    - name: Identify the interpreter and allocate a unique directory fixture
+      sustainablelobster.legacy_windows.win_command:
+        argv:
+          - '{{ ansible_python_interpreter }}'
+          - -c
+          - >-
+            import json, sys, uuid;
+            print(json.dumps({"python": list(sys.version_info[:3]),
+            "name": "LWAD-A-" + uuid.uuid4().hex[:6]}))
+      register: ad_alias_runtime
+      changed_when: false
+
+    - name: Require the actual minimum interpreter
+      ansible.builtin.assert:
+        that: (ad_alias_runtime.stdout | from_json).python == [3, 4, 4]
+
+    - name: Record the unique fixture name
+      ansible.builtin.set_fact:
+        ad_alias_name: '{{ (ad_alias_runtime.stdout | from_json).name }}'
+
+    - name: Exercise conflicting aliases and clean up the owned OU
+      block:
+        - name: Create the unique parent OU
+          sustainablelobster.legacy_ad.ou:
+            name: '{{ ad_alias_name }}'
+            path: '{{ ad_domain_dn }}'
+          register: ad_alias_ou
+
+        - name: Create a user with alias values overriding canonical values
+          sustainablelobster.legacy_ad.user: &ad_alias_user_request
+            name: '{{ ad_alias_name }}-U'
+            path: '{{ ad_alias_ou.distinguished_name }}'
+            surname: {ignored: invalid canonical type}
+            lastname: AliasSurname
+            spn:
+              set: ['HTTP/ignored-{{ ad_alias_name }}']
+            spns:
+              set: ['HTTP/alias-{{ ad_alias_name }}']
+            delegates:
+              set: ['{{ ad_alias_name }}-missing']
+            principals_allowed_to_delegate:
+              set: []
+          register: ad_alias_user
+
+        - name: Repeat the same conflicting user aliases
+          sustainablelobster.legacy_ad.user: *ad_alias_user_request
+          register: ad_alias_user_repeat
+
+        - name: Read the actual user attribute values
+          sustainablelobster.legacy_ad.object_info:
+            identity: '{{ ad_alias_user.object_guid }}'
+            properties: [sn, servicePrincipalName]
+          register: ad_alias_user_values
+
+        - name: Verify alias precedence and user idempotence
+          ansible.builtin.assert:
+            that:
+              - ad_alias_user.changed
+              - not ad_alias_user_repeat.changed
+              - ad_alias_user_values.objects[0].sn == 'AliasSurname'
+              - >-
+                ad_alias_user_values.objects[0].servicePrincipalName ==
+                ['HTTP/alias-' + ad_alias_name]
+
+        - name: Create a computer with the aliased service principal names
+          sustainablelobster.legacy_ad.computer: &ad_alias_computer_request
+            name: '{{ ad_alias_name }}-C'
+            path: '{{ ad_alias_ou.distinguished_name }}'
+            spn:
+              set: ['HOST/ignored-{{ ad_alias_name }}']
+            spns:
+              set: ['HOST/alias-{{ ad_alias_name }}']
+          register: ad_alias_computer
+
+        - name: Repeat the same conflicting computer aliases
+          sustainablelobster.legacy_ad.computer: *ad_alias_computer_request
+          register: ad_alias_computer_repeat
+
+        - name: Predict an aliased computer update
+          sustainablelobster.legacy_ad.computer:
+            identity: '{{ ad_alias_computer.object_guid }}'
+            spn:
+              set: ['HOST/ignored-preview-{{ ad_alias_name }}']
+            spns:
+              set: ['HOST/preview-{{ ad_alias_name }}']
+          check_mode: true
+          diff: true
+          register: ad_alias_computer_preview
+
+        - name: Read the computer after prediction
+          sustainablelobster.legacy_ad.object_info:
+            identity: '{{ ad_alias_computer.object_guid }}'
+            properties: [servicePrincipalName]
+          register: ad_alias_computer_values
+
+        - name: Verify computer idempotence and check-mode nonmutation
+          ansible.builtin.assert:
+            that:
+              - ad_alias_computer.changed
+              - not ad_alias_computer_repeat.changed
+              - ad_alias_computer_preview.changed
+              - >-
+                ad_alias_computer_values.objects[0].servicePrincipalName ==
+                ['HOST/alias-' + ad_alias_name]
+
+        - name: Verify the nested alias overrides the canonical missing policy
+          sustainablelobster.legacy_ad.user:
+            identity: '{{ ad_alias_user.object_guid }}'
+            groups:
+              add: ['{{ ad_alias_name }}-missing']
+              lookup_failure_action: fail
+              missing_behaviour: ignore
+          register: ad_alias_missing
+
+        - name: Apply an explicit null surname alias
+          sustainablelobster.legacy_ad.user: &ad_alias_null_request
+            identity: '{{ ad_alias_user.object_guid }}'
+            surname: IgnoredSurname
+            lastname: null
+          register: ad_alias_null
+
+        - name: Repeat the explicit null alias
+          sustainablelobster.legacy_ad.user: *ad_alias_null_request
+          register: ad_alias_null_repeat
+
+        - name: Read the unchanged surname after null alias requests
+          sustainablelobster.legacy_ad.object_info:
+            identity: '{{ ad_alias_user.object_guid }}'
+            properties: [sn]
+          register: ad_alias_null_values
+
+        - name: Verify ignored missing identities and unmanaged null alias
+          ansible.builtin.assert:
+            that:
+              - not ad_alias_missing.changed
+              - not ad_alias_null.changed
+              - not ad_alias_null_repeat.changed
+              - ad_alias_null_values.objects[0].sn == 'AliasSurname'
+
+        - name: Reject malformed default-false Boolean inputs without creation
+          sustainablelobster.legacy_ad.computer:
+            name: '{{ ad_alias_name }}-Bad'
+            path: '{{ ad_alias_ou.distinguished_name }}'
+            do_not_append_dollar_to_sam: '{{ item }}'
+          loop: [[], {}, '']
+          register: ad_alias_invalid_boolean
+          failed_when: >-
+            not ad_alias_invalid_boolean.failed | default(false)
+            or ad_alias_invalid_boolean.changed
+            or 'do_not_append_dollar_to_sam' not in ad_alias_invalid_boolean.msg
+
+        - name: Independently verify malformed inputs created no computer
+          sustainablelobster.legacy_ad.object_info:
+            identity: >-
+              CN={{ ad_alias_name }}-Bad,{{ ad_alias_ou.distinguished_name }}
+          register: ad_alias_invalid_absence
+
+        - name: Require malformed-input nonmutation
+          ansible.builtin.assert:
+            that: ad_alias_invalid_absence.objects == []
+
+      always:
+        - name: Remove only the OU acquired by this fixture
+          sustainablelobster.legacy_ad.ou:
+            identity: '{{ ad_alias_ou.object_guid }}'
+            state: absent
+          when: >-
+            ad_alias_ou is defined and ad_alias_ou.object_guid is defined
+            and ad_alias_ou.object_guid !=
+            '00000000-0000-0000-0000-000000000000'
+
+        - name: Independently verify removal of the acquired OU
+          sustainablelobster.legacy_ad.object_info:
+            identity: '{{ ad_alias_ou.object_guid }}'
+          when: >-
+            ad_alias_ou is defined and ad_alias_ou.object_guid is defined
+            and ad_alias_ou.object_guid !=
+            '00000000-0000-0000-0000-000000000000'
+          register: ad_alias_cleanup
+
+        - name: Require exact owned-fixture cleanup
+          ansible.builtin.assert:
+            that: ad_alias_cleanup.objects == []
+          when: >-
+            ad_alias_cleanup is defined
+            and not ad_alias_cleanup.skipped | default(false)

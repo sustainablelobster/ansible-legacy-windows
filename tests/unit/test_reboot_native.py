@@ -44,11 +44,11 @@ def reboot_helper(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
     :param monkeypatch: Scoped imports and ctypes substitutions.
     :returns: Isolated reboot helper.
     """
-    monkeypatch.syspath_prepend(str(ROOT / "plugins/module_utils"))
+    monkeypatch.syspath_prepend(str(ROOT / "legacy_windows/plugins/module_utils"))
     monkeypatch.setattr(ctypes, "WinError", native_error, raising=False)
     monkeypatch.setattr(ctypes, "get_last_error", lambda: 5, raising=False)
     helper = load_module(
-        ROOT / "plugins/module_utils/legacy_windows_reboot.py", "reboot"
+        ROOT / "legacy_windows/plugins/module_utils/legacy_windows_reboot.py", "reboot"
     )
     monkeypatch.setattr(helper, "_account_domain_sid", lambda _pointer: None)
     return helper
@@ -763,7 +763,8 @@ def test_native_domain_sid_read_distinguishes_non_account_sid(
 ) -> None:
     # Load the original native boundary, not the portable fixture substitute.
     original = load_module(
-        ROOT / "plugins/module_utils/legacy_windows_reboot.py", "native_sid"
+        ROOT / "legacy_windows/plugins/module_utils/legacy_windows_reboot.py",
+        "native_sid",
     )
     domain = b"\x01\x04\0\0\0\0\0\x05" + struct.pack("<4L", 21, 1, 2, 3)
     library = Mock()

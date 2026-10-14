@@ -1,0 +1,26 @@
+---
+namespace: sustainablelobster
+name: legacy_ad
+version: 1.0.0
+readme: README.md
+authors:
+  - sustainablelobster
+description: Python 3.4.4-compatible native Active Directory automation.
+license_file: LICENSE
+tags:
+  - active_directory
+  - windows
+dependencies:
+  sustainablelobster.legacy_windows: '>=1.1.0,<2.0.0'
+repository: https://github.com/sustainablelobster/ansible-legacy-windows
+build_ignore:
+  - '**/__pycache__'
+  - '*.pyc'
+  - '*.tar.gz'
+  - tests
+  - tmp
+  - .env
+  - .env.*
+  - inventory
+  - inventory.*
+  - inventories

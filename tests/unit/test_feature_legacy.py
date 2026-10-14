@@ -22,9 +22,9 @@ def legacy_helper(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
     :param monkeypatch: Scoped helper import path.
     :returns: Fresh older Server Manager helper.
     """
-    monkeypatch.syspath_prepend(str(ROOT / "plugins/module_utils"))
+    monkeypatch.syspath_prepend(str(ROOT / "legacy_windows/plugins/module_utils"))
     return load_module(
-        ROOT / "plugins/module_utils/legacy_windows_feature_legacy.py",
+        ROOT / "legacy_windows/plugins/module_utils/legacy_windows_feature_legacy.py",
         "feature_legacy_tested",
     )
 
@@ -153,9 +153,9 @@ def test_native_servicing_exit_and_xml_preserve_changes_restart_and_failure(
     expected: tuple[bool, bool, bool],
 ) -> None:
     changed, reboot, failed = expected
-    monkeypatch.syspath_prepend(str(ROOT / "plugins/module_utils"))
+    monkeypatch.syspath_prepend(str(ROOT / "legacy_windows/plugins/module_utils"))
     management = load_module(
-        ROOT / "plugins/module_utils/legacy_windows_feature_manage.py",
+        ROOT / "legacy_windows/plugins/module_utils/legacy_windows_feature_manage.py",
         "feature_legacy_management_tested",
     )
     original = {

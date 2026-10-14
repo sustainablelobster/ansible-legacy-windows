@@ -1,0 +1,250 @@
+---
+# Copyright 2026 sustainablelobster
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Creates only disabled-principal policies in the isolated test domain.
+- name: Verify native password settings objects on the minimum target runtime
+  hosts: legacy_ad
+  gather_facts: false
+  module_defaults:
+    group/sustainablelobster.legacy_ad.domain:
+      domain_server: '{{ ad_domain_server }}'
+      domain_username: '{{ ad_domain_username }}'
+      domain_password: '{{ ad_domain_password }}'
+    sustainablelobster.legacy_ad.pso:
+      domain_server: '{{ ad_domain_server }}'
+      domain_username: '{{ ad_domain_username }}'
+      domain_password: '{{ ad_domain_password }}'
+  tasks:
+    - name: Allocate the owned policy name and identify the interpreter
+      sustainablelobster.legacy_windows.win_command:
+        argv:
+          - '{{ ansible_python_interpreter }}'
+          - -c
+          - >-
+            import json, sys, uuid;
+            print(json.dumps({'python': list(sys.version_info[:3]),
+            'name': 'LWAD-PSO-' + uuid.uuid4().hex[:8]}))
+      changed_when: false
+      register: policy_pso_runtime
+
+    - name: Require the actual minimum interpreter
+      ansible.builtin.assert:
+        that: (policy_pso_runtime.stdout | from_json).python == [3, 4, 4]
+
+    - name: Record the unique name
+      ansible.builtin.set_fact:
+        policy_pso_name: '{{ (policy_pso_runtime.stdout | from_json).name }}'
+
+    - name: Compile the installed policy closure before importing it
+      ansible.builtin.include_tasks: tasks/legacy_ad_compile.yml
+      vars:
+        ad_compile_extra_files:
+          - {collection: ad, kind: modules, file: pso.py}
+          - {collection: ad, kind: module_utils, file: legacy_ad_account.py}
+          - {collection: ad, kind: module_utils, file: legacy_ad_policy_pso.py}
+
+    - name: Exercise policy lifecycle and subjects with guaranteed cleanup
+      block:
+        - name: Create an isolated subject fixture OU
+          sustainablelobster.legacy_ad.ou:
+            name: '{{ policy_pso_name }}'
+            path: '{{ ad_domain_dn }}'
+          register: policy_pso_ou
+
+        - name: Create a disabled subject user
+          sustainablelobster.legacy_ad.user:
+            name: '{{ policy_pso_name }}U'
+            path: '{{ policy_pso_ou.distinguished_name }}'
+            enabled: false
+          register: policy_pso_user
+
+        - name: Create a global security subject group
+          sustainablelobster.legacy_ad.group:
+            name: '{{ policy_pso_name }}-Global'
+            path: '{{ policy_pso_ou.distinguished_name }}'
+            scope: global
+            category: security
+          register: policy_pso_group
+
+        - name: Predict policy creation without writing
+          sustainablelobster.legacy_ad.pso:
+            name: '{{ policy_pso_name }}'
+            precedence: 100
+            subjects: ['{{ policy_pso_user.object_guid }}']
+          check_mode: true
+          diff: true
+          register: policy_pso_preview
+
+        - name: Independently verify predicted absence
+          sustainablelobster.legacy_ad.object_info:
+            identity: '{{ policy_pso_preview.distinguished_name }}'
+          register: policy_pso_absent
+
+        - name: Require nonmutating prediction and marker GUID
+          ansible.builtin.assert:
+            that:
+              - policy_pso_preview.changed
+              - >-
+                policy_pso_preview.object_guid ==
+                '00000000-0000-0000-0000-000000000000'
+              - policy_pso_absent.objects == []
+
+        - name: Create a protected policy using the measured upstream defaults
+          sustainablelobster.legacy_ad.pso: &policy_pso_create
+            name: '{{ policy_pso_name }}'
+            precedence: 100
+            description: Native legacy policy fixture
+            protect_from_deletion: true
+            subjects: ['{{ policy_pso_user.object_guid }}']
+          diff: true
+          register: policy_pso_created
+
+        - name: Repeat the complete creation request
+          sustainablelobster.legacy_ad.pso: *policy_pso_create
+          register: policy_pso_repeat
+
+        - name: Read the actual mandatory policy values and subject links
+          sustainablelobster.legacy_ad.object_info:
+            identity: '{{ policy_pso_created.object_guid }}'
+            properties:
+              - msDS-PasswordSettingsPrecedence
+              - msDS-PasswordReversibleEncryptionEnabled
+              - msDS-PasswordHistoryLength
+              - msDS-PasswordComplexityEnabled
+              - msDS-MinimumPasswordLength
+              - msDS-MinimumPasswordAge
+              - msDS-MaximumPasswordAge
+              - msDS-LockoutThreshold
+              - msDS-LockoutObservationWindow
+              - msDS-LockoutDuration
+              - msDS-PSOAppliesTo
+          register: policy_pso_observed
+
+        - name: Require exact reference defaults and idempotence
+          ansible.builtin.assert:
+            that:
+              - policy_pso_created.changed
+              - not policy_pso_repeat.changed
+              - policy_pso_values['msDS-PasswordSettingsPrecedence'] == 100
+              - policy_pso_values['msDS-PasswordReversibleEncryptionEnabled']
+              - policy_pso_values['msDS-PasswordHistoryLength'] == 24
+              - policy_pso_values['msDS-PasswordComplexityEnabled']
+              - policy_pso_values['msDS-MinimumPasswordLength'] == 7
+              - policy_pso_values['msDS-MinimumPasswordAge'] == -864000000000
+              - policy_pso_values['msDS-MaximumPasswordAge'] == -36288000000000
+              - policy_pso_values['msDS-LockoutThreshold'] == 0
+              - >-
+                policy_pso_values['msDS-LockoutObservationWindow'] ==
+                -18000000000
+              - policy_pso_values['msDS-LockoutDuration'] == -18000000000
+              - >-
+                policy_pso_values['msDS-PSOAppliesTo'] ==
+                [policy_pso_user.distinguished_name]
+          vars:
+            policy_pso_values: '{{ policy_pso_observed.objects[0] }}'
+
+        - name: Update named settings and replace the subject link
+          sustainablelobster.legacy_ad.pso: &policy_pso_update
+            identity: '{{ policy_pso_created.object_guid }}'
+            min_password_length: 20
+            complexity_enabled: false
+            lockout_threshold: 5
+            subjects: ['{{ policy_pso_group.sid }}']
+          diff: true
+          register: policy_pso_updated
+
+        - name: Repeat the settings and subject update
+          sustainablelobster.legacy_ad.pso: *policy_pso_update
+          register: policy_pso_update_repeat
+
+        - name: Read changed native settings and exact subjects
+          sustainablelobster.legacy_ad.object_info:
+            identity: '{{ policy_pso_created.object_guid }}'
+            properties:
+              - msDS-MinimumPasswordLength
+              - msDS-PasswordComplexityEnabled
+              - msDS-LockoutThreshold
+              - msDS-PSOAppliesTo
+          register: policy_pso_after_update
+
+        - name: Verify named update and exact replacement
+          ansible.builtin.assert:
+            that:
+              - policy_pso_updated.changed
+              - not policy_pso_update_repeat.changed
+              - policy_pso_updated.diff.before.complexity_enabled
+              - not policy_pso_updated.diff.after.complexity_enabled
+              - policy_pso_after_values['msDS-MinimumPasswordLength'] == 20
+              - not policy_pso_after_values['msDS-PasswordComplexityEnabled']
+              - policy_pso_after_values['msDS-LockoutThreshold'] == 5
+              - >-
+                policy_pso_after_values['msDS-PSOAppliesTo'] ==
+                [policy_pso_group.distinguished_name]
+          vars:
+            policy_pso_after_values: '{{ policy_pso_after_update.objects[0] }}'
+
+        - name: Rename the protected policy without changing its GUID
+          sustainablelobster.legacy_ad.pso:
+            identity: '{{ policy_pso_created.object_guid }}'
+            name: '{{ policy_pso_name }}-Renamed'
+          register: policy_pso_renamed
+
+        - name: Require immutable policy identity after rename
+          ansible.builtin.assert:
+            that:
+              - policy_pso_renamed.changed
+              - policy_pso_renamed.object_guid == policy_pso_created.object_guid
+
+        - name: Preview deletion without removing the policy
+          sustainablelobster.legacy_ad.pso:
+            identity: '{{ policy_pso_created.object_guid }}'
+            state: absent
+          check_mode: true
+          register: policy_pso_delete_preview
+
+        - name: Read policy existence after predicted deletion
+          sustainablelobster.legacy_ad.object_info:
+            identity: '{{ policy_pso_created.object_guid }}'
+          register: policy_pso_still_present
+
+        - name: Require a nonmutating delete prediction
+          ansible.builtin.assert:
+            that:
+              - policy_pso_delete_preview.changed
+              - policy_pso_still_present.objects | length == 1
+      always:
+        - name: Remove only the owned policy by its immutable identity
+          sustainablelobster.legacy_ad.pso:
+            identity: >-
+              {{ policy_pso_created.object_guid |
+                 default('CN=' ~ policy_pso_name ~
+                 ',CN=Password Settings Container,CN=System,' ~ ad_domain_dn) }}
+            state: absent
+
+        - name: Remove the owned subject fixture and its disabled principals
+          sustainablelobster.legacy_ad.ou:
+            identity: >-
+              {{ policy_pso_ou.object_guid |
+                 default('OU=' ~ policy_pso_name ~ ',' ~ ad_domain_dn) }}
+            state: absent
+
+        - name: Independently query the removed owned policy
+          sustainablelobster.legacy_ad.object_info:
+            identity: >-
+              {{ policy_pso_created.object_guid |
+                 default('CN=' ~ policy_pso_name ~
+                 ',CN=Password Settings Container,CN=System,' ~ ad_domain_dn) }}
+          register: policy_pso_cleaned
+
+        - name: Independently query the removed owned subject container
+          sustainablelobster.legacy_ad.object_info:
+            identity: >-
+              {{ policy_pso_ou.object_guid |
+                 default('OU=' ~ policy_pso_name ~ ',' ~ ad_domain_dn) }}
+          register: policy_pso_ou_cleaned
+
+        - name: Require complete owned policy and principal cleanup
+          ansible.builtin.assert:
+            that:
+              - policy_pso_cleaned.objects == []
+              - policy_pso_ou_cleaned.objects == []

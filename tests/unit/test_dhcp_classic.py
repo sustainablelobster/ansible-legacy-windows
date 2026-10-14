@@ -20,9 +20,10 @@ def classic_server(monkeypatch: pytest.MonkeyPatch) -> Any:
     :param monkeypatch: Scoped module imports and RPC boundary replacements.
     :returns: Adapter module, native recorder and actual classic server object.
     """
-    monkeypatch.syspath_prepend(str(ROOT / "plugins/module_utils"))
+    monkeypatch.syspath_prepend(str(ROOT / "legacy_windows/plugins/module_utils"))
     module = load_module(
-        ROOT / "plugins/module_utils/legacy_windows_dhcp_lease.py", "classic_dhcp_test"
+        ROOT / "legacy_windows/plugins/module_utils/legacy_windows_dhcp_lease.py",
+        "classic_dhcp_test",
     )
     api = MagicMock()
     api.subnets.return_value = ["192.0.2.0"]

@@ -22,7 +22,7 @@ def link_helper() -> ModuleType:
 
     :returns: The isolated helper module without invoking Windows APIs.
     """
-    source = ROOT / "plugins/module_utils/legacy_windows_link.py"
+    source = ROOT / "legacy_windows/plugins/module_utils/legacy_windows_link.py"
     spec = importlib.util.spec_from_file_location("tested_link_native", source)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)

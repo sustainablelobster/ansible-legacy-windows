@@ -27,7 +27,8 @@ def test_high_bit_native_errors_preserve_the_hresult_without_format_overflow(
 ) -> None:
     helper, _options, _request = native
     errors = load_module(
-        ROOT / "plugins/module_utils/legacy_windows_get_url.py", "tested_hresult_errors"
+        ROOT / "legacy_windows/plugins/module_utils/legacy_windows_get_url.py",
+        "tested_hresult_errors",
     )
     formatted: list[int] = []
 
@@ -263,7 +264,8 @@ def test_secure_failure_reasons_reach_both_native_error_paths_and_cleanup(
 ) -> None:
     helper, options, library = http
     errors = load_module(
-        ROOT / "plugins/module_utils/legacy_windows_get_url.py", "tested_tls_errors"
+        ROOT / "legacy_windows/plugins/module_utils/legacy_windows_get_url.py",
+        "tested_tls_errors",
     )
     monkeypatch.setattr(helper, "_error", errors._error)
     monkeypatch.setattr(helper.ctypes, "get_last_error", lambda: 12175)

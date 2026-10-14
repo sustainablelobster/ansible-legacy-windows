@@ -10,7 +10,8 @@ dsc3_archive: >-
 dsc3_poll_expected_mac: BC-24-11-3E-87-91
 dsc3_poll_sources: |
   WMI_SOURCE = {{ lookup('ansible.builtin.file',
-    playbook_dir + '/../../plugins/module_utils/legacy_windows_wmi.py') |
+    playbook_dir + '/../../legacy_windows/' +
+    'plugins/module_utils/legacy_windows_wmi.py') |
     to_json }}
   BASE_SOURCE = {{ lookup('ansible.builtin.file',
     playbook_dir + '/fixtures/native_async.py') | to_json }}

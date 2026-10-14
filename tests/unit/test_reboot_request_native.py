@@ -29,9 +29,9 @@ def reboot_helper(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
     :param monkeypatch: Scoped adjacent-helper import path.
     :returns: Fresh reboot helper loaded by the developer interpreter.
     """
-    monkeypatch.syspath_prepend(str(ROOT / "plugins/module_utils"))
+    monkeypatch.syspath_prepend(str(ROOT / "legacy_windows/plugins/module_utils"))
     return load_module(
-        ROOT / "plugins/module_utils/legacy_windows_reboot_request.py",
+        ROOT / "legacy_windows/plugins/module_utils/legacy_windows_reboot_request.py",
         "tested_reboot_request",
     )
 

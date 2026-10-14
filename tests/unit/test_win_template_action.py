@@ -25,8 +25,10 @@ from ansible.parsing.vault import (  # type: ignore[import-untyped]
 )
 from ansible.plugins.action import ActionBase  # type: ignore[import-untyped]
 from ansible.template import Templar  # type: ignore[import-untyped]
-
-from plugins.action import win_copy, win_template  # pylint: disable=import-error
+from ansible_collections.sustainablelobster.legacy_windows.plugins.action import (  # pylint: disable=import-error
+    win_copy,
+    win_template,
+)
 
 _REMOTE = r"C:\Temp\ansible-tmp-template-test"
 _DEST = r"C:\target\config.txt"

@@ -11,7 +11,8 @@ native_async_runas_program: |
     playbook_dir + '/fixtures/native_async_runas.py') }}
 native_async_runas_recovery_program: |
   WMI_SOURCE = {{ lookup('ansible.builtin.file',
-    playbook_dir + '/../../plugins/module_utils/legacy_windows_wmi.py') |
+    playbook_dir + '/../../legacy_windows/' +
+    'plugins/module_utils/legacy_windows_wmi.py') |
     to_json }}
   ASYNC_SOURCE = {{ lookup('ansible.builtin.file',
     playbook_dir + '/fixtures/native_async.py').split(

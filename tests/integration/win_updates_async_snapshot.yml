@@ -26,10 +26,10 @@
     updates_snapshot_catalog_program: |
       HELPER_SOURCES = {
           'legacy_windows_wmi': {{ lookup('ansible.builtin.file',
-            playbook_dir + '/../../plugins/module_utils/' +
+            playbook_dir + '/../../legacy_windows/plugins/module_utils/' +
             'legacy_windows_wmi.py') | to_json }},
           'legacy_windows_updates_native': {{ lookup('ansible.builtin.file',
-            playbook_dir + '/../../plugins/module_utils/' +
+            playbook_dir + '/../../legacy_windows/plugins/module_utils/' +
             'legacy_windows_updates_native.py') | to_json }}
       }
       {{ lookup('ansible.builtin.file',
@@ -42,7 +42,7 @@
           playbook_dir + '/fixtures/native_async.py').split(
           'def _read(path):')[0] | to_json }}
       namespace['WMI_SOURCE'] = {{ lookup('ansible.builtin.file',
-          playbook_dir + '/../../plugins/module_utils/' +
+          playbook_dir + '/../../legacy_windows/plugins/module_utils/' +
           'legacy_windows_wmi.py') | to_json }}
       exec(compile(source, 'updates_snapshot_protected', 'exec'), namespace)
       value = namespace['_protected']()

@@ -41,6 +41,7 @@ def _run_package_step(
         os.environ,
         PATH=str(workspace) + os.pathsep + os.environ["PATH"],
         CI_OUTPUT_DIR=str(workspace.parent / (workspace.name + "-ci-output")),
+        GITHUB_OUTPUT=str(workspace / "github-output"),
     )
     environment.update(values)
     return subprocess.run(
@@ -58,7 +59,10 @@ def test_ci_runs_checks_on_prs_branches_tags_and_manual_dispatch() -> None:
     events = _workflow()["on"]
     assert set(events) == {"pull_request", "push", "workflow_dispatch"}
     assert events["pull_request"] is None  # Includes pull requests from forks.
-    assert events["push"] == {"branches": ["main", "v1"], "tags": ["v*"]}
+    assert events["push"] == {
+        "branches": ["main", "v1"],
+        "tags": ["legacy_windows/v*", "legacy_ad/v*"],
+    }
     assert events["workflow_dispatch"] is None
 
 
@@ -235,12 +239,15 @@ def test_publication_requires_an_origin_tag_push_and_all_checks() -> None:
     assert conditions == [
         "github.repository == 'sustainablelobster/ansible-legacy-windows'",
         "github.event_name == 'push'",
-        "startsWith(github.ref, 'refs/tags/v')",
+        "(startsWith(github.ref, 'refs/tags/legacy_windows/v') "
+        "|| startsWith(github.ref, 'refs/tags/legacy_ad/v'))",
         "needs.lint.result == 'success'",
         "needs.unit.result == 'success'",
         "needs.package.result == 'success'",
     ]
     assert publish["concurrency"]["cancel-in-progress"] is False
+    assert "${{ github.sha }}" in publish["concurrency"]["group"]
+    assert "github.ref" not in publish["concurrency"]["group"]
     assert _workflow()["concurrency"]["cancel-in-progress"] == (
         "${{ !startsWith(github.ref, 'refs/tags/') }}"
     )
@@ -269,7 +276,7 @@ def test_only_the_publisher_has_write_permissions_or_a_publish_token() -> None:
                 assert environment["GALAXY_API_KEY"] == (
                     "${{ secrets.GALAXY_API_KEY }}"
                 )
-                assert "ci_release.py publish-galaxy" in step["run"]
+                assert "ci_release.py publish-tagged" in step["run"]
                 galaxy_steps.append(step)
     assert len(galaxy_steps) == 1
     source = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
@@ -314,50 +321,68 @@ def test_artifact_promotion_uses_this_runs_package_and_its_recorded_digest() -> 
         for step in _steps(jobs[name])
         if step.get("uses", "").startswith("actions/upload-artifact@")
     ]
-    assert len(uploads) == 2
+    assert len(uploads) == 3
     assert uploads[0]["with"]["path"] == "${{ env.CI_OUTPUT_DIR }}/pytest.xml"
     assert " ".join(uploads[0]["if"].split()) == (
         "${{ !cancelled() && steps.report.outputs.available == 'true' }}"
     )
-    assert uploads[1]["with"]["path"].splitlines() == [
-        "${{ env.CI_OUTPUT_DIR }}/package/${{ env.RELEASE_FILENAME }}",
-        "${{ env.CI_OUTPUT_DIR }}/package/SHA256SUMS",
-        "${{ env.CI_OUTPUT_DIR }}/package/release-notes.txt",
-        "${{ env.CI_OUTPUT_DIR }}/package/release-manifest.json",
-    ]
-    assert uploads[1]["env"]["RELEASE_FILENAME"] == (
-        "${{ steps.package.outputs.filename }}"
-    )
+    for upload, collection, step in zip(
+        uploads[1:], ("legacy_windows", "legacy_ad"), ("windows", "ad"), strict=True
+    ):
+        prefix = "${{ env.CI_OUTPUT_DIR }}/" + collection + "/"
+        assert upload["with"]["path"].splitlines() == [
+            prefix + "${{ env.RELEASE_FILENAME }}",
+            prefix + "SHA256SUMS",
+            prefix + "release-notes.txt",
+            prefix + "release-manifest.json",
+        ]
+        assert upload["env"]["RELEASE_FILENAME"] == (
+            "${{ steps." + step + ".outputs.filename }}"
+        )
     for upload in uploads:
         assert upload["with"]["if-no-files-found"] == "error"
         assert upload["with"]["retention-days"] == 30
         assert "${{ github.run_attempt }}" in upload["with"]["name"]
-    assert jobs["package"]["outputs"]["artifact-id"] == (
-        "${{ steps.upload.outputs.artifact-id }}"
-    )
+    assert jobs["package"]["outputs"] == {
+        "windows-sha256": "${{ steps.windows.outputs.sha256 }}",
+        "ad-sha256": "${{ steps.ad.outputs.sha256 }}",
+        "windows-artifact-id": "${{ steps.upload-windows.outputs.artifact-id }}",
+        "ad-artifact-id": "${{ steps.upload-ad.outputs.artifact-id }}",
+    }
     publisher_steps = _steps(jobs["publish"])
-    download = next(
+    downloads = [
         step
         for step in publisher_steps
         if step.get("uses", "").startswith("actions/download-artifact@")
-    )
-    assert download["with"] == {
-        "artifact-ids": "${{ needs.package.outputs.artifact-id }}",
-        "path": "${{ env.CI_OUTPUT_DIR }}/package",
-        "merge-multiple": True,
-        "digest-mismatch": "error",
-    }
+    ]
+    assert len(downloads) == 2
+    for download, collection, output in zip(
+        downloads,
+        ("legacy_windows", "legacy_ad"),
+        ("windows", "ad"),
+        strict=True,
+    ):
+        assert download["with"] == {
+            "artifact-ids": "${{ needs.package.outputs." + output + "-artifact-id }}",
+            "path": "${{ env.CI_OUTPUT_DIR }}/" + collection,
+            "merge-multiple": True,
+            "digest-mismatch": "error",
+        }
     publish = next(
         step for step in publisher_steps if "GH_TOKEN" in step.get("env", {})
     )
-    assert publish["env"]["EXPECTED_SHA256"] == ("${{ needs.package.outputs.sha256 }}")
-    assert '--package-dir "$CI_OUTPUT_DIR/package"' in publish["run"]
-    assert '--sha256 "$EXPECTED_SHA256"' in publish["run"]
+    assert publish["env"]["WINDOWS_SHA256"] == (
+        "${{ needs.package.outputs.windows-sha256 }}"
+    )
+    assert publish["env"]["AD_SHA256"] == ("${{ needs.package.outputs.ad-sha256 }}")
+    assert "GITHUB_REF_NAME" not in publish["env"]
+    assert "GITHUB_SHA" not in publish["env"]
+    assert not any(step.get("id") == "selected" for step in publisher_steps)
     assert "just build" not in publish["run"]
 
 
 @pytest.mark.parametrize("token", ["", " \t\n", "private-test-token"])
-def test_publish_step_requires_secret_and_promotes_same_candidate_to_both_servers(
+def test_publish_step_requires_secret_and_passes_both_exact_candidates(
     tmp_path: Path, token: str
 ) -> None:
     step = next(
@@ -377,7 +402,8 @@ def test_publish_step_requires_secret_and_promotes_same_candidate_to_both_server
     )
     nix.chmod(0o700)
     output_directory = tmp_path / "runner temporary storage"
-    digest = "a" * 64
+    windows_digest = "a" * 64
+    ad_digest = "b" * 64
     result = subprocess.run(
         ["bash", "-euo", "pipefail"],
         input=step["run"],
@@ -387,7 +413,8 @@ def test_publish_step_requires_secret_and_promotes_same_candidate_to_both_server
             PATH=str(tmp_path) + os.pathsep + os.environ["PATH"],
             CI_COMMAND_LOG=str(command_log),
             CI_OUTPUT_DIR=str(output_directory),
-            EXPECTED_SHA256=digest,
+            WINDOWS_SHA256=windows_digest,
+            AD_SHA256=ad_digest,
             GALAXY_API_KEY=token,
         ),
         capture_output=True,
@@ -404,26 +431,30 @@ def test_publish_step_requires_secret_and_promotes_same_candidate_to_both_server
         [
             "python",
             "scripts/ci_release.py",
-            command,
-            "--package-dir",
-            str(output_directory / "package"),
-            "--sha256",
-            digest,
+            "publish-tagged",
+            "--windows-package-dir",
+            str(output_directory / "legacy_windows"),
+            "--windows-sha256",
+            windows_digest,
+            "--ad-package-dir",
+            str(output_directory / "legacy_ad"),
+            "--ad-sha256",
+            ad_digest,
         ]
-        for command in ("publish", "publish-galaxy")
     ]
     assert token not in command_log.read_text() + result.stdout + result.stderr
 
 
+@pytest.mark.parametrize("collection", ["legacy_windows", "legacy_ad"])
 @pytest.mark.parametrize("count", [0, 2])
 def test_package_step_rejects_missing_or_ambiguous_archives(
-    tmp_path: Path, count: int
+    tmp_path: Path, collection: str, count: int
 ) -> None:
     (tmp_path / "dist").mkdir()
+    other = "legacy_ad" if collection == "legacy_windows" else "legacy_windows"
+    (tmp_path / "dist" / f"sustainablelobster-{other}-1.0.0.tar.gz").touch()
     for index in range(count):
-        (
-            tmp_path / "dist" / f"sustainablelobster-legacy_windows-{index}.tar.gz"
-        ).touch()
+        (tmp_path / "dist" / f"sustainablelobster-{collection}-{index}.tar.gz").touch()
     command = tmp_path / "nix"
     command.write_text(
         "#!/bin/bash\n"
@@ -435,34 +466,17 @@ def test_package_step_rejects_missing_or_ambiguous_archives(
     command.chmod(0o700)
     result = _run_package_step(tmp_path)
     assert result.returncode == 1
-    assert "Expected exactly one collection archive." in result.stderr
+    assert "Expected exactly one archive for each collection." in result.stderr
 
 
-@pytest.mark.parametrize(
-    "event,ref_type,ref_name,tag_arguments",
-    [
-        ("push", "branch", "main", []),
-        ("push", "tag", "v1.0.0", ["--tag", "v1.0.0"]),
-        ("workflow_dispatch", "tag", "v1.0.0", []),
-        ("pull_request", "branch", "example", []),
-        (
-            "push",
-            "tag",
-            "v1.0.0; touch escaped",
-            ["--tag", "v1.0.0; touch escaped"],
-        ),
-    ],
-)
 def test_package_step_checks_the_same_archive_before_preparing_a_release(
     tmp_path: Path,
-    event: str,
-    ref_type: str,
-    ref_name: str,
-    tag_arguments: list[str],
 ) -> None:
     (tmp_path / "dist").mkdir()
     archive = "dist/sustainablelobster-legacy_windows-1.0.0.tar.gz"
     (tmp_path / archive).touch()
+    ad_archive = "dist/sustainablelobster-legacy_ad-1.0.0.tar.gz"
+    (tmp_path / ad_archive).touch()
     command_log = tmp_path / "commands.jsonl"
     command = tmp_path / "nix"
     # Record the real workflow's commands without building or publishing.
@@ -480,23 +494,101 @@ def test_package_step_checks_the_same_archive_before_preparing_a_release(
         tmp_path,
         CI_OUTPUT_DIR=str(output_directory),
         CI_COMMAND_LOG=str(command_log),
-        GITHUB_EVENT_NAME=event,
-        GITHUB_REF_TYPE=ref_type,
-        GITHUB_REF_NAME=ref_name,
     )
     assert result.returncode == 0, result.stderr
     assert [json.loads(line) for line in command_log.read_text().splitlines()] == [
         ["just", "build"],
-        ["python", "scripts/check_collection.py", "--artifact", archive],
+        [
+            "python",
+            "scripts/check_collection.py",
+            "--artifact",
+            archive,
+            "--artifact",
+            ad_archive,
+        ],
+    ]
+    assert (tmp_path / "github-output").read_text() == (
+        f"windows-archive={archive}\nad-archive={ad_archive}\n"
+    )
+
+
+@pytest.mark.parametrize(
+    "collection,step_id", [("legacy_windows", "windows"), ("legacy_ad", "ad")]
+)
+@pytest.mark.parametrize(
+    "context",
+    [
+        ("push", "branch", "main"),
+        ("push", "tag", "legacy_windows/v1.0.0"),
+        ("push", "tag", "v1.0.0"),
+        ("push", "tag", "legacy_ad/v1.0.0"),
+        ("workflow_dispatch", "tag", "legacy_windows/v1.0.0"),
+        ("pull_request", "branch", "example"),
+        ("push", "tag", "legacy_windows/v1.0.0; touch escaped"),
+    ],
+)
+def test_each_candidate_preparation_receives_only_its_own_tag(
+    tmp_path: Path,
+    collection: str,
+    step_id: str,
+    context: tuple[str, str, str],
+) -> None:
+    event, ref_type, ref_name = context
+    step = next(
+        item
+        for item in _steps(_workflow()["jobs"]["package"])
+        if item.get("id") == step_id
+    )
+    command_log = tmp_path / "commands.jsonl"
+    nix = tmp_path / "nix"
+    nix.write_text(
+        "#!/usr/bin/env python3\n"
+        "import json, os, sys\n"
+        "args = sys.argv[sys.argv.index('--command') + 1:]\n"
+        "with open(os.environ['CI_COMMAND_LOG'], 'a') as output:\n"
+        "    output.write(json.dumps(args) + '\\n')\n",
+        encoding="utf-8",
+    )
+    nix.chmod(0o700)
+    archive = f"dist/sustainablelobster-{collection}-1.0.0.tar.gz"
+    output_directory = tmp_path / "runner temporary storage"
+    result = subprocess.run(
+        ["bash", "-euo", "pipefail"],
+        input=step["run"],
+        cwd=tmp_path,
+        env=dict(
+            os.environ,
+            PATH=str(tmp_path) + os.pathsep + os.environ["PATH"],
+            CI_COMMAND_LOG=str(command_log),
+            CI_OUTPUT_DIR=str(output_directory),
+            ARCHIVE=archive,
+            GITHUB_EVENT_NAME=event,
+            GITHUB_REF_TYPE=ref_type,
+            GITHUB_REF_NAME=ref_name,
+        ),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    prefix = collection + "/v"
+    tag_args = (
+        ["--tag", ref_name]
+        if event == "push" and ref_type == "tag" and ref_name.startswith(prefix)
+        else []
+    )
+    assert [json.loads(line) for line in command_log.read_text().splitlines()] == [
         [
             "python",
             "scripts/ci_release.py",
             "package",
+            "--collection",
+            collection,
             "--artifact",
             archive,
             "--output-dir",
-            str(output_directory / "package"),
-            *tag_arguments,
-        ],
+            str(output_directory / collection),
+            *tag_args,
+        ]
     ]
     assert not (tmp_path / "escaped").exists()

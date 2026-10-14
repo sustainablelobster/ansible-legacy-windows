@@ -26,7 +26,7 @@ def setup_helper(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
     :returns: Imported setup helper.
     """
     monkeypatch.syspath_prepend(
-        str(Path(__file__).resolve().parents[2] / "plugins/module_utils")
+        str(Path(__file__).resolve().parents[2] / "legacy_windows/plugins/module_utils")
     )
     for name in (
         "legacy_windows_setup",

@@ -19,9 +19,10 @@ def region_helper(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
     :param monkeypatch: Scoped helper imports and portable WinError substitute.
     :returns: Imported regional helper.
     """
-    monkeypatch.syspath_prepend(str(ROOT / "plugins/module_utils"))
+    monkeypatch.syspath_prepend(str(ROOT / "legacy_windows/plugins/module_utils"))
     module = load_module(
-        ROOT / "plugins/module_utils/legacy_windows_region.py", "tested_region_native"
+        ROOT / "legacy_windows/plugins/module_utils/legacy_windows_region.py",
+        "tested_region_native",
     )
     monkeypatch.setattr(
         module, "values_equal", lambda left, right: left.lower() == right.lower()

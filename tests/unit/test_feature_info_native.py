@@ -22,9 +22,10 @@ def native_helper(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
     :param monkeypatch: Scoped standalone helper path.
     :returns: A fresh target helper, without opening Windows interfaces.
     """
-    monkeypatch.syspath_prepend(str(ROOT / "plugins/module_utils"))
+    monkeypatch.syspath_prepend(str(ROOT / "legacy_windows/plugins/module_utils"))
     return load_module(
-        ROOT / "plugins/module_utils/legacy_windows_wmi.py", "feature_wmi"
+        ROOT / "legacy_windows/plugins/module_utils/legacy_windows_wmi.py",
+        "feature_wmi",
     )
 
 
@@ -178,9 +179,10 @@ def feature_helper(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
     :param monkeypatch: Scoped target helper path.
     :returns: Feature metadata functions with controllable COM boundaries.
     """
-    monkeypatch.syspath_prepend(str(ROOT / "plugins/module_utils"))
+    monkeypatch.syspath_prepend(str(ROOT / "legacy_windows/plugins/module_utils"))
     return load_module(
-        ROOT / "plugins/module_utils/legacy_windows_feature_info.py", "feature_native"
+        ROOT / "legacy_windows/plugins/module_utils/legacy_windows_feature_info.py",
+        "feature_native",
     )
 
 

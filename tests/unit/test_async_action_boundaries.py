@@ -11,8 +11,10 @@ from unittest.mock import Mock
 import pytest
 from ansible.errors import AnsibleActionFail  # type: ignore[import-untyped]
 from ansible.plugins.action import ActionBase  # type: ignore[import-untyped]
-
-from plugins.action import win_copy, win_template
+from ansible_collections.sustainablelobster.legacy_windows.plugins.action import (
+    win_copy,
+    win_template,
+)
 
 
 @pytest.mark.parametrize(

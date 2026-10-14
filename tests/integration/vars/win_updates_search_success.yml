@@ -12,7 +12,8 @@ updates_search_inputs:
   reject_list: ['.*']
 updates_search_sources: |
   WMI_SOURCE = {{ lookup('ansible.builtin.file',
-    playbook_dir + '/../../plugins/module_utils/legacy_windows_wmi.py',
+    playbook_dir + '/../../legacy_windows/' +
+    'plugins/module_utils/legacy_windows_wmi.py',
     rstrip=false) | to_json }}
   BASE_SOURCE = {{ lookup('ansible.builtin.file',
     playbook_dir + '/fixtures/native_async.py', rstrip=false) | to_json }}
@@ -32,7 +33,7 @@ updates_search_program: |
   HELPER_SOURCES = {
       'legacy_windows_wmi': WMI_SOURCE,
       'legacy_windows_updates_native': {{ lookup('ansible.builtin.file',
-        playbook_dir + '/../../plugins/module_utils/' +
+        playbook_dir + '/../../legacy_windows/plugins/module_utils/' +
         'legacy_windows_updates_native.py',
         rstrip=false) | to_json }}
   }

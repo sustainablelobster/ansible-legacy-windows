@@ -18,9 +18,9 @@ def compression_helper(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
     :param monkeypatch: Scoped helper imports and OS substitute.
     :returns: Compression helper loaded by the development interpreter.
     """
-    monkeypatch.syspath_prepend(str(ROOT / "plugins/module_utils"))
+    monkeypatch.syspath_prepend(str(ROOT / "legacy_windows/plugins/module_utils"))
     module = load_module(
-        ROOT / "plugins/module_utils/legacy_windows_compression.py",
+        ROOT / "legacy_windows/plugins/module_utils/legacy_windows_compression.py",
         "tested_native_compression",
     )
     monkeypatch.setattr(module, "os", SimpleNamespace(path=ntpath))

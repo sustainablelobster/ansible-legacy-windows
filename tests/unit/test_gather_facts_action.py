@@ -16,8 +16,10 @@ from ansible import constants as C  # type: ignore[import-untyped]
 from ansible.errors import AnsibleActionFail  # type: ignore[import-untyped]
 from ansible.plugins.action import ActionBase  # type: ignore[import-untyped]
 from ansible.plugins.action import gather_facts as core
+from ansible_collections.sustainablelobster.legacy_windows.plugins.action import (
+    gather_facts,
+)
 
-from plugins.action import gather_facts
 from tests.unit.test_async_status_action import _action as _status_action
 from tests.unit.test_python_action import _action
 

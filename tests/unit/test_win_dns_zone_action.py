@@ -6,8 +6,10 @@
 from pathlib import Path
 
 import pytest
+from ansible_collections.sustainablelobster.legacy_windows.plugins.action.win_dns_zone import (
+    ActionModule,
+)
 
-from plugins.action.win_dns_zone import ActionModule
 from tests.unit.test_python_action import _action
 
 

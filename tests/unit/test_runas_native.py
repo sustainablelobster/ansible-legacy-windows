@@ -27,7 +27,7 @@ def native_runas(monkeypatch: pytest.MonkeyPatch) -> Any:
     account = ModuleType("legacy_windows_account")
     monkeypatch.setitem(sys.modules, "legacy_windows_account", account)
     monkeypatch.setitem(sys.modules, "msvcrt", ModuleType("msvcrt"))
-    directory = ROOT / "plugins/module_utils"
+    directory = ROOT / "legacy_windows/plugins/module_utils"
     s4u = load_module(directory / "legacy_windows_s4u.py", "tested_runas_s4u")
     monkeypatch.setitem(sys.modules, "legacy_windows_s4u", s4u)
     token = load_module(

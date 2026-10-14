@@ -1,19 +1,21 @@
 ---
 feature_wmi_source: >-
   {{ lookup('file', playbook_dir +
-  '/../../plugins/module_utils/legacy_windows_wmi.py') }}
+  '/../../legacy_windows/plugins/module_utils/legacy_windows_wmi.py') }}
 feature_info_source: >-
   {{ lookup('file', playbook_dir +
-  '/../../plugins/module_utils/legacy_windows_feature_info.py') }}
+  '/../../legacy_windows/' +
+  'plugins/module_utils/legacy_windows_feature_info.py') }}
 feature_legacy_source: >-
   {{ lookup('file', playbook_dir +
-  '/../../plugins/module_utils/legacy_windows_feature_legacy.py') }}
+  '/../../legacy_windows/' +
+  'plugins/module_utils/legacy_windows_feature_legacy.py') }}
 feature_match_source: >-
   {{ lookup('file', playbook_dir +
-  '/../../plugins/module_utils/legacy_windows_find_match.py') }}
+  '/../../legacy_windows/plugins/module_utils/legacy_windows_find_match.py') }}
 feature_regex_source: >-
   {{ lookup('file', playbook_dir +
-  '/../../plugins/module_utils/legacy_windows_regex.py') }}
+  '/../../legacy_windows/plugins/module_utils/legacy_windows_regex.py') }}
 feature_program: |
   import sys,types
   for helper_name, source in (

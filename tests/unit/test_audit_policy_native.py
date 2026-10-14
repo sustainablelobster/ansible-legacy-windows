@@ -17,9 +17,9 @@ def native_policy(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
     :param monkeypatch: Scoped staged-helper import path.
     :returns: Audit-policy helper.
     """
-    monkeypatch.syspath_prepend(str(ROOT / "plugins/module_utils"))
+    monkeypatch.syspath_prepend(str(ROOT / "legacy_windows/plugins/module_utils"))
     return load_module(
-        ROOT / "plugins/module_utils/legacy_windows_audit_policy.py",
+        ROOT / "legacy_windows/plugins/module_utils/legacy_windows_audit_policy.py",
         "audit_policy_tested",
     )
 

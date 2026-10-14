@@ -21,9 +21,9 @@ def native_helper(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
     :param monkeypatch: Scoped adjacent-helper import path.
     :returns: Imported helper.
     """
-    monkeypatch.syspath_prepend(str(ROOT / "plugins/module_utils"))
+    monkeypatch.syspath_prepend(str(ROOT / "legacy_windows/plugins/module_utils"))
     return load_module(
-        ROOT / "plugins/module_utils/legacy_windows_auto_logon.py",
+        ROOT / "legacy_windows/plugins/module_utils/legacy_windows_auto_logon.py",
         "tested_auto_logon_native",
     )
 

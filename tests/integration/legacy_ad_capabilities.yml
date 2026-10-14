@@ -1,0 +1,108 @@
+---
+# Copyright 2026 sustainablelobster
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Run only on an owned legacy-schema forest without KDS, gMSA or AD FS.
+- name: Verify unsupported service capabilities fail without directory changes
+  hosts: legacy_ad_incapable_services
+  gather_facts: false
+  tasks:
+    - name: Require the designated disposable capability fixture
+      ansible.builtin.assert:
+        that: ad_owned_capability_test | default(false) | bool
+
+    - name: Read legacy schema for the missing service capabilities
+      sustainablelobster.legacy_ad.object_info:
+        search_base: 'CN=Schema,CN=Configuration,{{ ad_domain_dn }}'
+        ldap_filter: >-
+          {{ '(|(lDAPDisplayName=msDS-GroupManagedServiceAccount)'
+          ~ '(lDAPDisplayName=msKds-ProvRootKey))' }}
+        properties: [lDAPDisplayName]
+        domain_server: '{{ ad_domain_server }}'
+        domain_username: '{{ ad_domain_username }}'
+        domain_password: '{{ ad_domain_password }}'
+      register: ad_missing_service_schema
+      no_log: true
+
+    - name: Refuse to run incapable-service assertions on a capable schema
+      ansible.builtin.assert:
+        that: ad_missing_service_schema.objects == []
+
+    - name: Independently locate the absent federation management executable
+      sustainablelobster.legacy_windows.win_command:
+        argv:
+          - '{{ ansible_python_interpreter }}'
+          - -c
+          - >-
+            import json,os;
+            path=os.path.join(os.environ['SystemRoot'],'System32',
+            'WindowsPowerShell','v1.0','powershell.exe');
+            print(json.dumps({'powershell_exists':os.path.isfile(path)}))
+      register: ad_incapable_engine
+      changed_when: false
+
+    - name: Refuse to run missing-engine assertions on an installed engine
+      ansible.builtin.assert:
+        that: not (ad_incapable_engine.stdout | from_json).powershell_exists
+
+    - name: Reject KDS information without its directory container
+      sustainablelobster.legacy_ad.kds_root_key_info:
+      register: ad_missing_kds_info
+      failed_when: >-
+        not ad_missing_kds_info.failed | default(false)
+        or ad_missing_kds_info.changed
+        or 'KDS root-key container' not in ad_missing_kds_info.msg
+
+    - name: Reject KDS creation before changing an incapable directory
+      sustainablelobster.legacy_ad.kds_root_key:
+        match_by: never
+      register: ad_missing_kds_create
+      failed_when: >-
+        not ad_missing_kds_create.failed | default(false)
+        or ad_missing_kds_create.changed
+        or 'KDS root-key container' not in ad_missing_kds_create.msg
+
+    - name: Reject gMSA creation when the directory lacks its schema
+      sustainablelobster.legacy_ad.service_account:
+        name: '{{ ad_capability_name }}'
+        dns_hostname: '{{ ad_capability_name }}.{{ ad_domain_name }}'
+        domain_server: '{{ ad_domain_server }}'
+        domain_username: '{{ ad_domain_username }}'
+        domain_password: '{{ ad_domain_password }}'
+      register: ad_missing_gmsa
+      no_log: true
+      failed_when: >-
+        not ad_missing_gmsa.failed | default(false) or ad_missing_gmsa.changed
+
+    - name: Reject trust operations when no AD FS management engine is installed
+      sustainablelobster.legacy_ad.fs_trust:
+        name: '{{ ad_capability_name }}'
+        identifier: ['urn:legacy-ad:incapable:{{ ad_capability_name }}']
+      register: ad_missing_adfs_trust
+      failed_when: >-
+        not ad_missing_adfs_trust.failed | default(false)
+        or ad_missing_adfs_trust.changed
+        or ad_missing_adfs_trust.msg | length == 0
+
+    - name: Reject claim operations when no AD FS management engine is installed
+      sustainablelobster.legacy_ad.fs_claim_rule:
+        name: '{{ ad_capability_name }}'
+      register: ad_missing_adfs_claim
+      failed_when: >-
+        not ad_missing_adfs_claim.failed | default(false)
+        or ad_missing_adfs_claim.changed
+        or ad_missing_adfs_claim.msg | length == 0
+
+    - name: Independently read the account name after rejected creation
+      sustainablelobster.legacy_ad.object_info:
+        search_base: '{{ ad_domain_dn }}'
+        ldap_filter: '(name={{ ad_capability_name }})'
+        properties: [objectGUID]
+        domain_server: '{{ ad_domain_server }}'
+        domain_username: '{{ ad_domain_username }}'
+        domain_password: '{{ ad_domain_password }}'
+      register: ad_incapable_account_after
+      no_log: true
+
+    - name: Require failed account creation left no directory object
+      ansible.builtin.assert:
+        that: ad_incapable_account_after.objects == []

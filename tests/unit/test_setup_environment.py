@@ -15,8 +15,10 @@ from unittest.mock import Mock
 import pytest
 from ansible.errors import AnsibleError  # type: ignore[import-untyped]
 from ansible.plugins.action import ActionBase  # type: ignore[import-untyped]
+from ansible_collections.sustainablelobster.legacy_windows.plugins.action.setup import (
+    ActionModule,
+)
 
-from plugins.action.setup import ActionModule
 from tests.unit.test_python_action import _action
 
 
@@ -28,7 +30,7 @@ def load_native(monkeypatch: pytest.MonkeyPatch) -> Any:
     :returns: The actual native Setup helper.
     """
     monkeypatch.syspath_prepend(
-        str(Path(__file__).resolve().parents[2] / "plugins/module_utils")
+        str(Path(__file__).resolve().parents[2] / "legacy_windows/plugins/module_utils")
     )
     monkeypatch.setitem(sys.modules, "winreg", ModuleType("winreg"))
     monkeypatch.delitem(sys.modules, "legacy_windows_setup_native", raising=False)

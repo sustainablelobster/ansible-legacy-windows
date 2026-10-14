@@ -3,7 +3,8 @@ native_async_runas_poll_environment: 'literal λ %PATH% !text! & | < > ^'
 native_async_runas_poll_stdin: "binary\0\u0001body λ\r\n"
 native_async_runas_poll_program: |
   WMI_SOURCE = {{ lookup('ansible.builtin.file',
-    playbook_dir + '/../../plugins/module_utils/legacy_windows_wmi.py') |
+    playbook_dir + '/../../legacy_windows/' +
+    'plugins/module_utils/legacy_windows_wmi.py') |
     to_json }}
   ASYNC_SOURCE = {{ lookup('ansible.builtin.file',
     playbook_dir + '/fixtures/native_async.py').split(

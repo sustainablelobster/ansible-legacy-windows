@@ -25,9 +25,9 @@ def certificate_acl_helper(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
     :param monkeypatch: Scoped target helper import path.
     :returns: Loaded native certificate ACL adapter.
     """
-    monkeypatch.syspath_prepend(str(ROOT / "plugins/module_utils"))
+    monkeypatch.syspath_prepend(str(ROOT / "legacy_windows/plugins/module_utils"))
     return load_module(
-        ROOT / "plugins/module_utils/legacy_windows_certificate_acl.py",
+        ROOT / "legacy_windows/plugins/module_utils/legacy_windows_certificate_acl.py",
         "tested_certificate_acl",
     )
 

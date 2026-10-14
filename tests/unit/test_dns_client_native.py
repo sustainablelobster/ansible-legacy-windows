@@ -22,9 +22,9 @@ def dns_helper(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
     :param monkeypatch: Scoped sibling import path.
     :returns: Native module without opening Windows resources.
     """
-    monkeypatch.syspath_prepend(str(ROOT / "plugins/module_utils"))
+    monkeypatch.syspath_prepend(str(ROOT / "legacy_windows/plugins/module_utils"))
     return load_module(
-        ROOT / "plugins/module_utils/legacy_windows_dns_client.py",
+        ROOT / "legacy_windows/plugins/module_utils/legacy_windows_dns_client.py",
         "tested_dns_client_native",
     )
 

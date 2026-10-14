@@ -23,7 +23,8 @@ def registry_helper(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
     """
     monkeypatch.syspath_prepend(str(HELPER.parent))
     return load_module(
-        ROOT / "plugins/module_utils/legacy_windows_regedit.py", "tested_regedit_native"
+        ROOT / "legacy_windows/plugins/module_utils/legacy_windows_regedit.py",
+        "tested_regedit_native",
     )
 
 

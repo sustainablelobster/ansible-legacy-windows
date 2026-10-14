@@ -54,10 +54,10 @@
     actual: '{{ route_ipv6_observed.stdout | from_json }}'
     owned: >-
       {{ actual.persistent |
-      selectattr('prefix','equalto',route_ipv6_record.prefix) | list }}
+      selectattr('prefix', 'equalto', route_ipv6_record.prefix) | list }}
     active_owned: >-
       {{ actual.active |
-      selectattr('prefix','equalto',route_ipv6_record.prefix) | list }}
+      selectattr('prefix', 'equalto', route_ipv6_record.prefix) | list }}
   ansible.builtin.assert:
     that:
       - route_ipv6_result.changed == route_ipv6_case.changed

@@ -27,7 +27,7 @@ def datetime_helper(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
     :param monkeypatch: Scoped substitutions for native calendar boundaries.
     :returns: The imported parser, without contacting a Windows host.
     """
-    source = ROOT / "plugins/module_utils/legacy_windows_datetime.py"
+    source = ROOT / "legacy_windows/plugins/module_utils/legacy_windows_datetime.py"
     monkeypatch.syspath_prepend(str(source.parent))
     spec = importlib.util.spec_from_file_location("tested_datetime", source)
     assert spec is not None and spec.loader is not None

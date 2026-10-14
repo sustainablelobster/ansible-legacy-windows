@@ -22,9 +22,9 @@ def native_helper(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
     :param monkeypatch: Scoped standalone helper import directory.
     :returns: Fresh native management helper.
     """
-    monkeypatch.syspath_prepend(str(ROOT / "plugins/module_utils"))
+    monkeypatch.syspath_prepend(str(ROOT / "legacy_windows/plugins/module_utils"))
     return load_module(
-        ROOT / "plugins/module_utils/legacy_windows_feature_manage.py",
+        ROOT / "legacy_windows/plugins/module_utils/legacy_windows_feature_manage.py",
         "feature_manage_tested",
     )
 

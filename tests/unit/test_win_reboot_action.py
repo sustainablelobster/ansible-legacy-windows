@@ -21,8 +21,9 @@ from ansible.errors import (  # type: ignore[import-untyped]
     AnsibleConnectionFailure,
     AnsibleError,
 )
-
-from plugins.action import win_reboot
+from ansible_collections.sustainablelobster.legacy_windows.plugins.action import (
+    win_reboot,
+)
 
 
 @pytest.fixture(name="action")

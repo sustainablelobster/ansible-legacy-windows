@@ -14,7 +14,8 @@ hotfix_lifecycle_program: |
   exec(compile(base64.b64decode(
       '{{ lookup('ansible.builtin.file',
          (hotfix_lifecycle_source_root | default(playbook_dir + '/../..'))
-         + '/plugins/module_utils/' + helper + '.py') | b64encode }}'),
+         + '/legacy_windows/' +
+         'plugins/module_utils/' + helper + '.py') | b64encode }}'),
       '{{ helper }}.py', 'exec'), helper.__dict__)
   {% endfor %}
   {{ lookup('ansible.builtin.file',

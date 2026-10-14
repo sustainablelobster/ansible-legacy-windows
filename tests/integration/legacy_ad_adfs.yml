@@ -1,0 +1,546 @@
+---
+# Copyright 2026 sustainablelobster
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Run on a prepared, disposable federation server with a valid local IIS HTTPS
+# listener. Set ad_adfs_metadata_base_url to its certificate's host URL when it
+# is not https://localhost; the target must trust that fixture certificate.
+- name: Verify installed AD FS interfaces through Python 3.4.4
+  hosts: legacy_ad_adfs
+  gather_facts: false
+  vars:
+    ad_compile_extra_files:
+      - {collection: ad, kind: modules, file: fs_trust.py}
+      - {collection: ad, kind: modules, file: fs_claim_rule.py}
+      - {collection: ad, kind: module_utils, file: legacy_ad_adfs.py}
+    ad_adfs_web_root: C:\inetpub\wwwroot
+    ad_adfs_transform: >-
+      @RuleName = "PassThroughUPN"
+      c:[Type == "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/upn"]
+      => issue(claim = c);
+    ad_adfs_append: >-
+      @RuleName = "PassThroughEmail"
+      c:[Type ==
+      "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress"]
+      => issue(claim = c);
+    ad_adfs_authorization: >-
+      @RuleTemplate = "AllowAllAuthzRule"
+      => issue(Type =
+      "http://schemas.microsoft.com/authorization/claims/permit",
+      Value = "true");
+    # Independent observations do not import or call the collection helper.
+    ad_adfs_observer: |
+      $ErrorActionPreference = 'Stop'
+      [Console]::OutputEncoding = New-Object Text.UTF8Encoding($false)
+      Add-Type -AssemblyName System.Web.Extensions
+      $json = New-Object System.Web.Script.Serialization.JavaScriptSerializer
+      $command = Get-Command Get-AdfsRelyingPartyTrust -ErrorAction (
+          'SilentlyContinue')
+      if (-not $command) {
+          if (Get-PSSnapin -Registered | Where-Object {
+              $_.Name -eq 'Microsoft.Adfs.PowerShell'
+          }) { Add-PSSnapin Microsoft.Adfs.PowerShell }
+          else { Import-Module ADFS }
+      }
+      $names = $json.DeserializeObject(($input | Out-String))
+      $rows = @($names | ForEach-Object {
+          $name = [string]$_
+          $trust = Get-AdfsRelyingPartyTrust -Name $name -ErrorAction Stop
+          $row = @{name=$name; present=[bool]$trust}
+          if ($trust) {
+              $row['actual_name'] = $trust.Name
+              $row['identifiers'] = [string[]]@($trust.Identifier)
+              $row['enabled'] = $trust.Enabled
+              $row['notes'] = $trust.Notes
+              $row['token_lifetime'] = $trust.TokenLifetime
+              $row['monitoring_enabled'] = $trust.MonitoringEnabled
+              $row['auto_update_enabled'] = $trust.AutoUpdateEnabled
+              $row['encrypt_claims'] = $trust.EncryptClaims
+              $row['signature_algorithm'] = $trust.SignatureAlgorithm
+              $row['wsfed_endpoint'] = [string]$trust.WSFedEndpoint
+              $row['saml_endpoints'] = [string[]]@(
+                  $trust.SamlEndpoints | ForEach-Object { [string]$_.Location })
+              $row['transform_rules'] = [string]$trust.IssuanceTransformRules
+              $row['authorization_rules'] = [string](
+                  $trust.IssuanceAuthorizationRules)
+          }
+          $row
+      })
+      $policy = (Get-Command Add-AdfsRelyingPartyTrust).Parameters.ContainsKey(
+          'AccessControlPolicyName')
+      [Console]::Out.Write($json.Serialize(@{
+          trusts=$rows; powershell=$PSVersionTable.PSVersion.ToString();
+          access_control_policy=$policy
+      }))
+  tasks:
+    - name: Compile the installed payloads and helper closure on the target
+      ansible.builtin.include_tasks: tasks/legacy_ad_compile.yml
+
+    - name: Allocate unique names and an acquired-resource ownership marker
+      ansible.builtin.set_fact:
+        ad_adfs_id: '{{ 999999999999999999999 | random | to_uuid }}'
+
+    - name: Set the exact trust names and owned metadata path
+      ansible.builtin.set_fact:
+        ad_adfs_name: 'LegacyAdFs-{{ ad_adfs_id }}'
+        ad_adfs_marker: 'https://{{ ad_adfs_id }}.owned.invalid/'
+        ad_adfs_directory: '{{ ad_adfs_web_root }}\legacy-ad-{{ ad_adfs_id }}'
+
+    - name: Set the manual and metadata fixture identities
+      ansible.builtin.set_fact:
+        ad_adfs_names:
+          - '{{ ad_adfs_name }}'
+          - '{{ ad_adfs_name }}-File'
+          - '{{ ad_adfs_name }}-Url'
+        ad_adfs_metadata_url: >-
+          {{ ad_adfs_metadata_base_url | default('https://localhost')
+          }}/legacy-ad-{{ ad_adfs_id }}/metadata.xml
+
+    - name: Read the vendor state before acquiring any resource
+      sustainablelobster.legacy_windows.win_command: &ad_adfs_observe
+        argv:
+          - powershell.exe
+          - -NoProfile
+          - -NonInteractive
+          - -InputFormat
+          - Text
+          - -EncodedCommand
+          - '{{ ad_adfs_observer | b64encode(encoding="utf-16-le") }}'
+        stdin: '{{ ad_adfs_names | to_json }}'
+      changed_when: false
+      register: ad_adfs_before
+
+    - name: Read the exact metadata-directory initial state
+      sustainablelobster.legacy_windows.win_stat:
+        path: '{{ ad_adfs_directory }}'
+      register: ad_adfs_directory_before
+
+    - name: Require independently absent initial names and metadata directory
+      ansible.builtin.assert:
+        that:
+          - >-
+            (ad_adfs_before.stdout | from_json).trusts
+            | selectattr('present') | list | length == 0
+          - not ad_adfs_directory_before.stat.exists
+
+    - name: Exercise acquired trusts and restore their initial absence
+      block:
+        - name: Reject explicitly supplied conflicting null creation sources
+          sustainablelobster.legacy_ad.fs_trust:
+            name: '{{ ad_adfs_name }}'
+            metadata_url: null
+            identifier: ['{{ ad_adfs_marker }}']
+          register: ad_adfs_null_source
+          ignore_errors: true
+
+        - name: Observe names after mutually exclusive source rejection
+          sustainablelobster.legacy_windows.win_command: *ad_adfs_observe
+          changed_when: false
+          register: ad_adfs_after_null_source
+
+        - name: Require an actionable mutually exclusive failure and nonmutation
+          ansible.builtin.assert:
+            that:
+              - ad_adfs_null_source.failed | default(false)
+              - not ad_adfs_null_source.changed
+              - "'mutually exclusive' in ad_adfs_null_source.msg"
+              - >-
+                (ad_adfs_after_null_source.stdout | from_json).trusts
+                | selectattr('present') | list | length == 0
+
+        - name: Reject malformed token lifetime before touching vendor state
+          sustainablelobster.legacy_ad.fs_trust:
+            name: '{{ ad_adfs_name }}'
+            identifier: ['{{ ad_adfs_marker }}']
+            token_lifetime: '{{ item }}'
+          loop: [true, 1.2, 42.0, '1_0']
+          register: ad_adfs_invalid_integer
+          ignore_errors: true
+
+        - name: Require upstream integer validation failures without mutation
+          ansible.builtin.assert:
+            that:
+              - item.failed
+              - not item.changed
+              - "'token_lifetime' in item.msg"
+          loop: '{{ ad_adfs_invalid_integer.results }}'
+          loop_control:
+            label: '{{ item.item }}'
+
+        - name: Preview a manual trust without creating it
+          sustainablelobster.legacy_ad.fs_trust: &ad_adfs_manual
+            name: '{{ ad_adfs_name }}'
+            state: PrEsEnT
+            identifier: ['{{ ad_adfs_marker }}']
+            saml_endpoint: ['{{ ad_adfs_marker }}acs']
+            wsfed_endpoint: '{{ ad_adfs_marker }}signin'
+            enabled: false
+            notes: 'Original owned fixture'
+            token_lifetime: ' +42 '
+            signature_algorithm: RSA_SHA256
+            encrypt_claims: false
+          check_mode: true
+          register: ad_adfs_preview
+
+        - name: Observe names after the creation preview
+          sustainablelobster.legacy_windows.win_command: *ad_adfs_observe
+          changed_when: false
+          register: ad_adfs_after_preview
+
+        - name: Require upstream preview fields and independent nonmutation
+          ansible.builtin.assert:
+            that:
+              - ad_adfs_preview.changed
+              - ad_adfs_preview.identifier == []
+              - ad_adfs_preview.enabled is none
+              - ad_adfs_preview.monitoring_enabled is none
+              - >-
+                (ad_adfs_after_preview.stdout | from_json).trusts
+                | selectattr('present') | list | length == 0
+
+        - name: Create the manual relying-party trust
+          sustainablelobster.legacy_ad.fs_trust: *ad_adfs_manual
+          register: ad_adfs_created
+
+        - name: Repeat the manual trust creation request
+          sustainablelobster.legacy_ad.fs_trust: *ad_adfs_manual
+          register: ad_adfs_repeated
+
+        - name: Read exact vendor properties and endpoints
+          sustainablelobster.legacy_windows.win_command: *ad_adfs_observe
+          changed_when: false
+          register: ad_adfs_manual_observed
+
+        - name: Require independently read identity and properties
+          ansible.builtin.assert:
+            that:
+              - ad_adfs_created.changed
+              - not ad_adfs_repeated.changed
+              - ad_adfs_created.identifier == [ad_adfs_marker]
+              - not ad_adfs_created.enabled
+              - observed.actual_name == ad_adfs_name
+              - observed.identifiers == [ad_adfs_marker]
+              - observed.token_lifetime == 42
+              - not observed.encrypt_claims
+              - observed.notes == 'Original owned fixture'
+              - observed.wsfed_endpoint == ad_adfs_marker ~ 'signin'
+              - ad_adfs_marker ~ 'acs' in observed.saml_endpoints
+              - observed.signature_algorithm.endswith('rsa-sha256')
+          vars:
+            observed: >-
+              {{ (ad_adfs_manual_observed.stdout | from_json).trusts[0] }}
+
+        - name: Preview an enabled-state and Unicode-note update
+          sustainablelobster.legacy_ad.fs_trust: &ad_adfs_update
+            name: '{{ ad_adfs_name }}'
+            identifier: ['{{ ad_adfs_marker }}']
+            enabled: true
+            notes: 'Owned Unicode snowman ☃; literal $() and quotes "'
+          check_mode: true
+          register: ad_adfs_update_preview
+
+        - name: Observe properties after the update preview
+          sustainablelobster.legacy_windows.win_command: *ad_adfs_observe
+          changed_when: false
+          register: ad_adfs_update_preview_observed
+
+        - name: Require old return state and unchanged vendor properties
+          ansible.builtin.assert:
+            that:
+              - ad_adfs_update_preview.changed
+              - not ad_adfs_update_preview.enabled
+              - >-
+                not (ad_adfs_update_preview_observed.stdout | from_json)
+                .trusts[0].enabled
+              - >-
+                (ad_adfs_update_preview_observed.stdout | from_json)
+                .trusts[0].notes
+                == 'Original owned fixture'
+
+        - name: Apply and repeat the ordinary trust update
+          sustainablelobster.legacy_ad.fs_trust: *ad_adfs_update
+          loop: [first, repeat]
+          register: ad_adfs_updated
+
+        - name: Observe the updated vendor state
+          sustainablelobster.legacy_windows.win_command: *ad_adfs_observe
+          changed_when: false
+          register: ad_adfs_update_observed
+
+        - name: Require update idempotence and literal Unicode data
+          ansible.builtin.assert:
+            that:
+              - ad_adfs_updated.results[0].changed
+              - not ad_adfs_updated.results[1].changed
+              - (ad_adfs_update_observed.stdout | from_json).trusts[0].enabled
+              - >-
+                (ad_adfs_update_observed.stdout | from_json).trusts[0].notes
+                == 'Owned Unicode snowman ☃; literal $() and quotes "'
+
+        - name: Reject a missing newer option before modification
+          sustainablelobster.legacy_ad.fs_trust:
+            name: '{{ ad_adfs_name }}'
+            identifier: ['{{ ad_adfs_marker }}']
+            access_control_policy_name: UnavailableOwnedPolicy
+          when: not (ad_adfs_before.stdout | from_json).access_control_policy
+          register: ad_adfs_missing_capability
+          ignore_errors: true
+
+        - name: Require an actionable nonmutating capability failure
+          ansible.builtin.assert:
+            that:
+              - ad_adfs_missing_capability.failed | default(false)
+              - not ad_adfs_missing_capability.changed
+              - "'AccessControlPolicyName' in ad_adfs_missing_capability.msg"
+          when: not (ad_adfs_before.stdout | from_json).access_control_policy
+
+        - name: Preview issuance transform and authorization rule sets
+          sustainablelobster.legacy_ad.fs_claim_rule: &ad_adfs_rules
+            name: '{{ ad_adfs_name }}'
+            state: PRESENT
+            transform_rules:
+              value: ['{{ ad_adfs_transform }}']
+              update: SeT
+            authorization_rules:
+              value: ['{{ ad_adfs_authorization }}']
+              update: SET
+          check_mode: true
+          diff: true
+          register: ad_adfs_rule_preview
+
+        - name: Observe empty rules after the preview
+          sustainablelobster.legacy_windows.win_command: *ad_adfs_observe
+          changed_when: false
+          register: ad_adfs_rule_preview_observed
+
+        - name: Require proposed rules and independent nonmutation
+          ansible.builtin.assert:
+            that:
+              - ad_adfs_rule_preview.changed
+              - ad_adfs_rule_preview.transform_rules == ad_adfs_transform
+              - >-
+                ad_adfs_rule_preview.authorization_rules
+                == ad_adfs_authorization
+              - ad_adfs_rule_preview.diff.before.transform_rules == ''
+              - >-
+                (ad_adfs_rule_preview_observed.stdout | from_json)
+                .trusts[0].transform_rules == ''
+              - >-
+                (ad_adfs_rule_preview_observed.stdout | from_json)
+                .trusts[0].authorization_rules == ''
+
+        - name: Apply and repeat the rule set request
+          sustainablelobster.legacy_ad.fs_claim_rule: *ad_adfs_rules
+          loop: [first, repeat]
+          diff: true
+          register: ad_adfs_rule_set
+
+        - name: Append an issuance transform rule and repeat it
+          sustainablelobster.legacy_ad.fs_claim_rule:
+            name: '{{ ad_adfs_name }}'
+            transform_rules:
+              value: ['{{ ad_adfs_append }}']
+              update: APPEND
+          loop: [first, repeat]
+          diff: true
+          register: ad_adfs_rule_append
+
+        - name: Observe the independently persisted vendor rule sets
+          sustainablelobster.legacy_windows.win_command: *ad_adfs_observe
+          changed_when: false
+          register: ad_adfs_rules_observed
+
+        - name: Require set and append idempotence with vendor rule names
+          ansible.builtin.assert:
+            that:
+              - ad_adfs_rule_set.results[0].changed
+              - not ad_adfs_rule_set.results[1].changed
+              - ad_adfs_rule_append.results[0].changed
+              - not ad_adfs_rule_append.results[1].changed
+              - "'PassThroughUPN' in observed.transform_rules"
+              - "'PassThroughEmail' in observed.transform_rules"
+              - "'authorization/claims/permit' in observed.authorization_rules"
+          vars:
+            observed: >-
+              {{ (ad_adfs_rules_observed.stdout | from_json).trusts[0] }}
+
+        - name: Surface vendor syntax validation without changing rules
+          sustainablelobster.legacy_ad.fs_claim_rule:
+            name: '{{ ad_adfs_name }}'
+            transform_rules:
+              value: ['invalid owned claim-rule syntax']
+          register: ad_adfs_bad_rules
+          ignore_errors: true
+
+        - name: Observe vendor rules after the failed write
+          sustainablelobster.legacy_windows.win_command: *ad_adfs_observe
+          changed_when: false
+          register: ad_adfs_bad_rules_observed
+
+        - name: Require attempted-write failure and retained vendor rules
+          ansible.builtin.assert:
+            that:
+              - ad_adfs_bad_rules.failed | default(false)
+              - ad_adfs_bad_rules.changed
+              - "'Failed to set claim rules' in ad_adfs_bad_rules.msg"
+              - >-
+                (ad_adfs_bad_rules_observed.stdout | from_json)
+                .trusts[0].transform_rules
+                == (ad_adfs_rules_observed.stdout | from_json)
+                .trusts[0].transform_rules
+
+        - name: Clear both rule sets and repeat the clear request
+          sustainablelobster.legacy_ad.fs_claim_rule:
+            name: '{{ ad_adfs_name }}'
+            state: AbSeNt
+          loop: [first, repeat]
+          diff: true
+          register: ad_adfs_rules_cleared
+
+        - name: Require clear and repeat behavior
+          ansible.builtin.assert:
+            that:
+              - ad_adfs_rules_cleared.results[0].changed
+              - not ad_adfs_rules_cleared.results[1].changed
+              - ad_adfs_rules_cleared.results[0].transform_rules == ''
+              - ad_adfs_rules_cleared.results[0].authorization_rules == ''
+
+        - name: Create only the initially absent metadata directory
+          sustainablelobster.legacy_windows.win_file:
+            path: '{{ ad_adfs_directory }}'
+            state: directory
+
+        - name: Write owned SAML metadata without a certificate dependency
+          sustainablelobster.legacy_windows.win_copy:
+            dest: '{{ ad_adfs_directory }}\metadata.xml'
+            content: >-
+              <EntityDescriptor xmlns="urn:oasis:names:tc:SAML:2.0:metadata"
+              entityID="{{ ad_adfs_marker }}metadata">
+              <SPSSODescriptor
+              protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol">
+              <AssertionConsumerService index="0" isDefault="true"
+              Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST"
+              Location="{{ ad_adfs_marker }}metadata/acs"/>
+              </SPSSODescriptor></EntityDescriptor>
+
+        - name: Create a trust from a target-local metadata file
+          sustainablelobster.legacy_ad.fs_trust:
+            name: '{{ ad_adfs_name }}-File'
+            metadata_file: '{{ ad_adfs_directory }}\metadata.xml'
+            encrypt_claims: false
+          register: ad_adfs_file
+
+        - name: Give URL metadata a distinct acquired identifier
+          sustainablelobster.legacy_windows.win_copy:
+            dest: '{{ ad_adfs_directory }}\metadata.xml'
+            content: >-
+              <EntityDescriptor xmlns="urn:oasis:names:tc:SAML:2.0:metadata"
+              entityID="{{ ad_adfs_marker }}url">
+              <SPSSODescriptor
+              protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol">
+              <AssertionConsumerService index="0" isDefault="true"
+              Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST"
+              Location="{{ ad_adfs_marker }}url/acs"/>
+              </SPSSODescriptor></EntityDescriptor>
+
+        - name: Create and repeat a trust from owned HTTPS metadata
+          sustainablelobster.legacy_ad.fs_trust:
+            name: '{{ ad_adfs_name }}-Url'
+            metadata_url: '{{ ad_adfs_metadata_url }}'
+            monitoring_enabled: true
+            auto_update_enabled: true
+            encrypt_claims: false
+          loop: [first, repeat]
+          register: ad_adfs_url
+
+        - name: Read both vendor metadata trusts independently
+          sustainablelobster.legacy_windows.win_command: *ad_adfs_observe
+          changed_when: false
+          register: ad_adfs_metadata_observed
+
+        - name: Require metadata identities and ordinary monitoring
+          ansible.builtin.assert:
+            that:
+              - ad_adfs_file.changed
+              - ad_adfs_file.identifier == [ad_adfs_marker ~ 'metadata']
+              - ad_adfs_url.results[0].changed
+              - not ad_adfs_url.results[1].changed
+              - ad_adfs_url.results[0].identifier == [ad_adfs_marker ~ 'url']
+              - >-
+                (ad_adfs_metadata_observed.stdout | from_json)
+                .trusts[2].monitoring_enabled
+              - >-
+                (ad_adfs_metadata_observed.stdout | from_json)
+                .trusts[2].auto_update_enabled
+
+        - name: Preview normal trust removal
+          sustainablelobster.legacy_ad.fs_trust:
+            name: '{{ ad_adfs_name }}'
+            state: absent
+          check_mode: true
+          register: ad_adfs_remove_preview
+
+        - name: Observe the retained trust after removal preview
+          sustainablelobster.legacy_windows.win_command: *ad_adfs_observe
+          changed_when: false
+          register: ad_adfs_remove_preview_observed
+
+        - name: Require removal preview nonmutation
+          ansible.builtin.assert:
+            that:
+              - ad_adfs_remove_preview.changed
+              - >-
+                (ad_adfs_remove_preview_observed.stdout | from_json)
+                .trusts[0].present
+
+      always:
+        - name: Read acquired trust ownership before normal removal
+          sustainablelobster.legacy_windows.win_command: *ad_adfs_observe
+          changed_when: false
+          register: ad_adfs_cleanup_observed
+
+        - name: Require owned identifiers on remaining acquired trusts
+          ansible.builtin.assert:
+            that:
+              - item.actual_name == item.name
+              - item.identifiers | length == 1
+              - item.identifiers[0].startswith(ad_adfs_marker)
+          loop: >-
+            {{ (ad_adfs_cleanup_observed.stdout | from_json).trusts
+            | selectattr('present') | list }}
+          loop_control:
+            label: '{{ item.name }}'
+
+        - name: Normally remove only the acquired trust names
+          sustainablelobster.legacy_ad.fs_trust:
+            name: '{{ item.name }}'
+            state: ABSENT
+          loop: >-
+            {{ (ad_adfs_cleanup_observed.stdout | from_json).trusts
+            | selectattr('present') | list }}
+          loop_control:
+            label: '{{ item.name }}'
+
+        - name: Repeat removal of all acquired names
+          sustainablelobster.legacy_ad.fs_trust:
+            name: '{{ item }}'
+            state: ABSENT
+          loop: '{{ ad_adfs_names }}'
+          register: ad_adfs_removed_repeat
+
+        - name: Independently verify all acquired trust names are absent
+          sustainablelobster.legacy_windows.win_command: *ad_adfs_observe
+          changed_when: false
+          register: ad_adfs_final
+
+        - name: Remove only the initially absent metadata directory
+          sustainablelobster.legacy_windows.win_file:
+            path: '{{ ad_adfs_directory }}'
+            state: absent
+
+        - name: Require normal removal and idempotent absence
+          ansible.builtin.assert:
+            that:
+              - not ad_adfs_removed_repeat.changed
+              - >-
+                (ad_adfs_final.stdout | from_json).trusts
+                | selectattr('present') | list | length == 0

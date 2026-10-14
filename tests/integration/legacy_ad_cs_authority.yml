@@ -1,0 +1,311 @@
+---
+# Copyright 2026 sustainablelobster
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Uses only an explicitly owned CA and restores exact registry/service state.
+- name: Verify native CA extension configuration on Windows Python 3.4.4
+  hosts: legacy_ad_ca
+  gather_facts: false
+  vars:
+    ad_compile_extra_files:
+      - {collection: ad, kind: modules, file: cs_authority.py}
+      - collection: ad
+        kind: module_utils
+        file: legacy_ad_cs_authority.py
+      - collection: windows
+        kind: module_utils
+        file: legacy_windows_service.py
+  tasks:
+    - name: Compile the installed payload and complete helper closure
+      ansible.builtin.include_tasks: tasks/legacy_ad_compile.yml
+
+    - name: Snapshot the existing CA publication values independently
+      sustainablelobster.legacy_windows.win_command:
+        argv:
+          - '{{ ansible_python_interpreter }}'
+          - -c
+          - |
+            import json, winreg
+            path = r'SYSTEM\CurrentControlSet\Services\CertSvc\Configuration'
+            with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, path) as key:
+                active, kind = winreg.QueryValueEx(key, 'Active')
+                assert kind == winreg.REG_SZ and active
+            path += '\\' + active
+            with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, path) as key:
+                cdp, cdp_kind = winreg.QueryValueEx(key, 'CRLPublicationURLs')
+                aia, aia_kind = winreg.QueryValueEx(
+                    key, 'CACertPublicationURLs')
+                assert cdp_kind == aia_kind == winreg.REG_MULTI_SZ
+            print(json.dumps({'path': 'HKLM:\\' + path,
+                              'cdp': cdp, 'aia': aia}))
+      changed_when: false
+      register: ad_ca_baseline_command
+
+    - name: Record the exact CA registry baseline
+      ansible.builtin.set_fact:
+        ad_ca_baseline: '{{ ad_ca_baseline_command.stdout | from_json }}'
+
+    - name: Record the initial service state
+      sustainablelobster.legacy_windows.win_service_info:
+        name: CertSvc
+      register: ad_ca_service_before
+
+    - name: Require the prepared CA service to be running
+      ansible.builtin.assert:
+        that:
+          - ad_ca_service_before.services | length == 1
+          - ad_ca_service_before.services[0].state == 'started'
+
+    - name: Exercise extension lists and restore the owned CA's exact state
+      block:
+        - name: Reject HTTP CRL publication before modifying extension lists
+          sustainablelobster.legacy_ad.cs_authority:
+            cdp:
+              - uri: http://pki.invalid/rejected.crl
+                publish_to_server: true
+            aia: []
+          register: ad_ca_rejected
+          ignore_errors: true
+
+        - name: Observe native registry values after rejected input
+          sustainablelobster.legacy_windows.win_reg_stat:
+            path: '{{ ad_ca_baseline.path }}'
+          register: ad_ca_rejected_values
+
+        - name: Verify rejected input left both native lists intact
+          ansible.builtin.assert:
+            that:
+              - ad_ca_rejected.failed | default(false)
+              - not ad_ca_rejected.changed
+              - "'HTTP CDP locations cannot publish CRLs' in ad_ca_rejected.msg"
+              - >-
+                ad_ca_rejected_values.properties.CRLPublicationURLs.raw_value
+                == ad_ca_baseline.cdp
+              - >-
+                ad_ca_rejected_values.properties.CACertPublicationURLs.raw_value
+                == ad_ca_baseline.aia
+
+        - name: Preview changing CDP without restarting the service
+          sustainablelobster.legacy_ad.cs_authority: &ad_ca_cdp
+            cdp:
+              - uri: >-
+                  http://pki.invalid/<CAName><CRLNameSuffix><DeltaCRLAllowed>.crl
+                add_to_certificate_cdp: true
+                add_to_freshest_crl: true
+            restart_service: false
+          check_mode: true
+          register: ad_ca_preview
+
+        - name: Observe CDP after preview independently
+          sustainablelobster.legacy_windows.win_reg_stat:
+            path: '{{ ad_ca_baseline.path }}'
+            name: CRLPublicationURLs
+          register: ad_ca_preview_observed
+
+        - name: Verify preview did not change native registry values
+          ansible.builtin.assert:
+            that:
+              - ad_ca_preview.changed
+              - ad_ca_preview_observed.raw_value == ad_ca_baseline.cdp
+
+        - name: Set the CDP URI and two inclusion flags
+          sustainablelobster.legacy_ad.cs_authority: *ad_ca_cdp
+          register: ad_ca_cdp_set
+
+        - name: Repeat the CDP request
+          sustainablelobster.legacy_ad.cs_authority: *ad_ca_cdp
+          register: ad_ca_cdp_repeat
+
+        - name: Observe the native CDP encoded tokens and flag prefix
+          sustainablelobster.legacy_windows.win_reg_stat:
+            path: '{{ ad_ca_baseline.path }}'
+            name: CRLPublicationURLs
+          register: ad_ca_cdp_observed
+
+        - name: Verify CDP idempotence and persistent native values
+          ansible.builtin.assert:
+            that:
+              - ad_ca_cdp_set.changed
+              - not ad_ca_cdp_repeat.changed
+              - >-
+                ad_ca_cdp_observed.raw_value ==
+                ['6:http://pki.invalid/%3%8%9.crl']
+
+        - name: Observe CDP through the native Certificate Services utility
+          sustainablelobster.legacy_windows.win_command:
+            argv: [certutil.exe, -getreg, 'CA\CRLPublicationURLs']
+          changed_when: false
+          register: ad_ca_certutil_cdp
+
+        - name: Require the vendor utility to report the expected CDP flags
+          ansible.builtin.assert:
+            that:
+              - >-
+                '6:http://pki.invalid/%3%8%9.crl' in
+                ad_ca_certutil_cdp.stdout
+
+        - name: Observe AIA after managing only CDP
+          sustainablelobster.legacy_windows.win_reg_stat:
+            path: '{{ ad_ca_baseline.path }}'
+            name: CACertPublicationURLs
+          register: ad_ca_cdp_preserved_aia
+
+        - name: Verify omission preserved the exact original AIA list
+          ansible.builtin.assert:
+            that: ad_ca_cdp_preserved_aia.raw_value == ad_ca_baseline.aia
+
+        - name: Set AIA and OCSP entries without restarting the service
+          sustainablelobster.legacy_ad.cs_authority: &ad_ca_aia
+            aia:
+              - uri: >-
+                  http://pki.invalid/<ServerDNSName>_<CAName><CertificateName>.crt
+                add_to_certificate_aia: true
+              - uri: http://ocsp.invalid
+                add_to_certificate_ocsp: true
+            restart_service: false
+          register: ad_ca_aia_set
+
+        - name: Repeat the AIA request
+          sustainablelobster.legacy_ad.cs_authority: *ad_ca_aia
+          register: ad_ca_aia_repeat
+
+        - name: Observe AIA native tokens and flag prefixes
+          sustainablelobster.legacy_windows.win_reg_stat:
+            path: '{{ ad_ca_baseline.path }}'
+            name: CACertPublicationURLs
+          register: ad_ca_aia_observed
+
+        - name: Verify AIA idempotence and native values
+          ansible.builtin.assert:
+            that:
+              - ad_ca_aia_set.changed
+              - not ad_ca_aia_repeat.changed
+              - >-
+                ad_ca_aia_observed.raw_value ==
+                ['2:http://pki.invalid/%1_%3%4.crt', '32:http://ocsp.invalid']
+
+        - name: Observe AIA through the native Certificate Services utility
+          sustainablelobster.legacy_windows.win_command:
+            argv: [certutil.exe, -getreg, 'CA\CACertPublicationURLs']
+          changed_when: false
+          register: ad_ca_certutil_aia
+
+        - name: Require the vendor utility to report AIA and OCSP flags
+          ansible.builtin.assert:
+            that:
+              - >-
+                '2:http://pki.invalid/%1_%3%4.crt' in
+                ad_ca_certutil_aia.stdout
+              - "'32:http://ocsp.invalid' in ad_ca_certutil_aia.stdout"
+
+        - name: Verify omitted extension types preserve configured values
+          sustainablelobster.legacy_ad.cs_authority:
+            restart_service: false
+          register: ad_ca_omitted
+
+        - name: Require omitted lists to report no change
+          ansible.builtin.assert:
+            that: not ad_ca_omitted.changed
+
+        - name: Update one CDP flag and request a native CertSvc restart
+          sustainablelobster.legacy_ad.cs_authority: &ad_ca_restart
+            cdp:
+              - uri: >-
+                  http://pki.invalid/<CAName><CRLNameSuffix><DeltaCRLAllowed>.crl
+                add_to_certificate_cdp: true
+            restart_service: true
+          register: ad_ca_restarted
+
+        - name: Repeat the request without another configuration change
+          sustainablelobster.legacy_ad.cs_authority: *ad_ca_restart
+          register: ad_ca_restarted_repeat
+
+        - name: Observe the service after the requested restart
+          sustainablelobster.legacy_windows.win_service_info:
+            name: CertSvc
+          register: ad_ca_service_after
+
+        - name: Verify changed configuration and a running native service
+          ansible.builtin.assert:
+            that:
+              - ad_ca_restarted.changed
+              - not ad_ca_restarted_repeat.changed
+              - ad_ca_service_after.services[0].state == 'started'
+
+        - name: Clear both extension lists without restarting
+          sustainablelobster.legacy_ad.cs_authority: &ad_ca_clear
+            cdp: []
+            aia: []
+            restart_service: false
+          register: ad_ca_cleared
+
+        - name: Repeat clearing both lists
+          sustainablelobster.legacy_ad.cs_authority: *ad_ca_clear
+          register: ad_ca_cleared_repeat
+
+        - name: Independently observe empty extension lists
+          sustainablelobster.legacy_windows.win_reg_stat:
+            path: '{{ ad_ca_baseline.path }}'
+          register: ad_ca_empty_observed
+
+        - name: Verify native lists are empty and clearing is idempotent
+          ansible.builtin.assert:
+            that:
+              - ad_ca_cleared.changed
+              - not ad_ca_cleared_repeat.changed
+              - >-
+                ad_ca_empty_observed.properties.CRLPublicationURLs.raw_value
+                == []
+              - >-
+                ad_ca_empty_observed.properties.CACertPublicationURLs.raw_value
+                == []
+
+      always:
+        - name: Restore the exact initial CDP values independently
+          sustainablelobster.legacy_windows.win_regedit:
+            path: '{{ ad_ca_baseline.path }}'
+            name: CRLPublicationURLs
+            type: multistring
+            data: '{{ ad_ca_baseline.cdp if ad_ca_baseline.cdp else none }}'
+
+        - name: Restore the exact initial AIA values independently
+          sustainablelobster.legacy_windows.win_regedit:
+            path: '{{ ad_ca_baseline.path }}'
+            name: CACertPublicationURLs
+            type: multistring
+            data: '{{ ad_ca_baseline.aia if ad_ca_baseline.aia else none }}'
+
+        - name: Restart Certificate Services to reload restored configuration
+          sustainablelobster.legacy_windows.win_service:
+            name: CertSvc
+            state: restarted
+            force_dependent_services: true
+
+        - name: Restore an initially stopped service
+          sustainablelobster.legacy_windows.win_service:
+            name: CertSvc
+            state: stopped
+            force_dependent_services: true
+          when: ad_ca_service_before.services[0].state == 'stopped'
+
+        - name: Observe the restored CA registry values
+          sustainablelobster.legacy_windows.win_reg_stat:
+            path: '{{ ad_ca_baseline.path }}'
+          register: ad_ca_restored
+
+        - name: Observe the restored CA service state
+          sustainablelobster.legacy_windows.win_service_info:
+            name: CertSvc
+          register: ad_ca_service_restored
+
+        - name: Require exact restoration of configuration and service state
+          ansible.builtin.assert:
+            that:
+              - >-
+                ad_ca_restored.properties.CRLPublicationURLs.raw_value ==
+                ad_ca_baseline.cdp
+              - >-
+                ad_ca_restored.properties.CACertPublicationURLs.raw_value ==
+                ad_ca_baseline.aia
+              - >-
+                ad_ca_service_restored.services[0].state ==
+                ad_ca_service_before.services[0].state

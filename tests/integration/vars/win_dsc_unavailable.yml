@@ -10,7 +10,8 @@ win_dsc_absence_program: |
   helper = types.ModuleType('win_dsc_absence_wmi')
   exec({{ lookup('file',
       (win_dsc_source_root | default(playbook_dir + '/../..')) +
-      '/plugins/module_utils/legacy_windows_wmi.py') | to_json }},
+      '/legacy_windows/' +
+      'plugins/module_utils/legacy_windows_wmi.py') | to_json }},
       helper.__dict__)
   with helper.WmiConnection() as connection:
       services = connection.query('SELECT * FROM Win32_Service',

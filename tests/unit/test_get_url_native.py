@@ -222,7 +222,8 @@ def native_http(native: Any, monkeypatch: pytest.MonkeyPatch) -> Any:
     # is covered independently through real stdlib connections and wire captures.
     options = dict(options, use_proxy=True, proxy_url="http://native.proxy:8080")
     helper = load_module(
-        ROOT / "plugins/module_utils/legacy_windows_get_url.py", "tested_http_boundary"
+        ROOT / "legacy_windows/plugins/module_utils/legacy_windows_get_url.py",
+        "tested_http_boundary",
     )
     library = SimpleNamespace(
         WinHttpOpen=Mock(return_value=101),

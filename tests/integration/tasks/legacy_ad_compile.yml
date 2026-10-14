@@ -1,0 +1,93 @@
+---
+# Copyright 2026 sustainablelobster
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Compile the installed payload/helper closure with the real target interpreter.
+- name: Locate the installed collection roots on the controller
+  ansible.builtin.command:
+    argv:
+      - '{{ ansible_playbook_python }}'
+      - -c
+      - >-
+        import json;
+        from ansible.plugins.loader import init_plugin_loader;
+        init_plugin_loader();
+        import ansible_collections.sustainablelobster.legacy_ad as ad;
+        import ansible_collections.sustainablelobster.legacy_windows as windows;
+        print(json.dumps({'ad': list(ad.__path__)[0],
+        'windows': list(windows.__path__)[0]}))
+  delegate_to: localhost
+  become: false
+  changed_when: false
+  check_mode: false
+  register: ad_compile_collections
+
+- name: Allocate the owned target compilation directory
+  sustainablelobster.legacy_windows.win_tempfile:
+    state: directory
+    prefix: legacy-ad-compile-
+  check_mode: false
+  register: ad_compile_directory
+
+- name: Compile installed target code and remove the owned directory
+  block:
+    - name: Copy the exact installed payload and helper closure
+      sustainablelobster.legacy_windows.win_copy:
+        src: >-
+          {{ (ad_compile_collections.stdout | from_json)[item.collection]
+          ~ '/plugins/' ~ item.kind ~ '/' ~ item.file }}
+        dest: '{{ ad_compile_directory.path }}\{{ item.file }}'
+      check_mode: false
+      vars:
+        ad_compile_base_files:
+          - {collection: ad, kind: modules, file: object_info.py}
+          - {collection: ad, kind: modules, file: ou.py}
+          - {collection: ad, kind: modules, file: object.py}
+          - {collection: ad, kind: module_utils, file: legacy_ad_ldap.py}
+          - {collection: ad, kind: module_utils, file: legacy_ad_filter.py}
+          - {collection: ad, kind: module_utils, file: legacy_ad_schema.py}
+          - {collection: ad, kind: module_utils, file: legacy_ad_object.py}
+          - {collection: ad, kind: module_utils, file: legacy_ad_result.py}
+          - {collection: ad, kind: module_utils, file: legacy_ad_arguments.py}
+          - collection: windows
+            kind: module_utils
+            file: legacy_windows_module.py
+          - collection: windows
+            kind: module_utils
+            file: legacy_windows_account.py
+      loop: >-
+        {{ ad_compile_base_files + (ad_compile_extra_files | default([])) }}
+
+    - name: Compile every owned source without importing any AD helper
+      sustainablelobster.legacy_windows.win_command:
+        argv:
+          - '{{ ansible_python_interpreter }}'
+          - -c
+          - |
+            import json, os, sys
+            assert sys.version_info[:3] == (3, 4, 4)
+            names = sorted(os.listdir(sys.argv[1]))
+            for name in names:
+                path = os.path.join(sys.argv[1], name)
+                with open(path, 'rb') as source:
+                    compile(source.read(), path, 'exec')
+            print(json.dumps({'python': list(sys.version_info[:3]),
+                              'compiled': names}))
+          - '{{ ad_compile_directory.path }}'
+      changed_when: false
+      check_mode: false
+      register: ad_compiled
+
+    - name: Require the complete installed closure compiled on Python 3.4.4
+      ansible.builtin.assert:
+        that:
+          - (ad_compiled.stdout | from_json).python == [3, 4, 4]
+          - >-
+            (ad_compiled.stdout | from_json).compiled | length ==
+            11 + (ad_compile_extra_files | default([]) | length)
+
+  always:
+    - name: Remove the owned compilation directory and copied sources
+      sustainablelobster.legacy_windows.win_file:
+        path: '{{ ad_compile_directory.path }}'
+        state: absent
+      check_mode: false

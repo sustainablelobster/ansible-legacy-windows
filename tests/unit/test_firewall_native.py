@@ -21,9 +21,9 @@ def firewall_native(monkeypatch: pytest.MonkeyPatch) -> Any:
     :param monkeypatch: Scoped import and native replacements.
     :returns: Helper and observable WMI connection.
     """
-    monkeypatch.syspath_prepend(str(ROOT / "plugins/module_utils"))
+    monkeypatch.syspath_prepend(str(ROOT / "legacy_windows/plugins/module_utils"))
     helper = load_module(
-        ROOT / "plugins/module_utils/legacy_windows_firewall.py",
+        ROOT / "legacy_windows/plugins/module_utils/legacy_windows_firewall.py",
         "tested_firewall_native",
     )
     connection = MagicMock()

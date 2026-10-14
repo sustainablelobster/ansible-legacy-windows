@@ -9,9 +9,12 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
-
-from plugins.action.win_powershell import ActionModule
-from plugins.plugin_utils._module import PythonModuleAction
+from ansible_collections.sustainablelobster.legacy_windows.plugins.action.win_powershell import (
+    ActionModule,
+)
+from ansible_collections.sustainablelobster.legacy_windows.plugins.plugin_utils.runtime import (
+    PythonModuleAction,
+)
 
 
 @pytest.mark.parametrize("async_val", [0, 120])

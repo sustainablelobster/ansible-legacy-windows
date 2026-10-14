@@ -1,0 +1,166 @@
+---
+# Copyright (c) 2026 Ansible Project
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Interface documentation derived from microsoft.ad 1.12.1.
+# Copyright 2026 sustainablelobster
+DOCUMENTATION:
+  module: fs_trust
+  short_description: Manage AD FS relying-party trusts
+  version_added: 1.0.0
+  description:
+    - Create, update or remove AD FS relying-party trusts through the installed
+      AD FS management interface, including the classic AD FS 2.0 snap-in.
+    - Trusts can be created from a metadata URL, a target-local metadata file,
+      or manual identifiers and endpoints.
+  options:
+    name:
+      description:
+        - The display name of the relying party trust.
+        - This is the primary key used to identify the trust.
+      type: str
+      required: true
+    state:
+      description:
+        - Whether the relying party trust should be present or absent.
+      type: str
+      default: present
+      choices:
+        - present
+        - absent
+    metadata_url:
+      description:
+        - URL pointing to the federation metadata document for the relying
+          party.
+        - The module tests connectivity to this URL before creating
+          the trust.
+        - AD FS 2.0 requires an HTTPS metadata URL. The target must trust the
+          server certificate; native certificate validation is not bypassed.
+        - Mutually exclusive with O(metadata_file) and O(identifier).
+      type: str
+    metadata_file:
+      description:
+        - Local file path to a federation metadata XML document.
+        - Mutually exclusive with O(metadata_url) and O(identifier).
+      type: str
+    identifier:
+      description:
+        - List of unique identifiers (URIs) for the relying party trust.
+        - Used for manual trust setup without a metadata document.
+        - Mutually exclusive with O(metadata_url) and O(metadata_file).
+      type: list
+      elements: str
+    saml_endpoint:
+      description:
+        - List of SAML Assertion Consumer Service endpoint URLs.
+        - Only used when creating a trust with O(identifier) for manual
+          setup.
+        - Each URL is registered as a SAML POST binding endpoint.
+      type: list
+      elements: str
+    wsfed_endpoint:
+      description:
+        - WS-Federation passive endpoint URL for the relying party.
+        - Only used when creating a trust with O(identifier) for manual
+          setup.
+      type: str
+    enabled:
+      description:
+        - Whether the relying party trust is enabled.
+      type: bool
+    monitoring_enabled:
+      description:
+        - Whether periodic monitoring of the relying party federation
+          metadata is enabled.
+        - Requires that the trust was created with O(metadata_url).
+      type: bool
+    auto_update_enabled:
+      description:
+        - Whether changes in the federation metadata are automatically
+          applied to the trust configuration.
+      type: bool
+    token_lifetime:
+      description:
+        - Token validity duration in minutes.
+      type: int
+    notes:
+      description:
+        - Freeform notes for the relying party trust.
+      type: str
+    access_control_policy_name:
+      description:
+        - Name of the access control policy to assign.
+      type: str
+    signature_algorithm:
+      description:
+        - Signature algorithm used for signing and verification.
+        - V(rsa_sha1) uses RSA-SHA1
+          (C(http://www.w3.org/2000/09/xmldsig#rsa-sha1)).
+        - V(rsa_sha256) uses RSA-SHA256
+          (C(http://www.w3.org/2001/04/xmldsig-more#rsa-sha256)).
+      type: str
+      choices:
+        - rsa_sha1
+        - rsa_sha256
+    encrypt_claims:
+      description:
+        - Whether claims sent to the relying party should be encrypted.
+      type: bool
+  notes:
+    - Requires a configured AD FS service, administrator permissions, and its
+      installed PowerShell management commands. AD FS 2.0 uses PowerShell 2.0
+      and C(Microsoft.Adfs.PowerShell). No modern engine is installed or
+      required.
+    - Python owns execution and passes arguments as data to the installed vendor
+      commands. The module does not install or configure the federation service.
+    - A requested option unavailable in the installed AD FS command fails before
+      modification. O(access_control_policy_name) requires that newer
+      capability.
+      Older AD FS installations can still manage ordinary trusts.
+    - Matching the recorded upstream release, identifiers, metadata sources and
+      endpoints are creation inputs, not reconciled on an existing trust.
+    - Check mode reports existing observations rather than predicted properties.
+      Previewing a new trust returns an empty identifier list and null booleans.
+  seealso:
+    - module: microsoft.ad.fs_trust
+  extends_documentation_fragment:
+    - ansible.builtin.action_common_attributes
+  attributes:
+    check_mode:
+      support: full
+    diff_mode:
+      support: none
+    platform:
+      platforms:
+        - windows
+  author:
+    - sustainablelobster
+    - Ron Gershburg (@rgershbu)
+EXAMPLES: |
+  - name: Create a relying-party trust with a WS-Federation endpoint
+    sustainablelobster.legacy_ad.fs_trust:
+      name: Example
+      identifier: [https://app.example.com/]
+      wsfed_endpoint: https://app.example.com/signin
+      enabled: true
+
+  - name: Remove the relying-party trust
+    sustainablelobster.legacy_ad.fs_trust:
+      name: Example
+      state: absent
+RETURN:
+  identifier:
+    description: >-
+      Existing identifiers after execution, or an empty list for new previews.
+    returned: success and state is present
+    type: list
+    elements: str
+  enabled:
+    description: >-
+      Existing enabled state, or null when the trust was not read back.
+    returned: success and state is present
+    type: bool
+  monitoring_enabled:
+    description: >-
+      Existing metadata-monitoring state, or null when no trust was read back.
+    returned: success and state is present
+    type: bool

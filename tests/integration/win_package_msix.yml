@@ -53,12 +53,17 @@
           loop:
             - source: fixtures/package_msix_fixture.py
               name: package_msix_fixture.py
-            - source: ../../plugins/module_utils/legacy_windows_package_msix.py
+            - source: >-
+                {{ '../../legacy_windows/plugins/module_utils/' +
+                   'legacy_windows_package_msix.py' }}
               name: legacy_windows_package_msix.py
             - source: >-
-                ../../plugins/module_utils/legacy_windows_certificate_store.py
+                {{ '../../legacy_windows/plugins/module_utils/' +
+                   'legacy_windows_certificate_store.py' }}
               name: legacy_windows_certificate_store.py
-            - source: ../../plugins/module_utils/legacy_windows_module.py
+            - source: >-
+                {{ '../../legacy_windows/plugins/module_utils/' +
+                   'legacy_windows_module.py' }}
               name: legacy_windows_module.py
             - source: >-
                 {{ integration_artifact_dir + '/' +

@@ -23,9 +23,10 @@ def ports_helper(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
     :param monkeypatch: Scoped Windows-only ctypes substitutions.
     :returns: Helper module without executing a Windows operation.
     """
-    monkeypatch.syspath_prepend(str(ROOT / "plugins/module_utils"))
+    monkeypatch.syspath_prepend(str(ROOT / "legacy_windows/plugins/module_utils"))
     module = load_module(
-        ROOT / "plugins/module_utils/legacy_windows_ports.py", "tested_ports_native"
+        ROOT / "legacy_windows/plugins/module_utils/legacy_windows_ports.py",
+        "tested_ports_native",
     )
     monkeypatch.setattr(module.ctypes, "WinError", native_error, raising=False)
     monkeypatch.setattr(module, "os", SimpleNamespace(name="nt"))

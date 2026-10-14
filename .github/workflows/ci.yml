@@ -5,7 +5,7 @@ name: CI
   pull_request:
   push:
     branches: [main, v1]
-    tags: ['v*']
+    tags: ['legacy_windows/v*', 'legacy_ad/v*']
   workflow_dispatch:
 
 permissions:
@@ -119,10 +119,10 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     outputs:
-      filename: ${{ steps.package.outputs.filename }}
-      version: ${{ steps.package.outputs.version }}
-      sha256: ${{ steps.package.outputs.sha256 }}
-      artifact-id: ${{ steps.upload.outputs.artifact-id }}
+      windows-sha256: ${{ steps.windows.outputs.sha256 }}
+      ad-sha256: ${{ steps.ad.outputs.sha256 }}
+      windows-artifact-id: ${{ steps.upload-windows.outputs.artifact-id }}
+      ad-artifact-id: ${{ steps.upload-ad.outputs.artifact-id }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -147,61 +147,107 @@ jobs:
             hashFiles('flake.lock', 'flake.nix', '.pre-commit-config.yaml') }}
           paths: ${{ env.PRE_COMMIT_HOME }}
           save: false
-      - name: Build and verify the exact collection archive
+      - name: Build and verify both exact collection archives
         id: package
         run: |
           nix_dev=(nix --extra-experimental-features 'nix-command flakes'
             develop --no-write-lock-file path:. --command)
           "${nix_dev[@]}" just build
           shopt -s nullglob
-          archives=(dist/sustainablelobster-legacy_windows-*.tar.gz)
-          if (( ${#archives[@]} != 1 )); then
-            echo 'Expected exactly one collection archive.' >&2
+          windows=(dist/sustainablelobster-legacy_windows-*.tar.gz)
+          ad=(dist/sustainablelobster-legacy_ad-*.tar.gz)
+          if (( ${#windows[@]} != 1 || ${#ad[@]} != 1 )); then
+            echo 'Expected exactly one archive for each collection.' >&2
             exit 1
           fi
           "${nix_dev[@]}" python scripts/check_collection.py \
-            --artifact "${archives[0]}"
+            --artifact "${windows[0]}" --artifact "${ad[0]}"
+          printf 'windows-archive=%s\nad-archive=%s\n' \
+            "${windows[0]}" "${ad[0]}" >> "$GITHUB_OUTPUT"
+      - name: Prepare the verified Windows candidate
+        id: windows
+        env:
+          ARCHIVE: ${{ steps.package.outputs.windows-archive }}
+        run: |
+          nix_dev=(nix --extra-experimental-features 'nix-command flakes'
+            develop --no-write-lock-file path:. --command)
           tag_args=()
           if [[ "$GITHUB_EVENT_NAME" == push \
-              && "$GITHUB_REF_TYPE" == tag ]]; then
+              && "$GITHUB_REF_TYPE" == tag \
+              && "$GITHUB_REF_NAME" == legacy_windows/v* ]]; then
             tag_args=(--tag "$GITHUB_REF_NAME")
           fi
           "${nix_dev[@]}" python scripts/ci_release.py package \
-            --artifact "${archives[0]}" --output-dir "$CI_OUTPUT_DIR/package" \
+            --collection legacy_windows --artifact "$ARCHIVE" \
+            --output-dir "$CI_OUTPUT_DIR/legacy_windows" \
             "${tag_args[@]}"
-      - name: Retain only the verified release package
-        id: upload
+      - name: Prepare the verified AD candidate
+        id: ad
         env:
-          RELEASE_FILENAME: ${{ steps.package.outputs.filename }}
+          ARCHIVE: ${{ steps.package.outputs.ad-archive }}
+        run: |
+          nix_dev=(nix --extra-experimental-features 'nix-command flakes'
+            develop --no-write-lock-file path:. --command)
+          tag_args=()
+          if [[ "$GITHUB_EVENT_NAME" == push \
+              && "$GITHUB_REF_TYPE" == tag \
+              && "$GITHUB_REF_NAME" == legacy_ad/v* ]]; then
+            tag_args=(--tag "$GITHUB_REF_NAME")
+          fi
+          "${nix_dev[@]}" python scripts/ci_release.py package \
+            --collection legacy_ad --artifact "$ARCHIVE" \
+            --output-dir "$CI_OUTPUT_DIR/legacy_ad" \
+            "${tag_args[@]}"
+      - name: Retain only the verified Windows release package
+        id: upload-windows
+        env:
+          RELEASE_FILENAME: ${{ steps.windows.outputs.filename }}
         uses: >-
           actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         # v7.0.2
         with:
-          name: collection-package-${{ github.run_attempt }}
+          name: legacy_windows-package-${{ github.run_attempt }}
           path: |
-            ${{ env.CI_OUTPUT_DIR }}/package/${{ env.RELEASE_FILENAME }}
-            ${{ env.CI_OUTPUT_DIR }}/package/SHA256SUMS
-            ${{ env.CI_OUTPUT_DIR }}/package/release-notes.txt
-            ${{ env.CI_OUTPUT_DIR }}/package/release-manifest.json
+            ${{ env.CI_OUTPUT_DIR }}/legacy_windows/${{ env.RELEASE_FILENAME }}
+            ${{ env.CI_OUTPUT_DIR }}/legacy_windows/SHA256SUMS
+            ${{ env.CI_OUTPUT_DIR }}/legacy_windows/release-notes.txt
+            ${{ env.CI_OUTPUT_DIR }}/legacy_windows/release-manifest.json
+          if-no-files-found: error
+          retention-days: 30
+      - name: Retain only the verified AD release package
+        id: upload-ad
+        env:
+          RELEASE_FILENAME: ${{ steps.ad.outputs.filename }}
+        uses: >-
+          actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        # v7.0.2
+        with:
+          name: legacy_ad-package-${{ github.run_attempt }}
+          path: |
+            ${{ env.CI_OUTPUT_DIR }}/legacy_ad/${{ env.RELEASE_FILENAME }}
+            ${{ env.CI_OUTPUT_DIR }}/legacy_ad/SHA256SUMS
+            ${{ env.CI_OUTPUT_DIR }}/legacy_ad/release-notes.txt
+            ${{ env.CI_OUTPUT_DIR }}/legacy_ad/release-manifest.json
           if-no-files-found: error
           retention-days: 30
 
   publish:
-    name: Publish GitHub release and Galaxy collection
+    name: Publish tagged collections
     needs: [lint, unit, package]
     if: >-
       github.repository == 'sustainablelobster/ansible-legacy-windows'
       && github.event_name == 'push'
-      && startsWith(github.ref, 'refs/tags/v')
+      && (startsWith(github.ref, 'refs/tags/legacy_windows/v')
+      || startsWith(github.ref, 'refs/tags/legacy_ad/v'))
       && needs.lint.result == 'success'
       && needs.unit.result == 'success'
       && needs.package.result == 'success'
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 40
     permissions:
       contents: write
     concurrency:
-      group: release-${{ github.repository }}-${{ github.ref }}
+      group: release-${{ github.repository }}-${{ github.sha }}
       cancel-in-progress: false
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -217,20 +263,30 @@ jobs:
       - uses: >-
           cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24
         # v31.11.1
-      - name: Download the package verified by this run
+      - name: Download the Windows package verified by this run
         uses: >-
           actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         # v8.0.2
         with:
-          artifact-ids: ${{ needs.package.outputs.artifact-id }}
-          path: ${{ env.CI_OUTPUT_DIR }}/package
+          artifact-ids: ${{ needs.package.outputs.windows-artifact-id }}
+          path: ${{ env.CI_OUTPUT_DIR }}/legacy_windows
           merge-multiple: true
           digest-mismatch: error
-      - name: Publish the verified archive without rebuilding
+      - name: Download the AD package verified by this run
+        uses: >-
+          actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        # v8.0.2
+        with:
+          artifact-ids: ${{ needs.package.outputs.ad-artifact-id }}
+          path: ${{ env.CI_OUTPUT_DIR }}/legacy_ad
+          merge-multiple: true
+          digest-mismatch: error
+      - name: Publish tagged collections in dependency order without rebuilding
         env:
           GH_TOKEN: ${{ github.token }}
           GALAXY_API_KEY: ${{ secrets.GALAXY_API_KEY }}
-          EXPECTED_SHA256: ${{ needs.package.outputs.sha256 }}
+          WINDOWS_SHA256: ${{ needs.package.outputs.windows-sha256 }}
+          AD_SHA256: ${{ needs.package.outputs.ad-sha256 }}
         run: |
           if [[ -z "${GALAXY_API_KEY//[[:space:]]/}" ]]; then
             echo 'GALAXY_API_KEY repository secret is required.' >&2
@@ -238,7 +294,8 @@ jobs:
           fi
           nix_dev=(nix --extra-experimental-features 'nix-command flakes'
             develop --no-write-lock-file path:. --command)
-          "${nix_dev[@]}" python scripts/ci_release.py publish \
-            --package-dir "$CI_OUTPUT_DIR/package" --sha256 "$EXPECTED_SHA256"
-          "${nix_dev[@]}" python scripts/ci_release.py publish-galaxy \
-            --package-dir "$CI_OUTPUT_DIR/package" --sha256 "$EXPECTED_SHA256"
+          "${nix_dev[@]}" python scripts/ci_release.py publish-tagged \
+            --windows-package-dir "$CI_OUTPUT_DIR/legacy_windows" \
+            --windows-sha256 "$WINDOWS_SHA256" \
+            --ad-package-dir "$CI_OUTPUT_DIR/legacy_ad" \
+            --ad-sha256 "$AD_SHA256"

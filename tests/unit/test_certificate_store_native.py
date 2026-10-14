@@ -22,9 +22,10 @@ def certificate_store_helper(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
     :param monkeypatch: Scoped sibling-import path.
     :returns: Fresh native helper module.
     """
-    monkeypatch.syspath_prepend(str(ROOT / "plugins/module_utils"))
+    monkeypatch.syspath_prepend(str(ROOT / "legacy_windows/plugins/module_utils"))
     helper = load_module(
-        ROOT / "plugins/module_utils/legacy_windows_certificate_store.py",
+        ROOT
+        / "legacy_windows/plugins/module_utils/legacy_windows_certificate_store.py",
         "tested_certificate_store",
     )
     monkeypatch.setattr(

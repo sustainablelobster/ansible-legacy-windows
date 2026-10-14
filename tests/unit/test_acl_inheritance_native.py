@@ -48,7 +48,7 @@ def inheritance_helper() -> ModuleType:
     :returns: Independently loaded target helper.
     """
     return load_module(
-        ROOT / "plugins/module_utils/legacy_windows_acl_inheritance.py",
+        ROOT / "legacy_windows/plugins/module_utils/legacy_windows_acl_inheritance.py",
         "tested_acl_inheritance_native",
     )
 

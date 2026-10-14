@@ -4,6 +4,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 import pytest
 
@@ -12,18 +13,47 @@ from ansible.plugins.loader import init_plugin_loader  # type: ignore[import-unt
 
 from tests.unit.payload_support import ROOT
 
+_COLLECTIONS = pytest.StashKey[TemporaryDirectory[str]]()
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    """Expose both source collections before importing controller test modules.
+
+    :param config: Current pytest configuration, owning the disposable namespace.
+    """
+    # Pytest owns this namespace across configure/unconfigure, not one block.
+    directory = TemporaryDirectory(  # pylint: disable=consider-using-with
+        prefix="legacy-source-collections-"
+    )
+    config.stash[_COLLECTIONS] = directory
+    namespace = Path(directory.name) / "ansible_collections" / "sustainablelobster"
+    namespace.mkdir(parents=True)
+    (namespace / "legacy_windows").symlink_to(
+        ROOT / "legacy_windows", target_is_directory=True
+    )
+    (namespace / "legacy_ad").symlink_to(ROOT / "legacy_ad", target_is_directory=True)
+    init_plugin_loader([directory.name])
+
+
+def pytest_unconfigure(config: pytest.Config) -> None:
+    """Remove only the source namespace owned by this pytest invocation.
+
+    :param config: Current pytest configuration.
+    """
+    if directory := config.stash.get(_COLLECTIONS, None):
+        directory.cleanup()
+
 
 @pytest.fixture(scope="session", autouse=True)
-def source_collection(tmp_path_factory: pytest.TempPathFactory) -> Path:
+def source_collection(pytestconfig: pytest.Config) -> Path:
     """Make the checkout available before any test uses Ansible's global loader.
 
-    :param tmp_path_factory: Pytest's scoped temporary-directory factory.
+    :param pytestconfig: Configuration holding the pre-collection namespace.
     :returns: The source collection's temporary namespace path.
     """
-    collections = tmp_path_factory.mktemp("source-collections")
-    namespace = collections / "ansible_collections" / "sustainablelobster"
-    namespace.mkdir(parents=True)
-    collection = namespace / "legacy_windows"
-    collection.symlink_to(ROOT, target_is_directory=True)
-    init_plugin_loader([str(collections)])
-    return collection
+    return (
+        Path(pytestconfig.stash[_COLLECTIONS].name)
+        / "ansible_collections"
+        / "sustainablelobster"
+        / "legacy_windows"
+    )

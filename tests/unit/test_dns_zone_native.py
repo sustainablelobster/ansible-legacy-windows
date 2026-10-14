@@ -54,9 +54,10 @@ def native_helper(monkeypatch: pytest.MonkeyPatch) -> Any:
     :param monkeypatch: Scoped helper import and native substitutions.
     :returns: Helper and provider operation recorder.
     """
-    monkeypatch.syspath_prepend(str(ROOT / "plugins/module_utils"))
+    monkeypatch.syspath_prepend(str(ROOT / "legacy_windows/plugins/module_utils"))
     helper = load_module(
-        ROOT / "plugins/module_utils/legacy_windows_dns_zone.py", "dns_zone_test"
+        ROOT / "legacy_windows/plugins/module_utils/legacy_windows_dns_zone.py",
+        "dns_zone_test",
     )
     connection = MagicMock()
     constructor = MagicMock()
@@ -89,9 +90,10 @@ def test_native_extended_error_is_read_before_com_cleanup_and_preserves_hresult(
     monkeypatch: pytest.MonkeyPatch,
     has_message: bool,
 ) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "plugins/module_utils"))
+    monkeypatch.syspath_prepend(str(ROOT / "legacy_windows/plugins/module_utils"))
     helper = load_module(
-        ROOT / "plugins/module_utils/legacy_windows_dns_zone.py", "dns_zone_error_test"
+        ROOT / "legacy_windows/plugins/module_utils/legacy_windows_dns_zone.py",
+        "dns_zone_error_test",
     )
     connection = MagicMock()
     connection._method_inputs.return_value = 11

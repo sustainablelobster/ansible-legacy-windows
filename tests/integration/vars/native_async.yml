@@ -4,7 +4,7 @@ native_async_exercise_timeout: true
 native_async_program: |
   WMI_SOURCE = {{ lookup('ansible.builtin.file',
     (native_async_source_root | default(playbook_dir + '/../..')) +
-    '/plugins/module_utils/legacy_windows_wmi.py') | to_json }}
+    '/legacy_windows/plugins/module_utils/legacy_windows_wmi.py') | to_json }}
   PROCESS_SOURCE = {{ lookup('ansible.builtin.file',
     (native_async_source_root | default(playbook_dir + '/../..')) +
     '/tests/integration/fixtures/native_async.py').split(

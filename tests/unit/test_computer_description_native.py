@@ -19,9 +19,10 @@ def computer_description_helper(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
     :param monkeypatch: Scoped module search path.
     :returns: Fresh native helper without opening Windows resources.
     """
-    monkeypatch.syspath_prepend(str(ROOT / "plugins/module_utils"))
+    monkeypatch.syspath_prepend(str(ROOT / "legacy_windows/plugins/module_utils"))
     return load_module(
-        ROOT / "plugins/module_utils/legacy_windows_computer_description.py",
+        ROOT
+        / "legacy_windows/plugins/module_utils/legacy_windows_computer_description.py",
         "tested_computer_description_native",
     )
 

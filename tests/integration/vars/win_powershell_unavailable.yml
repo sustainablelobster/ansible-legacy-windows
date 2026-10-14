@@ -11,7 +11,8 @@ powershell_absence_program: |
   helper = types.ModuleType('powershell_absence_wmi')
   exec({{ lookup('file',
       (powershell_source_root | default(playbook_dir + '/../..')) +
-      '/plugins/module_utils/legacy_windows_wmi.py') | to_json }},
+      '/legacy_windows/' +
+      'plugins/module_utils/legacy_windows_wmi.py') | to_json }},
       helper.__dict__)
   with helper.WmiConnection() as connection:
       services = connection.query('SELECT * FROM Win32_Service',

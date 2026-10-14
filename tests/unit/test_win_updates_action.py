@@ -15,10 +15,17 @@ from ansible.errors import (  # type: ignore[import-untyped]
     AnsibleConnectionFailure,
     AnsibleError,
 )
-
-from plugins.action import win_reboot, win_updates
-from plugins.plugin_utils._module import PythonModuleAction
-from plugins.plugin_utils._updates_hresult import describe_hresult
+from ansible_collections.sustainablelobster.legacy_windows.plugins.action import (
+    win_reboot,
+    win_updates,
+)
+from ansible_collections.sustainablelobster.legacy_windows.plugins.plugin_utils import (
+    _updates_hresult,
+    runtime,
+)
+from ansible_collections.sustainablelobster.legacy_windows.plugins.plugin_utils.runtime import (
+    PythonModuleAction,
+)
 
 
 # These independent released flags are intentionally explicit test inputs.
@@ -626,7 +633,9 @@ def test_updates_async_poll_gt_zero_is_not_silently_coerced(
     # Querying the real loader before its finder is installed caches a missing
     # collection namespace and breaks unrelated action tests run afterward.
     monkeypatch.setattr(
-        "plugins.plugin_utils._module.action_loader.get", Mock(return_value=object())
+        runtime,
+        "action_loader",
+        SimpleNamespace(get=Mock(return_value=object())),
     )
     instance, state = action
     instance._task.async_val = 10
@@ -653,7 +662,9 @@ def test_updates_automatic_poll_retains_resolved_runas_and_original_task_variabl
     instance._connection.become = SimpleNamespace(name="runas", user=actor)
     selected = SimpleNamespace(_supports_native_windows_polling=True)
     monkeypatch.setattr(
-        "plugins.plugin_utils._module.action_loader.get", Mock(return_value=selected)
+        runtime,
+        "action_loader",
+        SimpleNamespace(get=Mock(return_value=selected)),
     )
     variables = {"ansible_async_dir": "owned-cache", "ansible_become_user": actor}
     normal = Mock(return_value={"started": True, "finished": False})
@@ -972,4 +983,4 @@ def test_external_shutdown_reboot_defers_staging_until_boot_poll_and_never_reque
 def test_controller_hresult_projection_formats_known_unknown_and_signed_codes(
     status: int, expected: str
 ) -> None:
-    assert describe_hresult(status) == expected
+    assert _updates_hresult.describe_hresult(status) == expected

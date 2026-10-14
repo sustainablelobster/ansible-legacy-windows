@@ -21,7 +21,7 @@ def inet_helper() -> ModuleType:
     :returns: A fresh helper under the development interpreter.
     """
     return load_module(
-        ROOT / "plugins/module_utils/legacy_windows_inet_proxy.py",
+        ROOT / "legacy_windows/plugins/module_utils/legacy_windows_inet_proxy.py",
         "tested_inet_proxy_native",
     )
 

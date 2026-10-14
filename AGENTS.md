@@ -16,8 +16,12 @@ after the original conversation is forgotten.
 
 `sustainablelobster.legacy_windows` aims to reimplement all first-party
 `ansible.windows` functionality with Python 3.4.4-compatible Windows payloads.
-The [README](README.md) is the user entry point. Keep user-facing prerequisites
-and meaningful limitations in [Usage](docs/usage.md), not these instructions.
+`sustainablelobster.legacy_ad` reimplements all first-party `microsoft.ad`
+interfaces using that execution runtime, checking actual directory/service
+capabilities rather than excluding whole modules by Windows version.
+The [README](README.md) is
+the user entry point. Keep user-facing prerequisites and meaningful limitations
+in each collection's usage guide, not these instructions.
 Windows versions and connection plugins are not allowlisted; distinguish the
 capabilities a workflow needs from the environments in its execution evidence.
 

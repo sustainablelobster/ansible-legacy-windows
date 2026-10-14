@@ -30,8 +30,9 @@ from ansible.parsing.vault import (  # type: ignore[import-untyped]
     VaultSecret,
 )
 from ansible.plugins.action import ActionBase  # type: ignore[import-untyped]
-
-from plugins.action import win_copy  # pylint: disable=import-error
+from ansible_collections.sustainablelobster.legacy_windows.plugins.action import (
+    win_copy,  # pylint: disable=import-error
+)
 
 _REMOTE = r"C:\Temp\ansible-tmp-copy-test"
 _DEST = r"C:\target\file.txt"

@@ -21,7 +21,7 @@ def command_helper() -> ModuleType:
     :returns: Fresh target helper.
     """
     return load_module(
-        ROOT / "plugins/module_utils/legacy_windows_hotfix_command.py",
+        ROOT / "legacy_windows/plugins/module_utils/legacy_windows_hotfix_command.py",
         "tested_hotfix_command",
     )
 

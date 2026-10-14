@@ -24,7 +24,7 @@ def classic_fixture(monkeypatch: pytest.MonkeyPatch) -> Any:
     :param monkeypatch: Scoped target helper imports.
     :returns: Actual fixture module and a fully observed owned-scope journal.
     """
-    monkeypatch.syspath_prepend(str(ROOT / "plugins/module_utils"))
+    monkeypatch.syspath_prepend(str(ROOT / "legacy_windows/plugins/module_utils"))
     module = load_module(
         ROOT / "tests/integration/fixtures/win_dhcp_lease_classic.py",
         "dhcp_fixture_test",

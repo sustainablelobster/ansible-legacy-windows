@@ -35,9 +35,9 @@ def _hook(hook_id: str) -> dict[str, Any]:
 @pytest.mark.parametrize(
     "path",
     [
-        "plugins/modules/win_ping.py",
-        "plugins/modules/win_updates.py",
-        "plugins/module_utils/legacy_windows_async_wrapper.py",
+        "legacy_windows/plugins/modules/win_ping.py",
+        "legacy_windows/plugins/modules/win_updates.py",
+        "legacy_windows/plugins/module_utils/legacy_windows_async_wrapper.py",
     ],
 )
 def test_ansible_payloads_are_exempt_from_executable_shebang_check(path: str) -> None:
@@ -49,14 +49,14 @@ def test_ansible_payloads_are_exempt_from_executable_shebang_check(path: str) ->
     "path",
     [
         "scripts/ci_release.py",
-        "plugins/action/win_ping.py",
-        "plugins/module_utils/legacy_windows_api.py",
-        "plugins/module_utils/legacy_windows_async_wrapper_extra.py",
+        "legacy_windows/plugins/action/win_ping.py",
+        "legacy_windows/plugins/module_utils/legacy_windows_api.py",
+        "legacy_windows/plugins/module_utils/legacy_windows_async_wrapper_extra.py",
         "tests/integration/fixtures/legacy_windows_async_wrapper.py",
         "tests/plugins/modules/win_ping.py",
-        "plugins/modules/nested/win_ping.py",
-        "plugins/modules/win_ping.py.bak",
-        "plugins/modules/README.md",
+        "legacy_windows/plugins/modules/nested/win_ping.py",
+        "legacy_windows/plugins/modules/win_ping.py.bak",
+        "legacy_windows/plugins/modules/README.md",
     ],
 )
 def test_other_paths_remain_subject_to_executable_shebang_check(path: str) -> None:
@@ -75,8 +75,8 @@ def test_other_paths_remain_subject_to_executable_shebang_check(path: str) -> No
 @pytest.mark.parametrize(
     "path",
     [
-        "plugins/modules/win_ping.py",
-        "plugins/module_utils/legacy_windows_async_wrapper.py",
+        "legacy_windows/plugins/modules/win_ping.py",
+        "legacy_windows/plugins/module_utils/legacy_windows_async_wrapper.py",
     ],
 )
 def test_payloads_are_not_excluded_from_other_generic_checks(

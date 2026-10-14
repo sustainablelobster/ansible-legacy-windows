@@ -1,0 +1,210 @@
+---
+# Copyright 2026 sustainablelobster
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Requires an isolated writable directory; deletes only its unique fixture OU.
+- name: Verify native user password flags and group links on Python 3.4.4
+  hosts: legacy_ad
+  gather_facts: false
+  vars:
+    ad_user_fixture_password: 'FixturePassword1!'
+  module_defaults:
+    group/sustainablelobster.legacy_ad.domain:
+      domain_server: '{{ ad_domain_server }}'
+      domain_username: '{{ ad_domain_username }}'
+      domain_password: '{{ ad_domain_password }}'
+  tasks:
+    - name: Allocate unique user fixtures and identify the interpreter
+      sustainablelobster.legacy_windows.win_command:
+        argv:
+          - '{{ ansible_python_interpreter }}'
+          - -c
+          - >-
+            import json, sys, uuid;
+            print(json.dumps({"python": list(sys.version_info[:3]),
+            "name": "LWAD-U-" + uuid.uuid4().hex[:8]}))
+      register: ad_user_runtime
+      changed_when: false
+
+    - name: Require the actual minimum Windows interpreter
+      ansible.builtin.assert:
+        that: (ad_user_runtime.stdout | from_json).python == [3, 4, 4]
+
+    - name: Record the uniquely owned fixture name
+      ansible.builtin.set_fact:
+        ad_user_name: '{{ (ad_user_runtime.stdout | from_json).name }}'
+
+    - name: Exercise user behavior and remove the owned directory fixture
+      block:
+        - name: Create the unique fixture OU
+          sustainablelobster.legacy_ad.ou:
+            name: '{{ ad_user_name }}'
+            path: '{{ ad_domain_dn }}'
+          register: ad_user_ou
+
+        - name: Preview a password-backed user without creating it
+          sustainablelobster.legacy_ad.user:
+            name: '{{ ad_user_name }}'
+            path: '{{ ad_user_ou.distinguished_name }}'
+            password: '{{ ad_user_fixture_password }}'
+          check_mode: true
+          register: ad_user_preview
+          no_log: true
+
+        - name: Verify the predicted user is absent
+          sustainablelobster.legacy_ad.object_info:
+            identity: '{{ ad_user_preview.distinguished_name }}'
+          register: ad_user_absent
+
+        - name: Confirm the password preview did not modify the directory
+          ansible.builtin.assert:
+            that:
+              - ad_user_preview.changed
+              - ad_user_preview.sid == 'S-1-5-0000'
+              - ad_user_absent.objects == []
+
+        - name: Create a disabled passwordless user and native address fields
+          sustainablelobster.legacy_ad.user: &ad_user_create
+            name: '{{ ad_user_name }}'
+            path: '{{ ad_user_ou.distinguished_name }}'
+            upn: '{{ ad_user_name }}@{{ ad_domain_name }}'
+            firstname: Fixture
+            lastname: User
+            company: Native AD fixture
+            email: fixture@example.test
+          register: ad_user_created
+
+        - name: Repeat the passwordless user request
+          sustainablelobster.legacy_ad.user: *ad_user_create
+          register: ad_user_repeated
+
+        - name: Read the native disabled account state
+          sustainablelobster.legacy_ad.object_info:
+            identity: '{{ ad_user_created.object_guid }}'
+            properties: ['userAccountControl', 'pwdLastSet', 'objectSid']
+          register: ad_user_observed
+
+        - name: Verify safe disabled creation and idempotence
+          ansible.builtin.assert:
+            that:
+              - ad_user_created.changed
+              - not ad_user_repeated.changed
+              - ad_user_observed.objects[0].userAccountControl == 514
+              - ad_user_observed.objects[0].pwdLastSet == 0
+              - >-
+                ad_user_observed.objects[0].objectSid.Sid == ad_user_created.sid
+
+        - name: Reset the password before enabling the user
+          sustainablelobster.legacy_ad.user:
+            identity: '{{ ad_user_created.object_guid }}'
+            password: '{{ ad_user_fixture_password }}'
+            enabled: true
+          register: ad_user_enabled
+          no_log: true
+
+        - name: Check the unchanged password through the native logon API
+          sustainablelobster.legacy_ad.user:
+            identity: '{{ ad_user_created.object_guid }}'
+            password: '{{ ad_user_fixture_password }}'
+            update_password: when_changed
+          register: ad_user_password_repeated
+          no_log: true
+
+        - name: Verify the same enabled account password is idempotent
+          ansible.builtin.assert:
+            that:
+              - ad_user_enabled.changed
+              - not ad_user_password_repeated.changed
+
+        - name: Create a uniquely owned group for membership changes
+          sustainablelobster.legacy_ad.group:
+            name: '{{ ad_user_name }}-G'
+            path: '{{ ad_user_ou.distinguished_name }}'
+            scope: global
+          register: ad_user_group
+
+        - name: Add the user to its owned group while preserving primary group
+          sustainablelobster.legacy_ad.user: &ad_user_membership
+            identity: '{{ ad_user_created.sid }}'
+            groups:
+              add: ['{{ ad_user_group.object_guid }}']
+          register: ad_user_member
+
+        - name: Repeat the user membership request
+          sustainablelobster.legacy_ad.user: *ad_user_membership
+          register: ad_user_member_repeated
+
+        - name: Read the independently observed group-owned link
+          sustainablelobster.legacy_ad.object_info:
+            identity: '{{ ad_user_group.object_guid }}'
+            properties: ['member']
+          register: ad_user_membership_observed
+
+        - name: Verify membership changes are idempotent
+          ansible.builtin.assert:
+            that:
+              - ad_user_member.changed
+              - not ad_user_member_repeated.changed
+              - >-
+                ad_user_membership_observed.objects[0].member ==
+                [ad_user_created.distinguished_name]
+
+        - name: Deny password changes and set native service principal names
+          sustainablelobster.legacy_ad.user: &ad_user_permissions
+            identity: '{{ ad_user_created.object_guid }}'
+            user_cannot_change_password: true
+            spns:
+              set: ['HTTP/{{ ad_user_name }}']
+          register: ad_user_permissions_changed
+
+        - name: Repeat the password-change permissions request
+          sustainablelobster.legacy_ad.user: *ad_user_permissions
+          register: ad_user_permissions_repeated
+
+        - name: Verify permission and SPN changes are idempotent
+          ansible.builtin.assert:
+            that:
+              - ad_user_permissions_changed.changed
+              - not ad_user_permissions_repeated.changed
+
+        - name: Permit password changes and expire the current password
+          sustainablelobster.legacy_ad.user: &ad_user_expiry
+            identity: '{{ ad_user_created.object_guid }}'
+            user_cannot_change_password: false
+            password_expired: true
+          register: ad_user_expired
+
+        - name: Repeat expiry without resetting the existing password
+          sustainablelobster.legacy_ad.user: *ad_user_expiry
+          register: ad_user_expiry_repeated
+
+        - name: Verify expiry and permissions restoration are idempotent
+          ansible.builtin.assert:
+            that:
+              - ad_user_expired.changed
+              - not ad_user_expiry_repeated.changed
+
+        - name: Remove the owned user and retain its identity in the result
+          sustainablelobster.legacy_ad.user:
+            identity: '{{ ad_user_created.object_guid }}'
+            state: absent
+          register: ad_user_deleted
+
+        - name: Repeat user deletion
+          sustainablelobster.legacy_ad.user:
+            identity: '{{ ad_user_created.object_guid }}'
+            state: absent
+          register: ad_user_delete_repeated
+
+        - name: Verify deletion retained identifiers and is idempotent
+          ansible.builtin.assert:
+            that:
+              - ad_user_deleted.changed
+              - ad_user_deleted.sid == ad_user_created.sid
+              - not ad_user_delete_repeated.changed
+
+      always:
+        - name: Remove only the uniquely owned fixture OU and its children
+          sustainablelobster.legacy_ad.ou:
+            name: '{{ ad_user_name }}'
+            path: '{{ ad_domain_dn }}'
+            state: absent

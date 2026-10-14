@@ -23,10 +23,10 @@ def native_helper(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
     :param monkeypatch: Scoped target-helper path and callback calling convention.
     :returns: Fresh native helper.
     """
-    monkeypatch.syspath_prepend(str(ROOT / "plugins/module_utils"))
+    monkeypatch.syspath_prepend(str(ROOT / "legacy_windows/plugins/module_utils"))
     monkeypatch.setattr(ctypes, "WINFUNCTYPE", ctypes.CFUNCTYPE, raising=False)
     return load_module(
-        ROOT / "plugins/module_utils/legacy_windows_updates_native.py",
+        ROOT / "legacy_windows/plugins/module_utils/legacy_windows_updates_native.py",
         "tested_updates_native",
     )
 

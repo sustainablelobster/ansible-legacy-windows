@@ -13,11 +13,13 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
+from ansible_collections.sustainablelobster.legacy_windows.plugins.plugin_utils import (
+    _updates_hresult as formatter,
+)
 
-from plugins.plugin_utils import _updates_hresult as formatter
 from scripts import check_collection as packaging
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[2] / "legacy_windows"
 GPL_LICENSE = "LICENSES/ansible-windows-GPL-3.0-or-later.txt"
 UNICODE_LICENSE = "LICENSES/Unicode-3.0.txt"
 REGEX_CATEGORY_DATA_FILE = "plugins/module_utils/legacy_windows_regex_categories.py"

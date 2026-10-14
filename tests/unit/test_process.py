@@ -26,7 +26,7 @@ def process_helper(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
     :param monkeypatch: Scoped import path for the adjacent text helper.
     :returns: The loaded Python 3.4-compatible process helper.
     """
-    source = ROOT / "plugins/module_utils/legacy_windows_process.py"
+    source = ROOT / "legacy_windows/plugins/module_utils/legacy_windows_process.py"
     monkeypatch.syspath_prepend(str(source.parent))
     return load_module(source, "tested_process")
 
@@ -37,7 +37,7 @@ def text_decoder() -> ModuleType:
 
     :returns: The loaded Python 3.4-compatible text helper.
     """
-    source = ROOT / "plugins/module_utils/legacy_windows_text.py"
+    source = ROOT / "legacy_windows/plugins/module_utils/legacy_windows_text.py"
     return load_module(source, "tested_text")
 
 

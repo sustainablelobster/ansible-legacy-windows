@@ -40,7 +40,7 @@ def datetime_helper(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
     :param monkeypatch: Scoped replacements of native target boundaries.
     :returns: Imported helper using the recorded Pacific timezone observations.
     """
-    source = ROOT / "plugins/module_utils/legacy_windows_datetime.py"
+    source = ROOT / "legacy_windows/plugins/module_utils/legacy_windows_datetime.py"
     monkeypatch.syspath_prepend(str(source.parent))
     helper = load_module(source, "tested_user_expiration")
     conversions: dict[int, int] = {}

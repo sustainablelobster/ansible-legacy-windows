@@ -19,9 +19,10 @@ def classic_server(monkeypatch: pytest.MonkeyPatch) -> Any:
     :param monkeypatch: Scoped native substitutions and helper imports.
     :returns: Public helper, original-classic state and mutation observations.
     """
-    monkeypatch.syspath_prepend(str(ROOT / "plugins/module_utils"))
+    monkeypatch.syspath_prepend(str(ROOT / "legacy_windows/plugins/module_utils"))
     helper = load_module(
-        ROOT / "plugins/module_utils/legacy_windows_dns_zone.py", "classic_zone_test"
+        ROOT / "legacy_windows/plugins/module_utils/legacy_windows_dns_zone.py",
+        "classic_zone_test",
     )
     classic = helper.classic
     state: dict[str, Any] = {"rows": [], "writes": []}

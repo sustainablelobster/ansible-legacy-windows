@@ -21,7 +21,8 @@ def account_helper() -> ModuleType:
     :returns: Isolated target helper module.
     """
     return load_module(
-        ROOT / "plugins/module_utils/legacy_windows_account.py", "tested_account_native"
+        ROOT / "legacy_windows/plugins/module_utils/legacy_windows_account.py",
+        "tested_account_native",
     )
 
 

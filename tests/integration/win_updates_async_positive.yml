@@ -8,7 +8,8 @@
   vars:
     updates_positive_program: |
       WMI_SOURCE = {{ lookup('ansible.builtin.file', playbook_dir +
-        '/../../plugins/module_utils/legacy_windows_wmi.py') | to_json }}
+        '/../../legacy_windows/' +
+        'plugins/module_utils/legacy_windows_wmi.py') | to_json }}
       BASE_ASYNC_SOURCE = {{ lookup('ansible.builtin.file', playbook_dir +
         '/fixtures/native_async.py').split('if __name__ ==')[0] | to_json }}
       SERVICING_STATE = {{ updates_positive_state | to_json }}

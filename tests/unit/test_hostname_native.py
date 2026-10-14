@@ -26,9 +26,9 @@ def hostname_helper(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
     :param monkeypatch: Scoped adjacent-helper import path.
     :returns: Fresh target helper loaded by the development interpreter.
     """
-    monkeypatch.syspath_prepend(str(ROOT / "plugins/module_utils"))
+    monkeypatch.syspath_prepend(str(ROOT / "legacy_windows/plugins/module_utils"))
     return load_module(
-        ROOT / "plugins/module_utils/legacy_windows_hostname.py",
+        ROOT / "legacy_windows/plugins/module_utils/legacy_windows_hostname.py",
         "tested_hostname_native",
     )
 

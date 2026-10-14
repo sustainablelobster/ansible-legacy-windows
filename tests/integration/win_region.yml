@@ -11,7 +11,7 @@
         region_helper_sources: >-
           {{ region_helper_sources | default({}) | combine({item:
           lookup('ansible.builtin.file', playbook_dir ~
-          '/../../plugins/module_utils/' ~ item ~ '.py')}) }}
+          '/../../legacy_windows/plugins/module_utils/' ~ item ~ '.py')}) }}
       loop:
         - legacy_windows_account
         - legacy_windows_group

@@ -885,8 +885,9 @@ def test_actual_controller_binding_and_complete_stdin_source(
     shadow = tmp_path / "project/tests/integration"
     shadow.mkdir(parents=True)
     (shadow / "fixtures").symlink_to(integration / "fixtures", target_is_directory=True)
-    (tmp_path / "project/plugins").symlink_to(
-        ROOT / "plugins", target_is_directory=True
+    (tmp_path / "project/legacy_windows").mkdir()
+    (tmp_path / "project/legacy_windows/plugins").symlink_to(
+        ROOT / "legacy_windows/plugins", target_is_directory=True
     )
     # pylint: enable=duplicate-code
     binding = yaml.safe_load(

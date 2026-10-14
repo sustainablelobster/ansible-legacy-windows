@@ -1,0 +1,107 @@
+---
+# Copyright (c) 2026 Ansible Project
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Interface documentation derived from microsoft.ad 1.12.1.
+# Copyright 2026 sustainablelobster
+DOCUMENTATION:
+  module: kds_root_key
+  short_description: Manage KDS root keys in a directory
+  version_added: 1.0.0
+  description:
+    - Ensure that a KDS root key is present or absent, changing the directory
+      only when the requested matching policy requires it.
+    - Uses the execution identity's domain and Windows credentials through
+      signed and encrypted LDAP.
+  options:
+    effective_time_hours:
+      description:
+        - The number of hours to wait before the key is effective.
+        - This is recommended to be set to a value greater than 0, so
+          that the key can be replicated to all domain controllers.
+          Using a key before it has been replicated will result in an
+          error.
+        - If set to 0, the key will be effective immediately.
+      type: int
+      default: 10
+    key_id:
+      description:
+        - The ID of the key that should be removed when O(state) is
+          C(absent).
+        - The ID of the key that should be matched when O(state) is
+          C(present) and O(match_by) is C(key_id). Pay attention that
+          the created key will not have the specified ID, the C(key_id)
+          is used for matching existing keys only.
+      type: str
+    match_by:
+      description:
+        - The method used to find a key for the idempotency check
+          when O(state=present).
+        - When V(any), a key will only be created when no key exists.
+        - When V(key_id), O(key_id) must be set and will create the
+          key if one with that id does not already exist. The newly
+          created key will not have the specified ID.
+        - When V(never), the module always creates a new key.
+      type: str
+      default: any
+      choices:
+        - any
+        - key_id
+        - never
+    state:
+      description:
+        - Whether to ensure a key is present or absent.
+        - Note that Microsoft warns against removing KDS root keys,
+          since it can lead to failed services and accounts.
+      type: str
+      default: present
+      choices:
+        - present
+        - absent
+  notes:
+    - The directory must provide the KDS schema and configuration. An older
+      Windows execution host can manage a capable directory; the host does
+      not need the KDS PowerShell module.
+    - Domain Administrator, Enterprise Administrator or equivalent delegated
+      permissions are required. Use credential delegation or become when
+      the connection logon cannot authenticate to the directory.
+    - As in microsoft.ad 1.12.1, the stored effective time is the current
+      time plus O(effective_time_hours) minus ten hours. Windows KDS applies
+      the replication safety interval before using the key.
+    - An existing O(match_by=key_id) match returns C(null) for RV(key_id),
+      preserving the recorded release's string-parameter return behavior.
+      Use M(sustainablelobster.legacy_ad.kds_root_key_info) to read its ID.
+  extends_documentation_fragment:
+    - ansible.builtin.action_common_attributes
+  attributes:
+    check_mode:
+      support: full
+      description: Predicts creation or removal without changing the directory.
+    diff_mode:
+      support: none
+    platform:
+      platforms:
+        - windows
+  author:
+    - sustainablelobster
+    - Mike Morency (@mikemorency)
+  seealso:
+    - module: microsoft.ad.kds_root_key
+EXAMPLES: |
+  - name: Ensure a KDS root key exists with the normal replication delay
+    sustainablelobster.legacy_ad.kds_root_key:
+      effective_time_hours: 10
+      match_by: any
+
+  - name: Remove a known key only after checking its consumers
+    sustainablelobster.legacy_ad.kds_root_key:
+      key_id: 2ad622aa-39f0-0583-9cd7-cc8fc85bd2f5
+      state: absent
+RETURN:
+  key_id:
+    description:
+      - Identifier of the created, matched or removed key.
+      - The empty GUID is returned when O(match_by=any) finds an existing
+        key or when creation is predicted in check mode.
+    returned: always
+    type: str
+    sample: 12345678-1234-1234-1234-123456789012

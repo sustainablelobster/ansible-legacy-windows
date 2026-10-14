@@ -1,0 +1,178 @@
+---
+# Copyright 2026 sustainablelobster
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Destructive role test: only on an explicitly owned disposable guest.
+# Requires a prepared parent forest and direct LDAP access to the new DC.
+# Supply the new domain DN, configuration DN, expected level and LDAP endpoint.
+# The lab runner must independently clean the created domain/replica metadata
+# and restore or remove the guest; promotion has no generic rollback operation.
+- name: Verify native domain_child promotion on the minimum target interpreter
+  hosts: legacy_ad_new_child
+  gather_facts: false
+  module_defaults:
+    group/sustainablelobster.legacy_ad.domain:
+      domain_server: '{{ ad_domain_server }}'
+      domain_username: '{{ ad_domain_username }}'
+      domain_password: '{{ ad_domain_password }}'
+  tasks:
+    - name: Require the runner's disposable role-test declaration
+      ansible.builtin.assert:
+        that: ad_owned_role_test | default(false) | bool
+        fail_msg: This play requires an owned disposable role-test guest.
+
+    - name: Identify the actual target interpreter
+      sustainablelobster.legacy_windows.win_command:
+        argv:
+          - '{{ ansible_python_interpreter }}'
+          - -c
+          - 'import json,sys; print(json.dumps(list(sys.version_info[:3])))'
+      register: ad_promotion_interpreter
+      changed_when: false
+
+    - name: Require actual minimum-interpreter execution
+      ansible.builtin.assert:
+        that: (ad_promotion_interpreter.stdout | from_json) == [3, 4, 4]
+
+    - name: Read the independent running server-role marker
+      sustainablelobster.legacy_windows.win_reg_stat:
+        path: 'HKLM:\SYSTEM\CurrentControlSet\Control\ProductOptions'
+        name: ProductType
+      register: ad_role_before
+
+    - name: Refuse to replace an existing controller
+      ansible.builtin.assert:
+        that: ad_role_before.value == 'ServerNT'
+
+    - name: Read the parent forest's existing functional level
+      sustainablelobster.legacy_ad.object_info:
+        identity: 'CN=Partitions,{{ ad_configuration_dn }}'
+        properties: [msDS-Behavior-Version]
+      register: ad_parent_forest_before
+
+    - name: Independently require the new domain's initial metadata absence
+      sustainablelobster.legacy_ad.object_info:
+        ldap_filter: >-
+          (&(objectClass=crossRef)(dnsRoot={{ ad_new_domain_name }}))
+        search_base: 'CN=Partitions,{{ ad_configuration_dn }}'
+      register: ad_child_metadata_before
+
+    - name: Refuse to reuse an existing child or tree domain
+      ansible.builtin.assert:
+        that: ad_child_metadata_before.objects == []
+
+    - name: Predict the concrete promotion without changing the guest
+      sustainablelobster.legacy_ad.domain_child: &ad_native_promotion
+        dns_domain_name: '{{ ad_new_domain_name }}'
+        domain_type: '{{ ad_new_domain_type | default("child") }}'
+        parent_domain_name: '{{ ad_parent_domain_name | default(omit) }}'
+        domain_admin_user: '{{ ad_domain_username }}'
+        domain_admin_password: '{{ ad_domain_password }}'
+        safe_mode_password: '{{ ad_safe_mode_password }}'
+        create_dns_delegation: '{{ ad_create_dns_delegation | default(omit) }}'
+        install_dns: true
+      check_mode: true
+      register: ad_promotion_preview
+      no_log: true
+
+    - name: Read the role marker after prediction
+      sustainablelobster.legacy_windows.win_reg_stat:
+        path: 'HKLM:\SYSTEM\CurrentControlSet\Control\ProductOptions'
+        name: ProductType
+      register: ad_role_after_preview
+
+    - name: Read the unchanged new-domain metadata after prediction
+      sustainablelobster.legacy_ad.object_info:
+        ldap_filter: >-
+          (&(objectClass=crossRef)(dnsRoot={{ ad_new_domain_name }}))
+        search_base: 'CN=Partitions,{{ ad_configuration_dn }}'
+      register: ad_child_metadata_after_preview
+
+    - name: Verify prediction leaves the native role unchanged
+      ansible.builtin.assert:
+        that:
+          - ad_promotion_preview.changed
+          - ad_promotion_preview.reboot_required
+          - ad_role_after_preview.value == ad_role_before.value
+          - ad_child_metadata_after_preview.objects == []
+
+    - name: Perform native promotion and the shared verified Windows reboot
+      sustainablelobster.legacy_ad.domain_child:
+        <<: *ad_native_promotion
+        reboot: true
+      register: ad_promotion_created
+      no_log: true
+
+    - name: Read the independent running controller marker
+      sustainablelobster.legacy_windows.win_reg_stat:
+        path: 'HKLM:\SYSTEM\CurrentControlSet\Control\ProductOptions'
+        name: ProductType
+      register: ad_role_after
+
+    - name: Verify the actual role transition and handled reboot
+      ansible.builtin.assert:
+        that:
+          - ad_promotion_created.changed
+          - not ad_promotion_created.reboot_required
+          - ad_role_after.value == 'LanmanNT'
+
+    - name: Read the actual new domain through authenticated local LDAP
+      sustainablelobster.legacy_ad.object_info:
+        domain_server: '{{ ad_created_domain_server }}'
+        identity: '{{ ad_new_domain_dn }}'
+        properties: [msDS-Behavior-Version]
+      register: ad_child_domain
+
+    - name: Read the new domain's forest level without changing it
+      sustainablelobster.legacy_ad.object_info:
+        domain_server: '{{ ad_created_domain_server }}'
+        identity: 'CN=Partitions,{{ ad_configuration_dn }}'
+        properties: [msDS-Behavior-Version]
+      register: ad_child_forest
+
+    - name: Read authoritative new-domain metadata from the parent
+      sustainablelobster.legacy_ad.object_info:
+        ldap_filter: >-
+          (&(objectClass=crossRef)(dnsRoot={{ ad_new_domain_name }}))
+        search_base: 'CN=Partitions,{{ ad_configuration_dn }}'
+        properties: [nCName]
+      register: ad_child_metadata
+
+    - name: Require the new directory identity and explicit functional levels
+      ansible.builtin.assert:
+        that:
+          - ad_child_domain.objects | length == 1
+          - ad_child_domain.objects[0].ObjectClass == 'domainDNS'
+          - >-
+            ad_child_domain.objects[0].DistinguishedName | lower ==
+            ad_new_domain_dn | lower
+          - >-
+            ad_child_domain.objects[0]['msDS-Behavior-Version'] ==
+            ad_expected_domain_level
+          - ad_child_forest.objects == ad_parent_forest_before.objects
+          - ad_child_metadata.objects | length == 1
+          - >-
+            ad_child_metadata.objects[0].nCName | lower ==
+            ad_new_domain_dn | lower
+
+    - name: Repeat the native promotion request
+      sustainablelobster.legacy_ad.domain_child: *ad_native_promotion
+      register: ad_promotion_repeated
+      no_log: true
+
+    - name: Verify existing-domain idempotence
+      ansible.builtin.assert:
+        that:
+          - not ad_promotion_repeated.changed
+          - not ad_promotion_repeated.reboot_required
+
+    - name: Verify an existing-domain check request is also unchanged
+      sustainablelobster.legacy_ad.domain_child: *ad_native_promotion
+      check_mode: true
+      register: ad_promotion_repeated_preview
+      no_log: true
+
+    - name: Require repeat check mode leaves the created domain unchanged
+      ansible.builtin.assert:
+        that:
+          - not ad_promotion_repeated_preview.changed
+          - not ad_promotion_repeated_preview.reboot_required

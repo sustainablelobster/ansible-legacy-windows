@@ -1,0 +1,18 @@
+"""Stage native boot and pending-reboot readers before executing the payload."""
+
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+from ..plugin_utils.runtime import PythonModuleAction
+
+
+# Ansible's normal action already has a deep extension hierarchy.
+class ActionModule(PythonModuleAction):  # pylint: disable=too-many-ancestors
+    """Read Windows reboot information through native Python JSON execution."""
+
+    EXTRA_MODULE_UTILS = (
+        "legacy_windows_reg_stat.py",
+        "legacy_windows_wmi.py",
+        "legacy_windows_boot.py",
+        "legacy_windows_time.py",
+        "legacy_windows_reboot.py",
+    )

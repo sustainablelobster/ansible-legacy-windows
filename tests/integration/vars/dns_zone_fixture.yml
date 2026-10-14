@@ -4,30 +4,37 @@ dns_zone_fixture_program: |
   for helper_name, source in (
       ('legacy_windows_regex', {{ lookup('file',
           (dns_zone_source_root | default(playbook_dir + '/../..')) +
-          '/plugins/module_utils/legacy_windows_regex.py') | to_json }}),
+          '/legacy_windows/' +
+          'plugins/module_utils/legacy_windows_regex.py') | to_json }}),
       ('legacy_windows_find_match', {{ lookup('file',
           (dns_zone_source_root | default(playbook_dir + '/../..')) +
-          '/plugins/module_utils/legacy_windows_find_match.py') | to_json }}),
+          '/legacy_windows/' +
+          'plugins/module_utils/legacy_windows_find_match.py') | to_json }}),
       ('legacy_windows_wmi', {{ lookup('file',
           (dns_zone_source_root | default(playbook_dir + '/../..')) +
-          '/plugins/module_utils/legacy_windows_wmi.py') | to_json }}),
+          '/legacy_windows/' +
+          'plugins/module_utils/legacy_windows_wmi.py') | to_json }}),
       ('legacy_windows_dns_classic', {{ lookup('file',
           (dns_zone_source_root | default(playbook_dir + '/../..')) +
-          '/plugins/module_utils/legacy_windows_dns_classic.py') |
+          '/legacy_windows/' +
+          'plugins/module_utils/legacy_windows_dns_classic.py') |
           to_json }}),
       ('legacy_windows_dns_zone', {{ lookup('file',
           (dns_zone_source_root | default(playbook_dir + '/../..')) +
-          '/plugins/module_utils/legacy_windows_dns_zone.py') | to_json }}),
+          '/legacy_windows/' +
+          'plugins/module_utils/legacy_windows_dns_zone.py') | to_json }}),
       ('legacy_windows_feature_legacy', {{ lookup('file',
           (dns_zone_source_root | default(playbook_dir + '/../..')) +
-          '/plugins/module_utils/legacy_windows_feature_legacy.py') |
+          '/legacy_windows/' +
+          'plugins/module_utils/legacy_windows_feature_legacy.py') |
           to_json }}),
       ('legacy_windows_feature_info', {{ lookup('file',
           (dns_zone_source_root | default(playbook_dir + '/../..')) +
-          '/plugins/module_utils/legacy_windows_feature_info.py') | to_json }}),
+          '/legacy_windows/' +
+          'plugins/module_utils/legacy_windows_feature_info.py') | to_json }}),
       ('legacy_windows_feature_manage', {{ lookup('file',
           (dns_zone_source_root | default(playbook_dir + '/../..')) +
-          '/plugins/module_utils/' +
+          '/legacy_windows/plugins/module_utils/' +
           'legacy_windows_feature_manage.py') | to_json }}),
       ('win_dns_zone_state', {{ lookup('file',
           (dns_zone_source_root | default(playbook_dir + '/../..')) +

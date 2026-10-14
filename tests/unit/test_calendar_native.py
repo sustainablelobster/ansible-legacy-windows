@@ -136,7 +136,7 @@ def calendar_helper() -> ModuleType:
 
     :returns: Target helper module without accessing Windows.
     """
-    source = ROOT / "plugins/module_utils/legacy_windows_calendar.py"
+    source = ROOT / "legacy_windows/plugins/module_utils/legacy_windows_calendar.py"
     spec = importlib.util.spec_from_file_location("tested_calendar_native", source)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
