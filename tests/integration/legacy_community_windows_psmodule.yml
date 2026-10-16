@@ -1,0 +1,105 @@
+---
+# Copyright 2026 sustainablelobster
+# SPDX-License-Identifier: GPL-3.0-or-later
+- name: Verify module installation through an isolated real repository fixture
+  hosts: legacy_community_windows_psget
+  gather_facts: false
+  tasks:
+    - name: Require a local repository fixture containing two module versions
+      ansible.builtin.assert:
+        that:
+          - community_psmodule_fixture_repository is defined
+          - community_psmodule_fixture_name is defined
+          - community_psmodule_fixture_old_version is defined
+          - community_psmodule_fixture_latest_version is defined
+
+    - name: Query the previously uninstalled fixture module
+      sustainablelobster.legacy_community_windows.win_psmodule_info:
+        name: '{{ community_psmodule_fixture_name }}'
+        include_properties: [name, version]
+        skip_module_repository_info: true
+      register: community_module_initial
+
+    - name: Protect existing module installations
+      ansible.builtin.assert:
+        that: community_module_initial.modules | length == 0
+
+    - name: Exercise actual module lifecycle and always remove owned versions
+      block:
+        - name: Preview installing the older fixture version
+          sustainablelobster.legacy_community_windows.win_psmodule:
+            name: '{{ community_psmodule_fixture_name }}'
+            repository: '{{ community_psmodule_fixture_repository }}'
+            required_version: '{{ community_psmodule_fixture_old_version }}'
+          check_mode: true
+          register: community_module_preview
+
+        - name: Query metadata after preview
+          sustainablelobster.legacy_community_windows.win_psmodule_info:
+            name: '{{ community_psmodule_fixture_name }}'
+            include_properties: [name, version]
+            skip_module_repository_info: true
+          register: community_module_after_preview
+
+        - name: Install the older fixture version
+          sustainablelobster.legacy_community_windows.win_psmodule:
+            name: '{{ community_psmodule_fixture_name }}'
+            repository: '{{ community_psmodule_fixture_repository }}'
+            required_version: '{{ community_psmodule_fixture_old_version }}'
+          register: community_module_installed
+
+        - name: Repeat the installed version
+          sustainablelobster.legacy_community_windows.win_psmodule:
+            name: '{{ community_psmodule_fixture_name }}'
+            repository: '{{ community_psmodule_fixture_repository }}'
+            required_version: '{{ community_psmodule_fixture_old_version }}'
+          register: community_module_repeat
+
+        - name: Install the latest fixture version
+          sustainablelobster.legacy_community_windows.win_psmodule:
+            name: '{{ community_psmodule_fixture_name }}'
+            repository: '{{ community_psmodule_fixture_repository }}'
+            state: latest
+          register: community_module_latest
+
+        - name: Read back real installed module versions
+          sustainablelobster.legacy_community_windows.win_psmodule_info:
+            name: '{{ community_psmodule_fixture_name }}'
+            include_properties: [name, version]
+            skip_module_repository_info: true
+          register: community_module_metadata
+
+        - name: Require real install, check isolation and version upgrade
+          ansible.builtin.assert:
+            that:
+              - community_module_preview.changed
+              - community_module_after_preview.modules | length == 0
+              - community_module_installed.changed
+              - not community_module_repeat.changed
+              - community_module_latest.changed
+              - >-
+                community_psmodule_fixture_latest_version in
+                (community_module_metadata.modules | map(attribute='version'))
+
+        - name: Remove all owned fixture module versions
+          sustainablelobster.legacy_community_windows.win_psmodule:
+            name: '{{ community_psmodule_fixture_name }}'
+            state: absent
+          register: community_module_removed
+
+        - name: Repeat removing the module
+          sustainablelobster.legacy_community_windows.win_psmodule:
+            name: '{{ community_psmodule_fixture_name }}'
+            state: absent
+          register: community_module_removed_again
+
+        - name: Verify removal idempotence
+          ansible.builtin.assert:
+            that:
+              - community_module_removed.changed
+              - not community_module_removed_again.changed
+      always:
+        - name: Remove only the isolated fixture module versions
+          sustainablelobster.legacy_community_windows.win_psmodule:
+            name: '{{ community_psmodule_fixture_name }}'
+            state: absent

@@ -9,9 +9,12 @@ import tarfile
 import tempfile
 from pathlib import Path
 
+# YAML metadata is supplied by the locked developer environment.
+import yaml  # type: ignore[import-untyped]
+
 ROOT = Path(__file__).resolve().parents[1]
 IDENTITY = ("sustainablelobster", "legacy_windows")
-COLLECTION_NAMES = ("legacy_windows", "legacy_ad")
+COLLECTION_NAMES = ("legacy_windows", "legacy_ad", "legacy_community_windows")
 LICENSE_AND_NOTICE_FILES = (
     "LICENSE",
     "NOTICE",
@@ -42,6 +45,7 @@ FORBIDDEN_FILES = {
 EXCLUDED_ROOTS = {
     "legacy_windows",
     "legacy_ad",
+    "legacy_community_windows",
     ".git",
     ".github",
     ".gitattributes",
@@ -79,7 +83,39 @@ def _collection_root(name: str) -> Path:
 def _collection_notices(name: str) -> tuple[str, ...]:
     if name == "legacy_windows":
         return LICENSE_AND_NOTICE_FILES
-    return ("LICENSE", "NOTICE", "LICENSES/microsoft-ad-GPL-3.0-or-later.txt")
+    upstream = "microsoft-ad" if name == "legacy_ad" else "community-windows"
+    return ("LICENSE", "NOTICE", "LICENSES/" + upstream + "-GPL-3.0-or-later.txt")
+
+
+def _selected_collections(name: str) -> tuple[str, ...]:
+    if name == "all":
+        return COLLECTION_NAMES
+    if name == "legacy_windows":
+        return (name,)
+    return ("legacy_windows", name)
+
+
+def _verify_community_interfaces(archive: tarfile.TarFile, names: set[str]) -> None:
+    reference = json.loads(
+        (ROOT / "tests/fixtures/community_windows_contract.json").read_text("utf-8")
+    )
+    required = {"plugins/modules/" + name + ".py" for name in reference["modules"]} | {
+        "plugins/lookup/" + name + ".py" for name in reference["lookups"]
+    }
+    missing = required - names
+    if missing:
+        raise SystemExit(
+            "Community baseline interfaces are missing: " + ", ".join(sorted(missing))
+        )
+    expected = json.loads(
+        json.dumps(reference["routing"])
+        .replace("ansible.windows.", "sustainablelobster.legacy_windows.")
+        .replace("microsoft.ad.", "sustainablelobster.legacy_ad.")
+        .replace("community.windows.", "sustainablelobster.legacy_community_windows.")
+    )
+    runtime = yaml.safe_load(_read_member(archive, "meta/runtime.yml"))
+    if runtime.get("plugin_routing") != expected:
+        raise SystemExit("Community plugin routing differs from the released baseline")
 
 
 def _required_files(name: str) -> set[str]:
@@ -175,6 +211,8 @@ def _inspect_archive(
             ):
                 raise SystemExit("Artifact includes excluded path: " + name)
         _verify_plugin_inventory(archive, plugins)
+        if collection == "legacy_community_windows":
+            _verify_community_interfaces(archive, names)
         manifest = _read_member(archive, "MANIFEST.json")
         _validate_manifest(manifest, collection)
         for notice in _collection_notices(collection):
@@ -245,20 +283,16 @@ def main() -> None:
         "--collection",
         choices=("all", *COLLECTION_NAMES),
         default="all",
-        help="Collection to check; AD also needs the local Windows runtime archive.",
+        help="Collection to check; consumers also need the local Windows runtime archive.",
     )
     parser.add_argument(
         "--artifact",
         type=Path,
         action="append",
-        help="Use a built archive; supply both archives when checking AD or all.",
+        help="Use exact archives for the selected collection and its Windows dependency.",
     )
     arguments = parser.parse_args()
-    names = (
-        COLLECTION_NAMES
-        if arguments.collection in ("all", "legacy_ad")
-        else ("legacy_windows",)
-    )
+    names = _selected_collections(arguments.collection)
     with tempfile.TemporaryDirectory(prefix="legacy-collections-check-") as directory:
         temporary = Path(directory)
         collections = temporary / "collections"

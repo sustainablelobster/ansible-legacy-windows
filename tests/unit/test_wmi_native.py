@@ -1,4 +1,4 @@
-"""Exercise shared native WMI through scalar and string-array operations."""
+"""Exercise shared native WMI through scalar and array operations."""
 
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Native substitutes do not establish execution compatibility on Windows.
@@ -64,7 +64,8 @@ class _Wmi:  # pylint: disable=too-few-public-methods,too-many-instance-attribut
         self.automation = Mock()
         self.events: list[str] = []
         self.strings: dict[int, Any] = {}
-        self.arrays: dict[int, list[str]] = {}
+        self.arrays: dict[int, list[Any]] = {}
+        self.array_kinds: dict[int, int] = {}
         self.options: dict[str, Any] = {"boot": BOOT, "returned": 1, "kind": 8}
         self.rows: list[dict[str, Any]] = []
         self.current: dict[str, Any] = {}
@@ -159,17 +160,18 @@ class _Wmi:  # pylint: disable=too-few-public-methods,too-many-instance-attribut
         self.events.append("clear:" + str(value.kind))
         if value.kind == 8 and value.data.bstr:
             self._free(value.data.bstr)
-        elif value.kind == 0x2008 and value.data.array:
+        elif value.kind & 0x2000 and value.data.array:
             self.arrays.pop(value.data.array)
         value.kind = 0
         return int(self.options.get("clear", 0))
 
     def _array_create(self, kind: int, lower: int, count: int) -> int:
-        assert kind == 8 and lower == 0
+        assert kind in (3, 8, 17, 18, 19) and lower == 0
         if self.options.get("array_create_failure"):
             return 0
         pointer = 200 + len(self.arrays)
         self.arrays[pointer] = [""] * count
+        self.array_kinds[pointer] = kind
         return pointer
 
     def _array_lower(self, array: int, dimension: int, output: Any) -> int:
@@ -188,19 +190,29 @@ class _Wmi:  # pylint: disable=too-few-public-methods,too-many-instance-attribut
         index = ctypes.cast(position, ctypes.POINTER(LONG))[0]
         status = self._status("array_get")
         if not status:
-            _set_pointer(
-                output,
-                self._allocate(
-                    self.arrays[array][index - self.options.get("lower", 0)]
-                ),
-            )
+            item = self.arrays[array][index - self.options.get("lower", 0)]
+            if self.array_kinds[array] == 8:
+                _set_pointer(output, self._allocate(item))
+            else:
+                scalar_type = {
+                    3: LONG,
+                    17: ctypes.c_ubyte,
+                    18: ctypes.c_uint16,
+                    19: ULONG,
+                }[self.array_kinds[array]]
+                ctypes.cast(output, ctypes.POINTER(scalar_type))[0] = item
         return status
 
-    def _array_put(self, array: int, position: Any, text: int) -> int:
+    def _array_put(self, array: int, position: Any, text: Any) -> int:
         index = ctypes.cast(position, ctypes.POINTER(LONG))[0]
         status = self._status("array_put")
         if not status:
-            self.arrays[array][index] = "".join(self.strings[text][:-1])
+            if self.array_kinds[array] == 17:
+                self.arrays[array][index] = ctypes.cast(
+                    text, ctypes.POINTER(ctypes.c_ubyte)
+                )[0]
+            else:
+                self.arrays[array][index] = "".join(self.strings[text][:-1])
         return status
 
     def _method(
@@ -333,7 +345,13 @@ class _Wmi:  # pylint: disable=too-few-public-methods,too-many-instance-attribut
             )
             if isinstance(item, tuple):
                 value.kind, integer, cim = item
-                value.data.integer = integer
+                if isinstance(integer, list):
+                    value.data.array = self._array_create(
+                        value.kind & 0xFFF, 0, len(integer)
+                    )
+                    self.arrays[value.data.array] = integer
+                else:
+                    value.data.integer = integer
                 ctypes.cast(cim_type, ctypes.POINTER(LONG))[0] = cim
             elif isinstance(item, list):
                 value.kind = 0x2008
@@ -406,6 +424,11 @@ class _Wmi:  # pylint: disable=too-few-public-methods,too-many-instance-attribut
         if isinstance(expected, bool):
             assert variant.kind == 11
             assert variant.data.signed16 == (-1 if expected else 0)
+        elif isinstance(expected, int):
+            assert variant.kind == 3 and variant.data.signed32 == expected
+        elif isinstance(expected, bytes):
+            assert variant.kind == 0x2011
+            assert self.arrays[variant.data.array] == list(expected)
         elif expected is None:
             assert variant.kind == 1 and not variant.data.bstr
         elif isinstance(expected, list):
@@ -725,6 +748,11 @@ def test_native_layout_and_function_signatures(helper: ModuleType, wmi: _Wmi) ->
     assert wmi.automation.SysStringLen.argtypes == [POINTER]
     assert wmi.automation.SysStringLen.restype is ULONG
     assert wmi.automation.VariantClear.argtypes == [ctypes.POINTER(helper._Variant)]
+    assert wmi.automation.SafeArrayGetElement.argtypes == [
+        POINTER,
+        ctypes.POINTER(LONG),
+        POINTER,
+    ]
     assert wmi.automation.VariantClear.restype is LONG
 
 
@@ -896,14 +924,14 @@ def test_method_without_class_name_fails_actionably(
     assert not wmi.strings
 
 
-@pytest.mark.parametrize("value", [0, 1, [0], [None], {}])
+@pytest.mark.parametrize("value", [0.5, [0], [None], {}])
 def test_method_rejects_unsupported_inputs_before_provider_work(
     helper: ModuleType, wmi: _Wmi, value: Any
 ) -> None:
     with helper.WmiConnection() as connection:
         with pytest.raises(
             ValueError,
-            match="Recursive must be boolean, string, a string list, or None",
+            match="Recursive must be boolean, integer, string, a string list, bytes, or None",
         ):
             connection.call_method(
                 "file", "CompressEx", [], {"Name": "valid", "Recursive": value}
@@ -1310,5 +1338,111 @@ def test_integer_property_rejects_invalid_values_before_provider_work(
     with helper.WmiConnection() as connection:
         with pytest.raises(ValueError, match="integer"):
             connection.set_integer_property("unused", "Enabled", value)
+    assert "get_instance" not in wmi.events and not wmi.strings
+    assert wmi.events[-1] == "uninitialize"
+
+
+@pytest.mark.parametrize(
+    "kind,cim,values",
+    [
+        (0x2011, 0x2011, [0, 255]),
+        (0x2012, 0x2012, [0, 65535]),
+        (0x2003, 0x2003, [-(2**31), 17]),
+        (0x2003, 0x2013, [0xFFFFFFFF, 17]),
+        (0x2013, 0x2013, [0xFFFFFFFF, 17]),
+    ],
+)
+def test_numeric_queries_preserve_unsigned_values_and_nonzero_lower_bounds(
+    helper: ModuleType, wmi: _Wmi, kind: int, cim: int, values: list[int]
+) -> None:
+    wmi.options.update(lower=4, rows=[{"Values": (kind, values, cim)}])
+    with helper.WmiConnection() as connection:
+        assert connection.query("SELECT Values FROM Owned", ["Values"]) == [
+            {"Values": values}
+        ]
+    assert not wmi.arrays and not wmi.strings
+
+
+def test_numeric_array_rejects_multiple_dimensions(
+    helper: ModuleType, wmi: _Wmi
+) -> None:
+    wmi.options.update(rows=[{"Values": (0x2013, [0xFFFFFFFF, 17], 0x2013)}])
+    wmi.automation.SafeArrayGetDim.side_effect = lambda _array: 2
+    with helper.WmiConnection() as connection:
+        with pytest.raises(ValueError, match="one dimension"):
+            connection.query("SELECT Values FROM Owned", ["Values"])
+    assert not wmi.arrays and not wmi.strings
+
+
+@pytest.mark.parametrize("stage", ["array_lower", "array_upper", "array_get"])
+def test_numeric_array_failure_releases_owned_array(
+    helper: ModuleType, wmi: _Wmi, stage: str
+) -> None:
+    wmi.options.update(rows=[{"Values": (0x2011, [0, 255], 0x2011)}])
+    wmi.options[stage] = FAILURE
+    with helper.WmiConnection() as connection:
+        with pytest.raises(OSError, match="HRESULT"):
+            connection.query("SELECT Values FROM Owned", ["Values"])
+        assert not wmi.arrays
+        wmi.options.pop(stage)
+        assert connection.query("SELECT Values FROM Owned", ["Values"]) == [
+            {"Values": [0, 255]}
+        ]
+    assert not wmi.arrays and not wmi.strings
+
+
+@pytest.mark.parametrize("value", [-(2**31), 0, 25, 2**31 - 1, b"", b"\x00\x80\xff"])
+def test_integer_and_byte_method_inputs_preserve_values_and_release_resources(
+    helper: ModuleType, wmi: _Wmi, value: Any
+) -> None:
+    inputs = {"Value": value}
+    wmi.options.update(
+        method_path='Owned.Name="owned"',
+        method_name="SetValue",
+        inputs=inputs,
+        owner={"ReturnValue": (3, 0, 19)},
+    )
+    with helper.WmiConnection() as connection:
+        assert connection.call_method(
+            wmi.options["method_path"], "SetValue", ["ReturnValue"], inputs
+        ) == {"ReturnValue": 0}
+    assert not wmi.arrays and not wmi.strings
+
+
+@pytest.mark.parametrize(
+    "stage", ["array_create_failure", "array_put", "put", "execute"]
+)
+def test_byte_input_failure_releases_allocations_and_allows_retry(
+    helper: ModuleType, wmi: _Wmi, stage: str
+) -> None:
+    inputs = {"Value": b"\x00\x80\xff"}
+    wmi.options.update(
+        method_path='Owned.Name="owned"',
+        method_name="SetValue",
+        inputs=inputs,
+        owner={"ReturnValue": (3, 0, 19)},
+    )
+    wmi.options[stage] = FAILURE
+    with helper.WmiConnection() as connection:
+        with pytest.raises((OSError, MemoryError)):
+            connection.call_method(
+                wmi.options["method_path"], "SetValue", ["ReturnValue"], inputs
+            )
+        assert not wmi.arrays
+        wmi.options.pop(stage)
+        assert connection.call_method(
+            wmi.options["method_path"], "SetValue", ["ReturnValue"], inputs
+        ) == {"ReturnValue": 0}
+    assert not wmi.arrays and not wmi.strings
+
+
+@pytest.mark.parametrize("value", [-(2**31) - 1, 2**31])
+def test_method_integer_range_is_checked_before_provider_work(
+    helper: ModuleType, wmi: _Wmi, value: int
+) -> None:
+    with helper.WmiConnection() as connection:
+        with pytest.raises(ValueError, match="signed 32-bit"):
+            connection.call_method("unused", "SetValue", [], {"Value": value})
+        assert "get_instance" not in wmi.events and "execute" not in wmi.events
     assert "get_instance" not in wmi.events and not wmi.strings
     assert wmi.events[-1] == "uninitialize"

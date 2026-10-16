@@ -1,0 +1,185 @@
+---
+# Copyright 2026 sustainablelobster
+# SPDX-License-Identifier: GPL-3.0-or-later
+- name: Verify native pagefile configuration and exact registry restoration
+  hosts: legacy_windows
+  gather_facts: false
+  vars:
+    memory_management_key: >-
+      HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management
+    pagefile_registry_script: >-
+      import json,sys,winreg;
+      assert sys.version_info[:3] == (3,4,4);
+      key=winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,
+      r'SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management');
+      value,kind=winreg.QueryValueEx(key,'PagingFiles');
+      key.Close();
+      print(json.dumps({'value':value,'type':kind}))
+  tasks:
+    - name: Independently capture the exact original native PagingFiles value
+      sustainablelobster.legacy_windows.win_command:
+        argv:
+          - '{{ ansible_python_interpreter }}'
+          - '-c'
+          - '{{ pagefile_registry_script }}'
+      changed_when: false
+      register: original_registry
+
+    - name: Read original provider pagefiles before selecting a fixture
+      sustainablelobster.legacy_community_windows.win_pagefile:
+      register: original_pagefiles
+
+    - name: Select an existing configured pagefile for reversible size changes
+      ansible.builtin.set_fact:
+        fixture_pagefile: '{{ original_pagefiles.pagefiles | first }}'
+      when: original_pagefiles.pagefiles | length > 0
+
+    - name: Require the owned test host to have an existing configured pagefile
+      ansible.builtin.assert:
+        that:
+          - fixture_pagefile is defined
+          - (original_registry.stdout | from_json).type == 7
+
+    - name: Change configuration without rebooting and restore its exact value
+      block:
+        - name: Predict replacement without touching provider or registry
+          sustainablelobster.legacy_community_windows.win_pagefile:
+            drive: '{{ fixture_pagefile.name[0] }}'
+            state: present
+            initial_size: 32
+            maximum_size: 64
+          check_mode: true
+          register: predicted
+
+        - name: Read native registry after prediction
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - '-c'
+              - '{{ pagefile_registry_script }}'
+          changed_when: false
+          register: after_prediction
+
+        - name: Configure a small fixed-size native pagefile setting
+          sustainablelobster.legacy_community_windows.win_pagefile:
+            drive: '{{ fixture_pagefile.name[0] }}'
+            state: present
+            initial_size: 32
+            maximum_size: 64
+          register: created
+
+        - name: Repeat the fixed sizes without replacing an existing file
+          sustainablelobster.legacy_community_windows.win_pagefile:
+            drive: '{{ fixture_pagefile.name[0] }}'
+            state: present
+            initial_size: 32
+            maximum_size: 64
+            override: false
+          register: repeated
+
+        - name: Query the actual native provider configuration
+          sustainablelobster.legacy_community_windows.win_pagefile:
+            drive: '{{ fixture_pagefile.name[0] | lower }}'
+          register: actual
+
+        - name: Require prediction idempotence and native size readback
+          ansible.builtin.assert:
+            that:
+              - predicted is changed
+              - >-
+                (after_prediction.stdout | from_json)
+                == (original_registry.stdout | from_json)
+              - created is changed
+              - repeated is not changed
+              - actual.pagefiles | length == 1
+              - actual.pagefiles[0].initial_size == 32
+              - actual.pagefiles[0].maximum_size == 64
+
+        - name: Verify global mode when only the selected fixture is configured
+          when:
+            - original_pagefiles.automatic_managed_pagefiles is false
+            - original_pagefiles.pagefiles | length == 1
+          block:
+            - name: Predict enabling global automatic management
+              sustainablelobster.legacy_community_windows.win_pagefile:
+                automatic: true
+              check_mode: true
+              register: automatic_prediction
+
+            - name: Read unchanged global mode after prediction
+              sustainablelobster.legacy_community_windows.win_pagefile:
+              register: automatic_after_prediction
+
+            - name: Enable global automatic management
+              sustainablelobster.legacy_community_windows.win_pagefile:
+                automatic: true
+              register: automatic_enabled
+
+            - name: Repeat global automatic management unchanged
+              sustainablelobster.legacy_community_windows.win_pagefile:
+                automatic: true
+              register: automatic_repeated
+
+            - name: Return to explicit pagefile management
+              sustainablelobster.legacy_community_windows.win_pagefile:
+                automatic: false
+              register: automatic_disabled
+
+            - name: Require real global changes and unchanged repeat
+              ansible.builtin.assert:
+                that:
+                  - automatic_prediction is changed
+                  - >-
+                    automatic_after_prediction.automatic_managed_pagefiles
+                    is false
+                  - automatic_enabled is changed
+                  - automatic_enabled.automatic_managed_pagefiles is true
+                  - automatic_repeated is not changed
+                  - automatic_disabled is changed
+                  - automatic_disabled.automatic_managed_pagefiles is false
+      always:
+        - name: Restore the selected native pagefile configuration
+          sustainablelobster.legacy_community_windows.win_pagefile:
+            drive: '{{ fixture_pagefile.name[0] }}'
+            state: present
+            initial_size: '{{ fixture_pagefile.initial_size }}'
+            maximum_size: '{{ fixture_pagefile.maximum_size }}'
+            system_managed: >-
+              {{ fixture_pagefile.initial_size == 0
+                 and fixture_pagefile.maximum_size == 0 }}
+          register: provider_restore
+          failed_when: false
+
+        - name: Restore original global automatic mode when exposed
+          sustainablelobster.legacy_community_windows.win_pagefile:
+            automatic: '{{ original_pagefiles.automatic_managed_pagefiles }}'
+          when: original_pagefiles.automatic_managed_pagefiles is not none
+          register: automatic_restore
+          failed_when: false
+
+        - name: Restore the exact original PagingFiles registry representation
+          sustainablelobster.legacy_windows.win_regedit:
+            path: '{{ memory_management_key }}'
+            name: PagingFiles
+            type: multistring
+            data: '{{ (original_registry.stdout | from_json).value }}'
+
+        - name: Independently read the restored native registry configuration
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - '-c'
+              - '{{ pagefile_registry_script }}'
+          changed_when: false
+          register: restored_registry
+
+        - name: Require exact original PagingFiles value and type restoration
+          ansible.builtin.assert:
+            that:
+              - >-
+                (restored_registry.stdout | from_json)
+                == (original_registry.stdout | from_json)
+              - provider_restore.msg is not defined
+              - >-
+                automatic_restore is skipped
+                or automatic_restore.msg is not defined

@@ -1,0 +1,146 @@
+---
+# Copyright 2026 sustainablelobster
+# SPDX-License-Identifier: GPL-3.0-or-later
+- name: Verify deduplication on an explicitly owned disposable volume
+  hosts: legacy_community_windows_deduplication
+  gather_facts: false
+  tasks:
+    - name: Require an explicitly supplied disposable drive
+      ansible.builtin.assert:
+        that:
+          - community_dedup_owned_letter is defined
+          - community_dedup_owned_letter is match('^[A-Z]$')
+
+    - name: Exercise the owned volume and restore disabled state
+      block:
+        - name: Start with deduplication disabled on only the owned volume
+          sustainablelobster.legacy_community_windows.win_data_deduplication:
+            drive_letter: '{{ community_dedup_owned_letter }}'
+            state: absent
+          register: dedup_initial
+
+        - name: Predict enablement and settings without changing the volume
+          sustainablelobster.legacy_community_windows.win_data_deduplication:
+            drive_letter: '{{ community_dedup_owned_letter }}'
+            settings: &dedup_settings
+              minimum_file_size: 65536
+              minimum_file_age_days: 1
+              no_compress: true
+              optimize_in_use_files: true
+              verify: true
+          check_mode: true
+          register: dedup_predicted
+
+        - name: Require preview not to have enabled the volume
+          sustainablelobster.legacy_community_windows.win_data_deduplication:
+            drive_letter: '{{ community_dedup_owned_letter }}'
+            state: absent
+          register: dedup_after_prediction
+
+        - name: Enable and configure only the disposable volume
+          sustainablelobster.legacy_community_windows.win_data_deduplication:
+            drive_letter: '{{ community_dedup_owned_letter }}'
+            settings: *dedup_settings
+          register: dedup_enabled
+
+        - name: Repeat the same enabled settings
+          sustainablelobster.legacy_community_windows.win_data_deduplication:
+            drive_letter: '{{ community_dedup_owned_letter }}'
+            settings: *dedup_settings
+          register: dedup_repeated
+
+        - name: Read settings independently with the installed vendor command
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - powershell.exe
+              - -NoProfile
+              - -NonInteractive
+              - -Command
+              - >-
+                Get-DedupVolume -Volume '{{ community_dedup_owned_letter }}:' |
+                Select-Object Enabled,MinimumFileSize,MinimumFileAgeDays,
+                NoCompress,OptimizeInUseFiles,Verify | ConvertTo-Json -Compress
+          changed_when: false
+          register: dedup_native
+
+        - name: Verify real enablement settings and idempotence
+          ansible.builtin.assert:
+            that:
+              - not dedup_initial.changed
+              - dedup_predicted.changed
+              - not dedup_after_prediction.changed
+              - dedup_enabled.changed
+              - not dedup_repeated.changed
+              - not dedup_enabled.reboot_required
+              - (dedup_native.stdout | from_json).Enabled
+              - (dedup_native.stdout | from_json).MinimumFileSize == 65536
+              - (dedup_native.stdout | from_json).MinimumFileAgeDays == 1
+              - (dedup_native.stdout | from_json).NoCompress
+              - (dedup_native.stdout | from_json).OptimizeInUseFiles
+              - (dedup_native.stdout | from_json).Verify
+
+        - name: Preview restoring default settings
+          sustainablelobster.legacy_community_windows.win_data_deduplication:
+            drive_letter: '{{ community_dedup_owned_letter }}'
+            settings: {}
+          check_mode: true
+          register: dedup_settings_preview
+
+        - name: Verify preview left the existing settings unchanged
+          sustainablelobster.legacy_community_windows.win_data_deduplication:
+            drive_letter: '{{ community_dedup_owned_letter }}'
+            settings: *dedup_settings
+          register: dedup_after_settings_preview
+
+        - name: Apply defaults and the documented minimum-size clamp
+          sustainablelobster.legacy_community_windows.win_data_deduplication:
+            drive_letter: '{{ community_dedup_owned_letter }}'
+            settings:
+              minimum_file_size: 0
+          register: dedup_defaults
+
+        - name: Repeat the clamped default settings
+          sustainablelobster.legacy_community_windows.win_data_deduplication:
+            drive_letter: '{{ community_dedup_owned_letter }}'
+            settings: {}
+          register: dedup_defaults_repeat
+
+        - name: Predict disablement without disabling the volume
+          sustainablelobster.legacy_community_windows.win_data_deduplication:
+            drive_letter: '{{ community_dedup_owned_letter }}'
+            state: absent
+          check_mode: true
+          register: dedup_disable_preview
+
+        - name: Require disablement preview to preserve enabled defaults
+          sustainablelobster.legacy_community_windows.win_data_deduplication:
+            drive_letter: '{{ community_dedup_owned_letter }}'
+            settings: {}
+          register: dedup_after_disable_preview
+
+        - name: Verify settings and disablement previews were read only
+          ansible.builtin.assert:
+            that:
+              - dedup_settings_preview.changed
+              - not dedup_after_settings_preview.changed
+              - dedup_defaults.changed
+              - not dedup_defaults_repeat.changed
+              - dedup_disable_preview.changed
+              - not dedup_after_disable_preview.changed
+      always:
+        - name: Disable optimization on the exact disposable volume
+          sustainablelobster.legacy_community_windows.win_data_deduplication:
+            drive_letter: '{{ community_dedup_owned_letter }}'
+            state: absent
+          register: dedup_disabled
+
+        - name: Verify repeated disablement is unchanged
+          sustainablelobster.legacy_community_windows.win_data_deduplication:
+            drive_letter: '{{ community_dedup_owned_letter }}'
+            state: absent
+          register: dedup_disabled_repeat
+
+        - name: Require idempotent cleanup
+          ansible.builtin.assert:
+            that:
+              - not dedup_disabled_repeat.changed

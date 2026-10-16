@@ -1,0 +1,265 @@
+---
+# Copyright 2026 sustainablelobster
+# SPDX-License-Identifier: GPL-3.0-or-later
+- name: Verify partition management on an explicitly owned disposable disk
+  hosts: legacy_community_windows_partition
+  gather_facts: false
+  tasks:
+    - name: Require explicit disposable-disk and unused-letter identities
+      ansible.builtin.assert:
+        that:
+          - community_partition_owned_disk is defined
+          - community_partition_owned_letter is match('^[A-Z]$')
+          - community_partition_new_letter is match('^[A-Z]$')
+          - community_partition_owned_letter != community_partition_new_letter
+
+    - name: Exercise only the owned initialized MBR disk
+      block:
+        - name: Predict creation of an NTFS-type partition
+          sustainablelobster.legacy_community_windows.win_partition:
+            disk_number: '{{ community_partition_owned_disk }}'
+            drive_letter: '{{ community_partition_owned_letter }}'
+            partition_size: 32 MiB
+            mbr_type: ifs
+          check_mode: true
+          register: partition_predicted
+
+        - name: Require preview not to have created partition one
+          sustainablelobster.legacy_community_windows.win_partition:
+            disk_number: '{{ community_partition_owned_disk }}'
+            partition_number: 1
+            state: absent
+          register: partition_after_preview
+
+        - name: Create only the explicitly owned partition
+          sustainablelobster.legacy_community_windows.win_partition:
+            disk_number: '{{ community_partition_owned_disk }}'
+            drive_letter: '{{ community_partition_owned_letter }}'
+            partition_size: 32 MiB
+            mbr_type: ifs
+          register: partition_created
+
+        - name: Repeat creation by its unique drive letter
+          sustainablelobster.legacy_community_windows.win_partition:
+            disk_number: '{{ community_partition_owned_disk }}'
+            drive_letter: '{{ community_partition_owned_letter }}'
+            partition_size: 32 MiB
+            mbr_type: ifs
+          register: partition_repeated
+
+        - name: Verify creation preview and idempotence
+          ansible.builtin.assert:
+            that:
+              - partition_predicted.changed
+              - not partition_after_preview.changed
+              - partition_created.changed
+              - not partition_repeated.changed
+
+        - name: Format only the new disposable partition
+          sustainablelobster.legacy_community_windows.win_format:
+            drive_letter: '{{ community_partition_owned_letter }}'
+            file_system: ntfs
+            new_label: '{{ community_partition_owned_label }}'
+
+        - name: Check the owned label before writing a sentinel
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - |
+                import ctypes,os,sys
+                assert sys.version_info >= (3,4,4)
+                k=ctypes.WinDLL('kernel32',use_last_error=True)
+                fn=k.GetVolumeInformationW
+                text=ctypes.c_wchar_p
+                uint=ctypes.c_uint32
+                fn.argtypes=[text,text,uint]+[ctypes.c_void_p]*3+[text,uint]
+                label=ctypes.create_unicode_buffer(261)
+                root=sys.argv[1]+':\\'
+                ok=fn(root,label,len(label),None,None,None,None,0)
+                assert ok,ctypes.get_last_error()
+                assert label.value==sys.argv[2],label.value
+                filename=os.path.join(root,'partition-sentinel.txt')
+                with open(filename,'w') as output:
+                  output.write('owned partition sentinel')
+              - '{{ community_partition_owned_letter }}'
+              - '{{ community_partition_owned_label }}'
+
+        - name: Grow the disposable partition and its file system
+          sustainablelobster.legacy_community_windows.win_partition:
+            disk_number: '{{ community_partition_owned_disk }}'
+            partition_number: 1
+            partition_size: 48 MiB
+          register: partition_grown
+
+        - name: Repeat the grown partition size
+          sustainablelobster.legacy_community_windows.win_partition:
+            disk_number: '{{ community_partition_owned_disk }}'
+            partition_number: 1
+            partition_size: 48 MiB
+          register: partition_grown_repeat
+
+        - name: Shrink back to the original disposable size
+          sustainablelobster.legacy_community_windows.win_partition:
+            disk_number: '{{ community_partition_owned_disk }}'
+            partition_number: 1
+            partition_size: 32 MiB
+          register: partition_shrunk
+
+        - name: Set the MBR active bit on the disposable partition
+          sustainablelobster.legacy_community_windows.win_partition:
+            disk_number: '{{ community_partition_owned_disk }}'
+            partition_number: 1
+            active: true
+          register: partition_active
+
+        - name: Repeat the MBR active bit
+          sustainablelobster.legacy_community_windows.win_partition:
+            disk_number: '{{ community_partition_owned_disk }}'
+            partition_number: 1
+            active: true
+          register: partition_active_repeat
+
+        - name: Restore the inactive MBR state
+          sustainablelobster.legacy_community_windows.win_partition:
+            disk_number: '{{ community_partition_owned_disk }}'
+            partition_number: 1
+            active: false
+
+        - name: Preview read-only state without changing the volume
+          sustainablelobster.legacy_community_windows.win_partition:
+            disk_number: '{{ community_partition_owned_disk }}'
+            partition_number: 1
+            read_only: true
+          check_mode: true
+          register: partition_readonly_preview
+
+        - name: Set read-only state on only the owned single-partition disk
+          sustainablelobster.legacy_community_windows.win_partition:
+            disk_number: '{{ community_partition_owned_disk }}'
+            partition_number: 1
+            read_only: true
+          register: partition_readonly
+
+        - name: Repeat read-only state
+          sustainablelobster.legacy_community_windows.win_partition:
+            disk_number: '{{ community_partition_owned_disk }}'
+            partition_number: 1
+            read_only: true
+          register: partition_readonly_repeat
+
+        - name: Restore writable state
+          sustainablelobster.legacy_community_windows.win_partition:
+            disk_number: '{{ community_partition_owned_disk }}'
+            partition_number: 1
+            read_only: false
+
+        - name: Hide only the disposable single-partition volume
+          sustainablelobster.legacy_community_windows.win_partition:
+            disk_number: '{{ community_partition_owned_disk }}'
+            partition_number: 1
+            hidden: true
+          register: partition_hidden
+
+        - name: Repeat hidden state
+          sustainablelobster.legacy_community_windows.win_partition:
+            disk_number: '{{ community_partition_owned_disk }}'
+            partition_number: 1
+            hidden: true
+          register: partition_hidden_repeat
+
+        - name: Restore visible state
+          sustainablelobster.legacy_community_windows.win_partition:
+            disk_number: '{{ community_partition_owned_disk }}'
+            partition_number: 1
+            hidden: false
+
+        - name: Take only the disposable partition offline
+          sustainablelobster.legacy_community_windows.win_partition:
+            disk_number: '{{ community_partition_owned_disk }}'
+            partition_number: 1
+            offline: true
+          register: partition_offline
+
+        - name: Repeat offline state
+          sustainablelobster.legacy_community_windows.win_partition:
+            disk_number: '{{ community_partition_owned_disk }}'
+            partition_number: 1
+            offline: true
+          register: partition_offline_repeat
+
+        - name: Restore online state
+          sustainablelobster.legacy_community_windows.win_partition:
+            disk_number: '{{ community_partition_owned_disk }}'
+            partition_number: 1
+            offline: false
+
+        - name: Change only the owned partition drive letter
+          sustainablelobster.legacy_community_windows.win_partition:
+            disk_number: '{{ community_partition_owned_disk }}'
+            partition_number: 1
+            drive_letter: '{{ community_partition_new_letter }}'
+          register: partition_letter
+
+        - name: Repeat the changed drive letter
+          sustainablelobster.legacy_community_windows.win_partition:
+            disk_number: '{{ community_partition_owned_disk }}'
+            partition_number: 1
+            drive_letter: '{{ community_partition_new_letter }}'
+          register: partition_letter_repeat
+
+        - name: Verify sentinel preservation and real file-system growth state
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - |
+                import os,shutil,sys
+                root=sys.argv[1]+':\\'
+                filename=os.path.join(root,'partition-sentinel.txt')
+                with open(filename) as source:
+                  assert source.read()=='owned partition sentinel'
+                total=shutil.disk_usage(root).total
+                assert 30*1024*1024 <= total <= 33*1024*1024
+                old=sys.argv[2]+':\\partition-sentinel.txt'
+                assert not os.path.exists(old)
+                print(shutil.disk_usage(root).total)
+              - '{{ community_partition_new_letter }}'
+              - '{{ community_partition_owned_letter }}'
+          changed_when: false
+
+        - name: Verify every demonstrated mutation and repeat result
+          ansible.builtin.assert:
+            that:
+              - partition_grown.changed
+              - not partition_grown_repeat.changed
+              - partition_shrunk.changed
+              - partition_active.changed
+              - not partition_active_repeat.changed
+              - partition_readonly_preview.changed
+              - partition_readonly.changed
+              - not partition_readonly_repeat.changed
+              - partition_hidden.changed
+              - not partition_hidden_repeat.changed
+              - partition_offline.changed
+              - not partition_offline_repeat.changed
+              - partition_letter.changed
+              - not partition_letter_repeat.changed
+      always:
+        - name: Delete exactly the owned disposable partition
+          sustainablelobster.legacy_community_windows.win_partition:
+            disk_number: '{{ community_partition_owned_disk }}'
+            partition_number: 1
+            state: absent
+
+        - name: Repeat owned partition deletion
+          sustainablelobster.legacy_community_windows.win_partition:
+            disk_number: '{{ community_partition_owned_disk }}'
+            partition_number: 1
+            state: absent
+          register: partition_absent_repeat
+
+        - name: Require idempotent deletion
+          ansible.builtin.assert:
+            that:
+              - not partition_absent_repeat.changed

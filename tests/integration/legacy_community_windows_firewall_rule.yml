@@ -1,0 +1,274 @@
+---
+# Copyright 2026 sustainablelobster
+# SPDX-License-Identifier: GPL-3.0-or-later
+- name: Verify owned native firewall exceptions without changing profile policy
+  hosts: legacy_windows
+  gather_facts: false
+  tasks:
+    - name: Allocate a unique owned exception name
+      sustainablelobster.legacy_windows.win_tempfile:
+        state: directory
+        prefix: legacy-community-firewall-
+      register: firewall_workspace
+
+    - name: Freeze a unique name and choose an unused local TCP port
+      sustainablelobster.legacy_windows.win_command:
+        argv:
+          - '{{ ansible_python_interpreter }}'
+          - '-c'
+          - >-
+            import json,socket,sys;
+            assert sys.version_info[:3] == (3,4,4);
+            s=socket.socket();s.bind(('127.0.0.1',0));
+            print(json.dumps({'port':s.getsockname()[1]}));s.close()
+      changed_when: false
+      register: firewall_port
+
+    - name: Freeze the exact public exception name
+      ansible.builtin.set_fact:
+        firewall_rule_name: >-
+          {{ firewall_workspace.path | ansible.builtin.win_basename }}
+
+    - name: Capture original native profile enablement
+      sustainablelobster.legacy_windows.win_command:
+        argv: [netsh.exe, firewall, show, opmode]
+      changed_when: false
+      register: original_profiles
+
+    - name: Exercise only the uniquely named loopback-scoped exception
+      vars:
+        firewall_rule_options: &firewall_rule_options
+          name: '{{ firewall_rule_name }}'
+          protocol: tcp
+          localport: '{{ (firewall_port.stdout | from_json).port }}'
+          remoteip: 127.0.0.1
+          direction: in
+          action: allow
+          enabled: false
+      block:
+        - name: Predict exception creation without adding it
+          sustainablelobster.legacy_community_windows.win_firewall_rule:
+            <<: *firewall_rule_options
+          check_mode: true
+          diff: true
+          register: predicted
+
+        - name: Require predicted creation to leave the exception absent
+          sustainablelobster.legacy_community_windows.win_firewall_rule:
+            name: '{{ firewall_rule_name }}'
+            state: absent
+          register: after_prediction
+
+        - name: Create the disabled loopback-only TCP exception
+          sustainablelobster.legacy_community_windows.win_firewall_rule:
+            <<: *firewall_rule_options
+          register: created
+
+        - name: Repeat the exact native exception options
+          sustainablelobster.legacy_community_windows.win_firewall_rule:
+            <<: *firewall_rule_options
+          register: repeated
+
+        - name: Enable the owned loopback-scoped exception
+          sustainablelobster.legacy_community_windows.win_firewall_rule:
+            name: '{{ firewall_rule_name }}'
+            enabled: true
+          register: enabled
+
+        - name: Repeat enabled state without changing other filters
+          sustainablelobster.legacy_community_windows.win_firewall_rule:
+            name: '{{ firewall_rule_name }}'
+            enabled: true
+          register: enable_repeated
+
+        - name: Query the independent advanced firewall command
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - netsh.exe
+              - advfirewall
+              - firewall
+              - show
+              - rule
+              - 'name={{ firewall_rule_name }}'
+          changed_when: false
+          failed_when: false
+          register: advanced_query
+
+        - name: Query classic exceptions when the advanced command is absent
+          sustainablelobster.legacy_windows.win_command:
+            argv: [netsh.exe, firewall, show, portopening]
+          changed_when: false
+          when: advanced_query.rc != 0
+          register: classic_query
+
+        - name: Require native prediction idempotence and independent visibility
+          ansible.builtin.assert:
+            that:
+              - predicted is changed
+              - after_prediction is not changed
+              - created is changed
+              - repeated is not changed
+              - enabled is changed
+              - enable_repeated is not changed
+              - >-
+                firewall_rule_name in advanced_query.stdout
+                if advanced_query.rc == 0
+                else firewall_rule_name in classic_query.stdout
+
+        - name: Stage an owned executable image for an application exception
+          sustainablelobster.legacy_windows.win_copy:
+            src: '{{ ansible_python_interpreter }}'
+            dest: '{{ firewall_workspace.path }}\firewall-application.exe'
+            remote_src: true
+
+        - name: Verify advanced-only changes when the native API exposes them
+          when: advanced_query.rc == 0
+          block:
+            - name: Convert the owned TCP rule to a loopback ICMP block rule
+              sustainablelobster.legacy_community_windows.win_firewall_rule:
+                name: '{{ firewall_rule_name }}'
+                protocol: icmpv4
+                localport: any
+                remoteport: any
+                icmp_type_code: ['8:*']
+                direction: out
+                action: block
+                description: Café 雪
+                group: '{{ firewall_rule_name }}-group'
+                profiles: [domain]
+              register: converted
+
+            - name: Repeat the advanced-only native configuration
+              sustainablelobster.legacy_community_windows.win_firewall_rule:
+                name: '{{ firewall_rule_name }}'
+                protocol: icmpv4
+                localport: any
+                remoteport: any
+                icmp_type_code: ['8:*']
+                direction: out
+                action: block
+                description: Café 雪
+                group: '{{ firewall_rule_name }}-group'
+                profiles: [domain]
+              register: converted_repeated
+
+            - name: Disable only the owned native rule group
+              sustainablelobster.legacy_community_windows.win_firewall_rule:
+                group: '{{ firewall_rule_name }}-group'
+                enabled: false
+              register: group_updated
+
+            - name: Repeat group selection without a display name
+              sustainablelobster.legacy_community_windows.win_firewall_rule:
+                group: '{{ firewall_rule_name }}-group'
+                enabled: false
+              register: group_repeated
+
+            - name: Query the independent native protocol conversion
+              sustainablelobster.legacy_windows.win_command:
+                argv:
+                  - netsh.exe
+                  - advfirewall
+                  - firewall
+                  - show
+                  - rule
+                  - 'name={{ firewall_rule_name }}'
+              changed_when: false
+              register: converted_native
+
+            - name: Require native advanced transition and group idempotence
+              ansible.builtin.assert:
+                that:
+                  - converted is changed
+                  - converted_repeated is not changed
+                  - group_updated is changed
+                  - group_repeated is not changed
+                  - "'ICMPv4' in converted_native.stdout"
+
+        - name: Create a disabled loopback-only application exception
+          sustainablelobster.legacy_community_windows.win_firewall_rule:
+            name: '{{ firewall_rule_name }}-program'
+            program: '{{ firewall_workspace.path }}\firewall-application.exe'
+            remoteip: 127.0.0.1
+            enabled: false
+          register: application_created
+
+        - name: Repeat the native application exception without changes
+          sustainablelobster.legacy_community_windows.win_firewall_rule:
+            name: '{{ firewall_rule_name }}-program'
+            program: '{{ firewall_workspace.path }}\firewall-application.exe'
+            remoteip: 127.0.0.1
+            enabled: false
+          register: application_repeated
+
+        - name: Enable only the owned application exception
+          sustainablelobster.legacy_community_windows.win_firewall_rule:
+            name: '{{ firewall_rule_name }}-program'
+            enabled: true
+          register: application_enabled
+
+        - name: Read the advanced native application rule when available
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - netsh.exe
+              - advfirewall
+              - firewall
+              - show
+              - rule
+              - 'name={{ firewall_rule_name }}-program'
+          changed_when: false
+          when: advanced_query.rc == 0
+          register: application_advanced_query
+
+        - name: Read classic authorized applications when advanced CLI is absent
+          sustainablelobster.legacy_windows.win_command:
+            argv: [netsh.exe, firewall, show, allowedprogram]
+          changed_when: false
+          when: advanced_query.rc != 0
+          register: application_classic_query
+
+        - name: Require native application management and independent visibility
+          ansible.builtin.assert:
+            that:
+              - application_created is changed
+              - application_repeated is not changed
+              - application_enabled is changed
+              - >-
+                (firewall_rule_name ~ '-program')
+                in application_advanced_query.stdout
+                if advanced_query.rc == 0 else
+                (firewall_rule_name ~ '-program')
+                in application_classic_query.stdout
+      always:
+        - name: Remove only the owned application exception
+          sustainablelobster.legacy_community_windows.win_firewall_rule:
+            name: '{{ firewall_rule_name }}-program'
+            state: absent
+
+        - name: Remove only the owned firewall exception
+          sustainablelobster.legacy_community_windows.win_firewall_rule:
+            name: '{{ firewall_rule_name }}'
+            state: absent
+
+        - name: Require idempotent exception removal
+          sustainablelobster.legacy_community_windows.win_firewall_rule:
+            name: '{{ firewall_rule_name }}'
+            state: absent
+          register: final_absence
+
+        - name: Read final native profile enablement
+          sustainablelobster.legacy_windows.win_command:
+            argv: [netsh.exe, firewall, show, opmode]
+          changed_when: false
+          register: final_profiles
+
+        - name: Require exception cleanup and unchanged profile policy
+          ansible.builtin.assert:
+            that:
+              - final_absence is not changed
+              - final_profiles.stdout == original_profiles.stdout
+
+        - name: Remove the owned naming workspace
+          sustainablelobster.legacy_windows.win_file:
+            path: '{{ firewall_workspace.path }}'
+            state: absent

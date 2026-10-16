@@ -1,0 +1,250 @@
+---
+# Copyright 2026 sustainablelobster
+# SPDX-License-Identifier: GPL-3.0-or-later
+- name: Verify real native task registration execution and recovery
+  hosts: legacy_windows
+  gather_facts: false
+  tasks:
+    - name: Allocate an isolated scheduled task workspace
+      sustainablelobster.legacy_windows.win_tempfile:
+        state: directory
+        prefix: legacy-community-task-
+      register: task_workspace
+
+    - name: Freeze unique task name and executable marker command
+      ansible.builtin.set_fact:
+        scheduled_task_name: >-
+          {{ task_workspace.path | ansible.builtin.win_basename }}
+        scheduled_task_marker: '{{ task_workspace.path }}\marker.txt'
+        scheduled_task_script: >-
+          import sys;
+          assert sys.version_info[:3] == (3,4,4);
+          open(sys.argv[1],'wb').write(b'native-task-marker')
+
+    - name: Exercise the installed scheduler without leaving a task behind
+      vars:
+        scheduled_task_options: &scheduled_task_options
+          name: '{{ scheduled_task_name }}'
+          path: '\'
+          actions:
+            - path: '{{ ansible_python_interpreter }}'
+              arguments: >-
+                {{ ['-c', scheduled_task_script, scheduled_task_marker]
+                    | sustainablelobster.legacy_windows.quote }}
+              working_directory: '{{ task_workspace.path }}'
+          triggers:
+            - type: daily
+              start_boundary: '2030-01-01T09:00:00'
+              days_interval: 1
+          username: SYSTEM
+          logon_type: service_account
+          enabled: true
+          execution_time_limit: PT5M
+          description: Café 雪
+      block:
+        - name: Predict task creation without registration
+          sustainablelobster.legacy_community_windows.win_scheduled_task:
+            <<: *scheduled_task_options
+          check_mode: true
+          register: predicted
+
+        - name: Inspect task existence after prediction
+          sustainablelobster.legacy_community_windows.win_scheduled_task_stat:
+            name: '{{ scheduled_task_name }}'
+          register: before_create
+
+        - name: Create a native executable task
+          sustainablelobster.legacy_community_windows.win_scheduled_task:
+            <<: *scheduled_task_options
+          register: created
+
+        - name: Repeat the same native task definition
+          sustainablelobster.legacy_community_windows.win_scheduled_task:
+            <<: *scheduled_task_options
+          register: repeated
+
+        - name: Read native task definition and folder information
+          sustainablelobster.legacy_community_windows.win_scheduled_task_stat:
+            name: '{{ scheduled_task_name }}'
+          register: definition
+
+        - name: Start the registered task using the independent Windows command
+          sustainablelobster.legacy_windows.win_command:
+            argv: [schtasks.exe, /Run, /TN, '{{ scheduled_task_name }}']
+          register: launched
+          failed_when: false
+
+        - name: Try the explicit native filename when the CLI rejects its name
+          sustainablelobster.legacy_windows.win_command:
+            argv: [schtasks.exe, /Run, /TN, '{{ scheduled_task_name }}.job']
+          when: launched.rc != 0
+          register: launched_filename
+          failed_when: false
+
+        - name: Start through an independent SDK fixture if the CLI rejects both
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - '-'
+              - '{{ scheduled_task_name }}'
+            stdin: >-
+              {{ lookup('ansible.builtin.file',
+                 'fixtures/community_scheduled_task_run.py') }}
+          when: launched.rc != 0 and launched_filename.rc != 0
+          register: launched_native
+
+        - name: Require an independent launcher to accept the exact native task
+          ansible.builtin.assert:
+            that:
+              - >-
+                launched.rc == 0 or launched_filename.rc == 0
+                or launched_native.rc == 0
+              - >-
+                launched_native is skipped
+                or (launched_native.stdout | from_json).started
+
+        - name: Wait for execution to produce the owned marker
+          sustainablelobster.legacy_windows.win_wait_for:
+            path: '{{ scheduled_task_marker }}'
+            state: present
+            timeout: 30
+
+        - name: Read the actual task execution marker
+          sustainablelobster.legacy_windows.slurp:
+            src: '{{ scheduled_task_marker }}'
+          register: marker
+
+        - name: Change only the task description
+          sustainablelobster.legacy_community_windows.win_scheduled_task:
+            name: '{{ scheduled_task_name }}'
+            description: updated description
+          register: updated
+
+        - name: Repeat the changed description without replacing actions
+          sustainablelobster.legacy_community_windows.win_scheduled_task:
+            name: '{{ scheduled_task_name }}'
+            description: updated description
+          register: update_repeated
+
+        - name: Apply case-only changes to description and command literals
+          sustainablelobster.legacy_community_windows.win_scheduled_task:
+            name: '{{ scheduled_task_name }}'
+            description: UPDATED DESCRIPTION
+            actions: &case_changed_actions
+              - path: '{{ ansible_python_interpreter }}'
+                arguments: >-
+                  {{ ['-c', scheduled_task_script | replace(
+                        'native-task-marker', 'NATIVE-TASK-MARKER'),
+                      scheduled_task_marker]
+                      | sustainablelobster.legacy_windows.quote }}
+          register: case_updated
+
+        - name: Repeat the case-sensitive task definition
+          sustainablelobster.legacy_community_windows.win_scheduled_task:
+            name: '{{ scheduled_task_name }}'
+            description: UPDATED DESCRIPTION
+            actions: *case_changed_actions
+          register: case_repeated
+
+        - name: Predict task deletion without removing it
+          sustainablelobster.legacy_community_windows.win_scheduled_task:
+            name: '{{ scheduled_task_name }}'
+            state: absent
+          check_mode: true
+          register: predicted_delete
+
+        - name: Confirm the predicted deletion preserved the task
+          sustainablelobster.legacy_community_windows.win_scheduled_task_stat:
+            name: '{{ scheduled_task_name }}'
+          register: after_prediction
+
+        - name: Require native task behavior and actual Python 3.4.4 execution
+          ansible.builtin.assert:
+            that:
+              - predicted is changed
+              - not before_create.task_exists
+              - created is changed
+              - repeated is not changed
+              - definition.task_exists
+              - definition.folder_exists
+              - scheduled_task_name in definition.folder_task_names
+              - definition.actions | length == 1
+              - definition.actions[0].type == 'TASK_ACTION_EXEC'
+              - definition.registration_info.description == 'Café 雪'
+              - definition.principal.logon_type == 'TASK_LOGON_SERVICE_ACCOUNT'
+              - definition.triggers[0].type == 'TASK_TRIGGER_DAILY'
+              - (marker.content | b64decode) == 'native-task-marker'
+              - updated is changed
+              - update_repeated is not changed
+              - case_updated is changed
+              - case_repeated is not changed
+              - predicted_delete is changed
+              - after_prediction.task_exists
+              - >-
+                after_prediction.registration_info.description ==
+                'UPDATED DESCRIPTION'
+              - "'NATIVE-TASK-MARKER' in after_prediction.actions[0].arguments"
+
+        - name: Create a public task whose name ends with job
+          sustainablelobster.legacy_community_windows.win_scheduled_task:
+            <<: *scheduled_task_options
+            name: '{{ scheduled_task_name }}.job'
+          register: job_created
+
+        - name: Repeat the public job-ending name without altering it
+          sustainablelobster.legacy_community_windows.win_scheduled_task:
+            <<: *scheduled_task_options
+            name: '{{ scheduled_task_name }}.job'
+          register: job_repeated
+
+        - name: Inspect the exact public job-ending name
+          sustainablelobster.legacy_community_windows.win_scheduled_task_stat:
+            name: '{{ scheduled_task_name }}.job'
+          register: job_definition
+
+        - name: Remove the task with its full public job-ending name
+          sustainablelobster.legacy_community_windows.win_scheduled_task:
+            name: '{{ scheduled_task_name }}.job'
+            state: absent
+          register: job_removed
+
+        - name: Inspect the removed job-ending public task
+          sustainablelobster.legacy_community_windows.win_scheduled_task_stat:
+            name: '{{ scheduled_task_name }}.job'
+          register: job_final
+
+        - name: Require public job-ending name preservation and cleanup
+          ansible.builtin.assert:
+            that:
+              - job_created is changed
+              - job_repeated is not changed
+              - job_definition.task_exists
+              - >-
+                (scheduled_task_name ~ '.job')
+                in job_definition.folder_task_names
+              - job_removed is changed
+              - not job_final.task_exists
+      always:
+        - name: Remove the owned job-ending task if the lifecycle failed
+          sustainablelobster.legacy_community_windows.win_scheduled_task:
+            name: '{{ scheduled_task_name }}.job'
+            state: absent
+
+        - name: Remove the owned scheduled task
+          sustainablelobster.legacy_community_windows.win_scheduled_task:
+            name: '{{ scheduled_task_name }}'
+            state: absent
+
+        - name: Inspect removed task state
+          sustainablelobster.legacy_community_windows.win_scheduled_task_stat:
+            name: '{{ scheduled_task_name }}'
+          register: final_task
+
+        - name: Require task cleanup
+          ansible.builtin.assert:
+            that: not final_task.task_exists
+
+        - name: Remove the execution workspace and marker
+          sustainablelobster.legacy_windows.win_file:
+            path: '{{ task_workspace.path }}'
+            state: absent

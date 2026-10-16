@@ -6,6 +6,7 @@
 
 import codecs
 import datetime
+import os
 import re
 import subprocess
 import sys
@@ -383,6 +384,77 @@ def test_nonzero_exit_keeps_output_and_changed_status(helper: ModuleType) -> Non
     assert result["rc"] == 23
     assert result["stdout"] == "before failure\n"
     assert result["msg"] == "non-zero return code"
+
+
+@pytest.mark.parametrize("communication_fails", [False, True])
+def test_opted_in_pipe_writer_remains_live_and_is_closed_after_capture(
+    helper: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    communication_fails: bool,
+) -> None:
+    reader, writer = os.pipe()
+    stdin = os.fdopen(writer, "wb")
+    retained: list[int] = []
+    duplicate = os.dup
+
+    def _retain(descriptor: int) -> int:
+        retained.append(duplicate(descriptor))
+        return retained[-1]
+
+    def _communicate(_input: bytes | None) -> tuple[bytes, bytes]:
+        stdin.close()
+        assert len(retained) == 1
+        os.fstat(retained[0])
+        if communication_fails:
+            raise OSError("independent capture failure")
+        return b"captured child output", b"vendor diagnostics"
+
+    child = SimpleNamespace(stdin=stdin, communicate=_communicate, returncode=23)
+    monkeypatch.setattr(helper.os, "dup", _retain)
+    monkeypatch.setattr(helper, "_start_process", lambda *_arguments: child)
+    try:
+        parameters = {
+            "chdir": None,
+            "stdin": None,
+            "output_encoding_override": None,
+            "keep_stdin_open": True,
+        }
+        if communication_fails:
+            with pytest.raises(OSError, match="independent capture failure"):
+                helper.run_command("tool.exe", "tool.exe child", parameters)
+        else:
+            result = helper.run_command("tool.exe", "tool.exe child", parameters)
+            assert result["stdout"] == "captured child output"
+            assert result["stderr"] == "vendor diagnostics"
+            assert result["rc"] == 23
+        assert len(retained) == 1
+        with pytest.raises(OSError):
+            os.fstat(retained[0])
+    finally:
+        stdin.close()
+        os.close(reader)
+
+
+def test_ordinary_command_does_not_retain_an_input_pipe(
+    helper: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def unexpected_duplicate(_descriptor: int) -> None:
+        pytest.fail("Ordinary commands must retain their existing EOF behavior")
+
+    child = SimpleNamespace(
+        stdin=None,
+        communicate=lambda _input: (b"ordinary output", b""),
+        returncode=0,
+    )
+    monkeypatch.setattr(helper.os, "dup", unexpected_duplicate)
+    monkeypatch.setattr(helper, "_start_process", lambda *_arguments: child)
+    result = helper.run_command(
+        "tool.exe",
+        "tool.exe child",
+        {"chdir": None, "stdin": None, "output_encoding_override": None},
+    )
+    assert result["stdout"] == "ordinary output"
+    assert result["rc"] == 0
 
 
 def test_launch_failure_uses_windows_error_code(

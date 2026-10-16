@@ -1,0 +1,70 @@
+---
+# Copyright 2026 sustainablelobster
+# SPDX-License-Identifier: GPL-3.0-or-later
+- name: Exercise native volume analysis and optimization on an owned test volume
+  hosts: legacy_community_windows_storage
+  gather_facts: false
+  tasks:
+    - name: Require a runner-owned disposable volume
+      ansible.builtin.assert:
+        that:
+          - community_storage_owned_drive is defined
+          - community_storage_owned_sentinel is defined
+
+    - name: Read the owned volume before native optimization
+      sustainablelobster.legacy_windows.win_command:
+        argv:
+          - '{{ ansible_python_interpreter }}'
+          - -c
+          - >-
+            import os,sys;assert sys.version_info[:3] == (3,4,4);
+            print(open(os.path.join(sys.argv[1],sys.argv[2]),'r').read())
+          - '{{ community_storage_owned_drive }}'
+          - '{{ community_storage_owned_sentinel }}'
+      changed_when: false
+      register: community_defrag_before
+
+    - name: Analyze only the disposable volume in check mode
+      sustainablelobster.legacy_community_windows.win_defrag:
+        include_volumes: ['{{ community_storage_owned_drive }}']
+      check_mode: true
+      register: community_defrag_analysis
+
+    - name: Optimize only the disposable volume
+      sustainablelobster.legacy_community_windows.win_defrag:
+        include_volumes: ['{{ community_storage_owned_drive }}']
+      register: community_defrag_actual
+
+    - name: Analyze the same volume again at normal priority
+      sustainablelobster.legacy_community_windows.win_defrag:
+        include_volumes: ['{{ community_storage_owned_drive }}']
+        priority: normal
+      check_mode: true
+      register: community_defrag_repeated
+
+    - name: Independently verify the volume contents remain intact
+      sustainablelobster.legacy_windows.win_command:
+        argv:
+          - '{{ ansible_python_interpreter }}'
+          - -c
+          - >-
+            import os,sys;assert sys.version_info[:3] == (3,4,4);
+            print(open(os.path.join(sys.argv[1],sys.argv[2]),'r').read())
+          - '{{ community_storage_owned_drive }}'
+          - '{{ community_storage_owned_sentinel }}'
+      changed_when: false
+      register: community_defrag_after
+
+    - name: Require native success and the released always-changed contract
+      ansible.builtin.assert:
+        that:
+          - community_defrag_before.stdout | trim == 'owned image fixture'
+          - community_defrag_after.stdout == community_defrag_before.stdout
+          - community_defrag_analysis.rc == 0
+          - community_defrag_actual.rc == 0
+          - community_defrag_repeated.rc == 0
+          - community_defrag_analysis.changed
+          - community_defrag_actual.changed
+          - community_defrag_repeated.changed
+          - "'/A' in community_defrag_analysis.cmd"
+          - "'/A' not in community_defrag_actual.cmd"

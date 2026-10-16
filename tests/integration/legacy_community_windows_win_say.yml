@@ -1,0 +1,71 @@
+---
+# Copyright 2026 sustainablelobster
+# SPDX-License-Identifier: GPL-3.0-or-later
+- name: Verify installed native speech and WAV playback
+  hosts: legacy_community_windows_speech
+  gather_facts: false
+  tasks:
+    - name: Allocate owned text and sound fixtures
+      sustainablelobster.legacy_windows.win_tempfile:
+        state: directory
+        prefix: legacy-community-speech-
+      register: community_speech_directory
+
+    - name: Exercise the actual engine and always remove fixtures
+      block:
+        - name: Create Unicode text and a short silent WAV with Python 3.4.4
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - >-
+                import os,sys,wave;
+                assert sys.version_info[:3] == (3,4,4);
+                open(os.path.join(sys.argv[1],'words.txt'),'wb').write(
+                'Collection speech test'.encode('utf-16'));
+                sound=wave.open(os.path.join(sys.argv[1],'sound.wav'),'wb');
+                sound.setparams((1,1,8000,0,'NONE','not compressed'));
+                sound.writeframes(bytes([128])*400); sound.close()
+              - '{{ community_speech_directory.path }}'
+
+        - name: Preview voice selection without producing audio
+          sustainablelobster.legacy_community_windows.win_say:
+            msg: Collection speech test
+          check_mode: true
+          register: community_speech_preview
+
+        - name: Preview a missing voice and observe the installed fallback
+          sustainablelobster.legacy_community_windows.win_say:
+            msg: Collection speech test
+            voice: UnavailableOwnedTestVoice20261015
+          check_mode: true
+          register: community_speech_fallback
+
+        - name: Speak the file with the selected voice and both WAV sounds
+          sustainablelobster.legacy_community_windows.win_say:
+            msg_file: '{{ community_speech_directory.path }}\words.txt'
+            voice: '{{ community_speech_preview.voice }}'
+            speech_speed: 4
+            start_sound_path: '{{ community_speech_directory.path }}\sound.wav'
+            end_sound_path: '{{ community_speech_directory.path }}\sound.wav'
+          register: community_speech_actual
+
+        - name: Require actual engine completion and the released result shape
+          ansible.builtin.assert:
+            that:
+              - not community_speech_preview.changed
+              - community_speech_preview.voice | length > 0
+              - community_speech_fallback.voice_info | length > 0
+              - >-
+                community_speech_fallback.voice ==
+                community_speech_preview.voice
+              - not community_speech_actual.changed
+              - community_speech_actual.voice == community_speech_preview.voice
+              - >-
+                community_speech_actual.message_text | trim ==
+                'Collection speech test'
+      always:
+        - name: Remove the owned text and WAV fixtures
+          sustainablelobster.legacy_windows.win_file:
+            path: '{{ community_speech_directory.path }}'
+            state: absent

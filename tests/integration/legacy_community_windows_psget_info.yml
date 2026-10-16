@@ -1,0 +1,64 @@
+---
+# Copyright 2026 sustainablelobster
+# SPDX-License-Identifier: GPL-3.0-or-later
+- name: Verify information queries against the installed PowerShellGet engine
+  hosts: legacy_community_windows_psget
+  gather_facts: false
+  tasks:
+    - name: Identify the actual target interpreter
+      sustainablelobster.legacy_windows.win_command:
+        argv: ['{{ ansible_python_interpreter }}', -c,
+               'import json,sys; print(json.dumps(list(sys.version_info[:3])))']
+      register: community_psget_interpreter
+      changed_when: false
+
+    - name: Require actual minimum-interpreter execution
+      ansible.builtin.assert:
+        that: community_psget_interpreter.stdout | from_json == [3, 4, 4]
+
+    - name: Query the installed repository selection in check mode
+      sustainablelobster.legacy_community_windows.win_psrepository_info:
+        name: '*'
+      check_mode: true
+      register: community_psget_repositories_preview
+
+    - name: Repeat the read-only query in normal mode
+      sustainablelobster.legacy_community_windows.win_psrepository_info:
+        name: '*'
+      register: community_psget_repositories
+
+    - name: Query actual locally available PowerShellGet module metadata
+      sustainablelobster.legacy_community_windows.win_psmodule_info:
+        name: PowerShellGet
+        include_properties: [name, version, module_base]
+        skip_module_repository_info: true
+      register: community_psget_modules
+
+    - name: Query installed script metadata without modifying the selection
+      sustainablelobster.legacy_community_windows.win_psscript_info:
+        name: '{{ community_psget_script_name | default("*") }}'
+      register: community_psget_scripts
+
+    - name: Verify no query reports changes and real module metadata is present
+      ansible.builtin.assert:
+        that:
+          - not community_psget_repositories_preview.changed
+          - not community_psget_repositories.changed
+          - not community_psget_modules.changed
+          - not community_psget_scripts.changed
+          - >-
+            community_psget_repositories_preview.repositories ==
+            community_psget_repositories.repositories
+          - community_psget_modules.modules | length > 0
+          - community_psget_modules.modules[0].name == 'PowerShellGet'
+          - community_psget_modules.modules[0].version is string
+          - community_psget_modules.modules[0].module_base is string
+          - community_psget_scripts.scripts is sequence
+
+    - name: Require nonempty script metadata when the runner supplied a fixture
+      ansible.builtin.assert:
+        that:
+          - community_psget_scripts.scripts | length > 0
+          - community_psget_scripts.scripts[0].name is string
+          - community_psget_scripts.scripts[0].version is string
+      when: community_psget_script_name is defined

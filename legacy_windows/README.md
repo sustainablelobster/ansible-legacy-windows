@@ -25,7 +25,7 @@ ansible-galaxy collection install sustainablelobster.legacy_windows:1.1.0
 Or install a locally built or downloaded collection archive:
 
 ```console
-ansible-galaxy collection install ./sustainablelobster-legacy_windows-1.1.0.tar.gz --offline --no-deps
+ansible-galaxy collection install ./sustainablelobster-legacy_windows-1.2.0.tar.gz --offline --no-deps
 ```
 
 To build an archive from this checkout, see the repository's

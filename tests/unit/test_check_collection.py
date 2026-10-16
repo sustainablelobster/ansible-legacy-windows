@@ -194,7 +194,9 @@ def test_ad_archive_rejects_an_altered_upstream_license(
         checker._inspect_archive(artifact, plugins, collection="legacy_ad")
 
 
-@pytest.mark.parametrize("sibling", ["legacy_ad", "legacy_windows"])
+@pytest.mark.parametrize(
+    "sibling", ["legacy_ad", "legacy_windows", "legacy_community_windows"]
+)
 def test_collection_archive_rejects_a_nested_sibling_collection(
     tmp_path: Path, plugins: dict[str, bytes], sibling: str
 ) -> None:

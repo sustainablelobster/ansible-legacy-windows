@@ -155,8 +155,18 @@ def _stdin_bytes(text):
         return normalized.encode("utf-8")
 
 
-def _complete_process(process, stdin, encoding, command_line, started):
-    stdout, stderr = process.communicate(stdin)
+# Keep the existing command/result inputs explicit beside the opt-in pipe lifetime.
+def _complete_process(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+    process, stdin, encoding, command_line, started, keep_stdin_open=False
+):
+    # PsExec stops forwarding child output when its input pipe reaches EOF.
+    # Only that caller retains an extra writer while communicate closes its own.
+    retained_stdin = os.dup(process.stdin.fileno()) if keep_stdin_open else None
+    try:
+        stdout, stderr = process.communicate(stdin)
+    finally:
+        if retained_stdin is not None:
+            os.close(retained_stdin)
     ended = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
     elapsed = ended - started
     result = {
@@ -186,7 +196,8 @@ def run_command(executable, command_line, parameters):
     :type executable: str or None
     :param command_line: Complete Windows command line.
     :type command_line: str
-    :param parameters: Converted chdir, stdin, and output_encoding_override values.
+    :param parameters: Converted chdir, stdin, and output_encoding_override values;
+        optional internal keep_stdin_open retains a writer until the child exits.
     :type parameters: dict
     :returns: An Ansible result with streams and timings, or a launch failure.
     :rtype: dict
@@ -205,4 +216,11 @@ def run_command(executable, command_line, parameters):
             "rc": getattr(error, "winerror", None) or 2,
             "msg": "Failed to run: '{0}': {1}".format(command_line, error),
         }
-    return _complete_process(process, stdin, encoding, command_line, started)
+    return _complete_process(
+        process,
+        stdin,
+        encoding,
+        command_line,
+        started,
+        keep_stdin_open=parameters.get("keep_stdin_open", False),
+    )

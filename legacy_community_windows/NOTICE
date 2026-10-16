@@ -1,0 +1,16 @@
+sustainablelobster.legacy_community_windows
+
+Project contributions are licensed under GNU GPL version 3 or later.
+Copyright (c) 2026 sustainablelobster.
+
+The reference release is community.windows 3.3.0, tag 3.3.0, commit
+20464e72482c5d4c75af13a2fd62966339cf5ffc:
+https://github.com/ansible-collections/community.windows/tree/3.3.0
+
+Incorporated upstream module documentation, controller modules and lookup
+plugins retain their original copyright and author notices.
+The upstream GPL license is included verbatim in
+LICENSES/community-windows-GPL-3.0-or-later.txt.
+
+Development tools and separately installed controller libraries are not
+distributed as collection files.

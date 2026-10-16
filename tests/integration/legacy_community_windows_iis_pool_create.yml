@@ -1,0 +1,186 @@
+---
+# Copyright 2026 sustainablelobster
+# SPDX-License-Identifier: GPL-3.0-or-later
+- name: Verify first-create IIS runtime persistence through native AppCmd reads
+  hosts: legacy_community_windows_iis
+  gather_facts: false
+  vars:
+    community_iis_pool_cases:
+      - suffix: present-empty
+        state: present
+        attributes: {managedPipelineMode: Classic, managedRuntimeVersion: ''}
+      - suffix: started-empty
+        state: started
+        attributes: {managedPipelineMode: Classic, managedRuntimeVersion: ''}
+      - suffix: present-version
+        state: present
+        attributes: {managedPipelineMode: Classic, managedRuntimeVersion: v2.0}
+      - suffix: started-version
+        state: started
+        attributes: {managedPipelineMode: Classic, managedRuntimeVersion: v2.0}
+      - suffix: present-omitted
+        state: present
+      - suffix: started-omitted
+        state: started
+  tasks:
+    - name: Allocate a unique fixture directory and owned pool prefix
+      sustainablelobster.legacy_windows.win_tempfile:
+        state: directory
+        prefix: legacy-community-iis-pool-
+      register: community_iis_pool_directory
+
+    - name: Derive owned pool names without touching existing configuration
+      ansible.builtin.set_fact:
+        community_iis_pool_prefix: >-
+          {{ community_iis_pool_directory.path | regex_replace('^.*\\', '') }}-
+
+    - name: Exercise independent native reads before and after the first repeat
+      block:
+        - name: Identify the actual target interpreter
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - import json,sys; print(json.dumps(list(sys.version_info[:3])))
+          register: community_iis_pool_interpreter
+          changed_when: false
+
+        - name: Require actual minimum-interpreter execution
+          ansible.builtin.assert:
+            that: community_iis_pool_interpreter.stdout | from_json == [3, 4, 4]
+
+        - name: Stage the independent native configuration reader
+          sustainablelobster.legacy_windows.win_copy:
+            src: fixtures/community_iis_pool_read.py
+            dest: '{{ community_iis_pool_directory.path }}\pool_read.py'
+
+        - name: Predict each first creation without committing configuration
+          sustainablelobster.legacy_community_windows.win_iis_webapppool:
+            name: '{{ community_iis_pool_prefix }}{{ item.suffix }}'
+            state: '{{ item.state }}'
+            attributes: '{{ item.attributes | default(omit) }}'
+          loop: '{{ community_iis_pool_cases }}'
+          check_mode: true
+          register: community_iis_pool_previews
+
+        - name: Read native pool configuration after the previews
+          sustainablelobster.legacy_windows.win_command:
+            argv: &pool_native_read
+              - '{{ ansible_python_interpreter }}'
+              - '{{ community_iis_pool_directory.path }}\pool_read.py'
+              - '{{ community_iis_pool_prefix }}'
+          register: community_iis_pool_after_preview
+          changed_when: false
+
+        - name: Require predictions without creating a pool
+          ansible.builtin.assert:
+            that:
+              - >-
+                community_iis_pool_previews.results
+                | rejectattr('changed') | list | length == 0
+              - community_iis_pool_after_preview.stdout | from_json == {}
+
+        - name: Create each pool with its requested runtime or inherited default
+          sustainablelobster.legacy_community_windows.win_iis_webapppool:
+            name: '{{ community_iis_pool_prefix }}{{ item.suffix }}'
+            state: '{{ item.state }}'
+            attributes: '{{ item.attributes | default(omit) }}'
+          loop: '{{ community_iis_pool_cases }}'
+          register: community_iis_pool_created
+
+        - name: Read effective and explicit native configuration BEFORE repeats
+          sustainablelobster.legacy_windows.win_command:
+            argv: *pool_native_read
+          register: community_iis_pool_first_native
+          changed_when: false
+
+        - name: Require first creation to persist runtimes and version controls
+          ansible.builtin.assert:
+            that:
+              - >-
+                community_iis_pool_created.results
+                | rejectattr('changed') | list | length == 0
+              - native | length == community_iis_pool_cases | length
+              - native['present-empty'].runtime == ''
+              - native['started-empty'].runtime == ''
+              - native['present-empty'].explicit_runtime == ''
+              - native['started-empty'].explicit_runtime == ''
+              - native['present-empty'].pipeline == 'Classic'
+              - native['started-empty'].pipeline == 'Classic'
+              - native['present-version'].runtime == 'v2.0'
+              - native['started-version'].runtime == 'v2.0'
+              - native['present-omitted'].explicit_runtime is none
+              - native['started-omitted'].explicit_runtime is none
+          vars:
+            native: '{{ community_iis_pool_first_native.stdout | from_json }}'
+
+        - name: Require first-create return information to match native runtime
+          ansible.builtin.assert:
+            that:
+              - >-
+                item.info.attributes.managedRuntimeVersion
+                == native[item.item.suffix].runtime
+          loop: '{{ community_iis_pool_created.results }}'
+          loop_control:
+            label: '{{ item.item.suffix }}'
+          vars:
+            native: '{{ community_iis_pool_first_native.stdout | from_json }}'
+
+        - name: Repeat the exact pool requests once
+          sustainablelobster.legacy_community_windows.win_iis_webapppool:
+            name: '{{ community_iis_pool_prefix }}{{ item.suffix }}'
+            state: '{{ item.state }}'
+            attributes: '{{ item.attributes | default(omit) }}'
+          loop: '{{ community_iis_pool_cases }}'
+          register: community_iis_pool_repeated
+
+        - name: Require repeated return information to match native runtime
+          ansible.builtin.assert:
+            that:
+              - >-
+                item.info.attributes.managedRuntimeVersion
+                == native[item.item.suffix].runtime
+          loop: '{{ community_iis_pool_repeated.results }}'
+          loop_control:
+            label: '{{ item.item.suffix }}'
+          vars:
+            native: '{{ community_iis_pool_first_native.stdout | from_json }}'
+
+        - name: Predict changing an existing empty runtime without committing it
+          sustainablelobster.legacy_community_windows.win_iis_webapppool:
+            name: '{{ community_iis_pool_prefix }}present-empty'
+            state: present
+            attributes:
+              managedRuntimeVersion: v2.0
+          check_mode: true
+          register: community_iis_pool_update_preview
+
+        - name: Read native configuration after repeats and the update preview
+          sustainablelobster.legacy_windows.win_command:
+            argv: *pool_native_read
+          register: community_iis_pool_repeated_native
+          changed_when: false
+
+        - name: Require unchanged first repeats and stable native configuration
+          ansible.builtin.assert:
+            that:
+              - >-
+                community_iis_pool_repeated.results
+                | selectattr('changed') | list | length == 0
+              - community_iis_pool_update_preview.changed
+              - >-
+                community_iis_pool_first_native.stdout | from_json
+                == community_iis_pool_repeated_native.stdout | from_json
+      always:
+        - name: Clean all owned pools with independent fixture cleanup
+          block:
+            - name: Remove each owned application pool
+              sustainablelobster.legacy_community_windows.win_iis_webapppool:
+                name: '{{ community_iis_pool_prefix }}{{ item.suffix }}'
+                state: absent
+              loop: '{{ community_iis_pool_cases }}'
+          always:
+            - name: Remove the owned fixture directory
+              sustainablelobster.legacy_windows.win_file:
+                path: '{{ community_iis_pool_directory.path }}'
+                state: absent

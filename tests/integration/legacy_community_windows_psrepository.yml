@@ -1,0 +1,109 @@
+---
+# Copyright 2026 sustainablelobster
+# SPDX-License-Identifier: GPL-3.0-or-later
+- name: Verify registration through the installed PowerShellGet engine
+  hosts: legacy_community_windows_psget
+  gather_facts: false
+  tasks:
+    - name: Create an owned local repository directory
+      sustainablelobster.legacy_windows.win_tempfile:
+        state: directory
+        prefix: legacy-community-repository-
+      register: community_repository_directory
+
+    - name: Choose an isolated registration name
+      ansible.builtin.set_fact:
+        community_repository_name: >-
+          {{ community_repository_directory.path | ansible.builtin.basename |
+             regex_replace('[^A-Za-z0-9]', '') }}
+
+    - name: Exercise registration and always remove owned resources
+      block:
+        - name: Preview registration without creating it
+          sustainablelobster.legacy_community_windows.win_psrepository:
+            name: '{{ community_repository_name }}'
+            source_location: '{{ community_repository_directory.path }}'
+          check_mode: true
+          register: community_repository_preview
+
+        - name: Query the previewed registration independently
+          sustainablelobster.legacy_community_windows.win_psrepository_info:
+            name: '*'
+          register: community_repository_after_preview
+
+        - name: Register the owned local repository
+          sustainablelobster.legacy_community_windows.win_psrepository:
+            name: '{{ community_repository_name }}'
+            source: '{{ community_repository_directory.path }}'
+            installation_policy: trusted
+          register: community_repository_created
+
+        - name: Repeat identical registration
+          sustainablelobster.legacy_community_windows.win_psrepository:
+            name: '{{ community_repository_name }}'
+            source_location: '{{ community_repository_directory.path }}'
+            installation_policy: trusted
+          register: community_repository_repeat
+
+        - name: Update only the existing trust policy
+          sustainablelobster.legacy_community_windows.win_psrepository:
+            name: '{{ community_repository_name }}'
+            installation_policy: untrusted
+          register: community_repository_updated
+
+        - name: Read back the real engine registration
+          sustainablelobster.legacy_community_windows.win_psrepository_info:
+            name: '{{ community_repository_name }}'
+          register: community_repository_after_update
+
+        - name: Preview removal without removing it
+          sustainablelobster.legacy_community_windows.win_psrepository:
+            name: '{{ community_repository_name }}'
+            state: absent
+          check_mode: true
+          register: community_repository_remove_preview
+
+        - name: Require registration, check-mode isolation and idempotence
+          ansible.builtin.assert:
+            that:
+              - community_repository_preview.changed
+              - >-
+                community_repository_name not in
+                (community_repository_after_preview.repositories |
+                 map(attribute='name'))
+              - community_repository_created.changed
+              - not community_repository_repeat.changed
+              - community_repository_updated.changed
+              - community_repository_remove_preview.changed
+              - community_repository_after_update.repositories | length == 1
+              - >-
+                community_repository_after_update.repositories[0].installation_policy
+                == 'Untrusted'
+
+        - name: Remove the real registration
+          sustainablelobster.legacy_community_windows.win_psrepository:
+            name: '{{ community_repository_name }}'
+            state: absent
+          register: community_repository_removed
+
+        - name: Repeat removal
+          sustainablelobster.legacy_community_windows.win_psrepository:
+            name: '{{ community_repository_name }}'
+            state: absent
+          register: community_repository_removed_again
+
+        - name: Require removal idempotence
+          ansible.builtin.assert:
+            that:
+              - community_repository_removed.changed
+              - not community_repository_removed_again.changed
+      always:
+        - name: Remove only the owned registration after any failure
+          sustainablelobster.legacy_community_windows.win_psrepository:
+            name: '{{ community_repository_name }}'
+            state: absent
+
+        - name: Remove only the owned repository directory
+          sustainablelobster.legacy_windows.win_file:
+            path: '{{ community_repository_directory.path }}'
+            state: absent

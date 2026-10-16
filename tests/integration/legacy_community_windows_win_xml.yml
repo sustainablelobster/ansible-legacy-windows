@@ -1,0 +1,129 @@
+---
+# Copyright 2026 sustainablelobster
+# SPDX-License-Identifier: GPL-3.0-or-later
+- name: Verify native XPath and XML management through Windows Python
+  hosts: legacy_windows
+  gather_facts: false
+  tasks:
+    - name: Allocate an isolated XML workspace
+      sustainablelobster.legacy_windows.win_tempfile:
+        state: directory
+        prefix: legacy-community-xml-
+      register: xml_workspace
+
+    - name: Exercise native XPath and recover every created file
+      vars:
+        xml_path: '{{ xml_workspace.path }}\settings.xml'
+      block:
+        - name: Create a known XML fixture through Python 3.4.4
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - >-
+                import sys; assert sys.version_info[:3] == (3,4,4);
+                open(sys.argv[1],'wb').write(b'<root>'
+                b'<item name="first">old</item><item name="second"/></root>')
+              - '{{ xml_path }}'
+
+        - name: Read matching attributes and count with real XPath
+          sustainablelobster.legacy_community_windows.win_xml:
+            path: '{{ xml_path }}'
+            xpath: '//item[@name="first"] | //item[@name="second"]'
+            content: attribute
+            count: true
+          register: selected
+
+        - name: Change every item text and retain a backup
+          sustainablelobster.legacy_community_windows.win_xml:
+            path: '{{ xml_path }}'
+            xpath: //item
+            type: text
+            fragment: Café 雪
+            backup: true
+          register: text_changed
+
+        - name: Repeat every item text
+          sustainablelobster.legacy_community_windows.win_xml:
+            path: '{{ xml_path }}'
+            xpath: //item
+            type: text
+            fragment: Café 雪
+          register: text_repeated
+
+        - name: Change an attribute through an attribute-node XPath
+          sustainablelobster.legacy_community_windows.win_xml:
+            path: '{{ xml_path }}'
+            xpath: //@name
+            type: attribute
+            attribute: name
+            fragment: updated
+          register: attribute_changed
+
+        - name: Add a nested element
+          sustainablelobster.legacy_community_windows.win_xml:
+            path: '{{ xml_path }}'
+            xpath: /root
+            fragment: '<child enabled="true">nested</child>'
+          register: element_added
+
+        - name: Repeat nested element insertion
+          sustainablelobster.legacy_community_windows.win_xml:
+            path: '{{ xml_path }}'
+            xpath: /root
+            fragment: '<child enabled="true">nested</child>'
+          register: element_repeated
+
+        - name: Predict removing the child element
+          sustainablelobster.legacy_community_windows.win_xml:
+            path: '{{ xml_path }}'
+            xpath: //child
+            state: absent
+          check_mode: true
+          register: predicted
+
+        - name: Require the predicted element still exists and Unicode survived
+          sustainablelobster.legacy_community_windows.win_xml:
+            path: '{{ xml_path }}'
+            xpath: //child | //item
+            content: text
+            count: true
+          register: after_check
+
+        - name: Remove the child element
+          sustainablelobster.legacy_community_windows.win_xml:
+            path: '{{ xml_path }}'
+            xpath: //child
+            state: absent
+          register: removed
+
+        - name: Inspect the backup
+          sustainablelobster.legacy_windows.win_stat:
+            path: '{{ text_changed.backup_file }}'
+          register: backup
+
+        - name: Require observable XML behavior
+          ansible.builtin.assert:
+            that:
+              - selected is not changed
+              - selected.count == 2
+              - >-
+                selected.matches ==
+                [{'item':{'name':'first'}},{'item':{'name':'second'}}]
+              - text_changed is changed
+              - text_repeated is not changed
+              - attribute_changed is changed
+              - element_added is changed
+              - element_repeated is not changed
+              - predicted is changed
+              - after_check.count == 3
+              - >-
+                after_check.matches ==
+                [{'item':'Café 雪'},{'item':'Café 雪'},{'child':'nested'}]
+              - removed is changed
+              - backup.stat.exists
+      always:
+        - name: Remove XML files backups and workspace
+          sustainablelobster.legacy_windows.win_file:
+            path: '{{ xml_workspace.path }}'
+            state: absent

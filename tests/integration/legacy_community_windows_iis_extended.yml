@@ -1,0 +1,217 @@
+---
+# Copyright 2026 sustainablelobster
+# SPDX-License-Identifier: GPL-3.0-or-later
+- name: Verify native IIS nested configuration and HTTPS certificate behavior
+  hosts: legacy_community_windows_iis
+  gather_facts: false
+  vars:
+    iis_helpers: ../../legacy_community_windows/plugins/module_utils
+    windows_helpers: ../../legacy_windows/plugins/module_utils
+  tasks:
+    - name: Allocate owned HTTPS content and native observers
+      sustainablelobster.legacy_windows.win_tempfile:
+        state: directory
+        prefix: legacy-community-iis-
+      register: community_iis_extended_directory
+
+    - name: Derive the owned site, pool and certificate key name
+      ansible.builtin.set_fact:
+        community_iis_extended_name: >-
+          {{ community_iis_extended_directory.path
+             | regex_replace('^.*\\', '') }}
+
+    - name: Exercise configuration with unconditional fixture cleanup
+      block:
+        - name: Stage the disposable certificate fixture
+          sustainablelobster.legacy_windows.win_copy:
+            src: fixtures/community_iis_certificate.py
+            dest: '{{ community_iis_extended_directory.path }}\certificate.py'
+
+        - name: Stage the exact HTTP endpoint cleanup helper
+          sustainablelobster.legacy_windows.win_copy:
+            src: '{{ iis_helpers }}/legacy_community_windows_iis_ssl.py'
+            dest: >-
+              {{ community_iis_extended_directory.path
+              }}\legacy_community_windows_iis_ssl.py
+
+        - name: Stage its native ABI record dependency
+          sustainablelobster.legacy_windows.win_copy:
+            src: '{{ windows_helpers }}/legacy_windows_wmi.py'
+            dest: >-
+              {{ community_iis_extended_directory.path
+              }}\legacy_windows_wmi.py
+
+        - name: Create a uniquely named disposable certificate and machine key
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - '{{ community_iis_extended_directory.path }}\certificate.py'
+              - create
+              - '{{ community_iis_extended_name }}'
+          register: community_iis_extended_certificate
+
+        - name: Write observable HTTPS content
+          sustainablelobster.legacy_windows.win_copy:
+            dest: '{{ community_iis_extended_directory.path }}\index.htm'
+            content: native-iis-https
+
+        - name: Permit IIS worker tokens to read only the owned content fixture
+          sustainablelobster.legacy_windows.win_acl:
+            path: '{{ community_iis_extended_directory.path }}'
+            user: IIS_IUSRS
+            rights: ReadAndExecute
+            type: allow
+            inherit: ContainerInherit, ObjectInherit
+            propagation: None
+
+        - name: Permit the default anonymous IIS identity to read owned content
+          sustainablelobster.legacy_windows.win_acl:
+            path: '{{ community_iis_extended_directory.path }}'
+            user: IUSR
+            rights: ReadAndExecute
+            type: allow
+            inherit: ContainerInherit, ObjectInherit
+            propagation: None
+
+        - name: Configure nested native pool attributes and a recycle schedule
+          sustainablelobster.legacy_community_windows.win_iis_webapppool:
+            <<: &iis_extended_pool
+              name: '{{ community_iis_extended_name }}'
+              state: started
+              attributes:
+                queueLength: 1234
+                managedPipelineMode: Classic
+                cpu.limit: 1000
+                processModel.idleTimeout: '00:00:25:00.000000'
+                recycling.periodicRestart.schedule: ['03:00:00', '06:30:00']
+          register: community_iis_extended_pool
+
+        - name: Repeat nested attributes and the collection schedule
+          sustainablelobster.legacy_community_windows.win_iis_webapppool:
+            <<: *iis_extended_pool
+          register: community_iis_extended_pool_repeat
+
+        - name: Create a stopped site with nested native logging parameters
+          sustainablelobster.legacy_community_windows.win_iis_website:
+            name: '{{ community_iis_extended_name }}'
+            state: stopped
+            physical_path: '{{ community_iis_extended_directory.path }}'
+            application_pool: '{{ community_iis_extended_name }}'
+            ip: 127.0.0.1
+            port: 18183
+            parameters: >-
+              logFile.directory:{{ community_iis_extended_directory.path
+              }}|logFile.period:Hourly
+          register: community_iis_extended_site
+
+        - name: Bind the owned certificate to the loopback HTTPS endpoint
+          sustainablelobster.legacy_community_windows.win_iis_webbinding:
+            <<: &iis_extended_https
+              name: '{{ community_iis_extended_name }}'
+              protocol: https
+              ip: 127.0.0.1
+              port: 18182
+              certificate_hash: >-
+                {{ (community_iis_extended_certificate.stdout
+                  | from_json).thumbprint }}
+              certificate_store_name: My
+          register: community_iis_extended_binding
+
+        - name: Repeat the same HTTPS endpoint and certificate
+          sustainablelobster.legacy_community_windows.win_iis_webbinding:
+            <<: *iis_extended_https
+          register: community_iis_extended_binding_repeat
+
+        - name: Start only the owned HTTPS test site
+          sustainablelobster.legacy_community_windows.win_iis_website:
+            name: '{{ community_iis_extended_name }}'
+            state: started
+
+        - name: Independently perform a real TLS handshake and HTTP request
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - >-
+                import http.client,ssl,json;
+                c=http.client.HTTPSConnection('127.0.0.1',18182,
+                context=ssl._create_unverified_context(),timeout=15);
+                c.request('GET','/index.htm'); r=c.getresponse();
+                print(json.dumps({'status':r.status,'body':r.read().decode('utf-8')}));
+                c.close()
+          register: community_iis_extended_http
+          changed_when: false
+
+        - name: Request an invalid attribute after a valid change
+          sustainablelobster.legacy_community_windows.win_iis_webapppool:
+            name: '{{ community_iis_extended_name }}'
+            attributes:
+              queueLength: 4321
+              notARealPoolAttribute: true
+          register: community_iis_extended_invalid
+          ignore_errors: true
+
+        - name: Read the pool after the invalid transaction
+          sustainablelobster.legacy_community_windows.win_iis_webapppool:
+            name: '{{ community_iis_extended_name }}'
+          register: community_iis_extended_after_invalid
+
+        - name: Verify HTTPS, nested idempotence and atomic failure recovery
+          ansible.builtin.assert:
+            fail_msg: 'HTTPS observer: {{ community_iis_extended_http.stdout }}'
+            that:
+              - community_iis_extended_pool.changed
+              - not community_iis_extended_pool_repeat.changed
+              - community_iis_extended_binding.changed
+              - not community_iis_extended_binding_repeat.changed
+              - >-
+                community_iis_extended_binding_repeat.operation_type ==
+                'matched'
+              - >-
+                (community_iis_extended_http.stdout | from_json).status == 200
+              - >-
+                (community_iis_extended_http.stdout | from_json).body ==
+                'native-iis-https'
+              - community_iis_extended_invalid is failed
+              - >-
+                community_iis_extended_after_invalid.info.attributes.queueLength
+                == 1234
+      always:
+        - name: Remove owned IIS configuration before certificate material
+          block:
+            - name: Remove the owned site
+              sustainablelobster.legacy_community_windows.win_iis_website:
+                name: '{{ community_iis_extended_name }}'
+                state: absent
+
+            - name: Remove the owned pool
+              sustainablelobster.legacy_community_windows.win_iis_webapppool:
+                name: '{{ community_iis_extended_name }}'
+                state: absent
+          always:
+            - name: Remove only the owned exact HTTP.sys endpoint
+              sustainablelobster.legacy_windows.win_command:
+                chdir: '{{ community_iis_extended_directory.path }}'
+                argv:
+                  - '{{ ansible_python_interpreter }}'
+                  - -c
+                  - >-
+                    from legacy_community_windows_iis_ssl import endpoint;
+                    endpoint({'ip':'127.0.0.1','port':18182},'','','0')
+
+            - name: Remove the owned certificate and persisted machine key
+              sustainablelobster.legacy_windows.win_command:
+                argv:
+                  - '{{ ansible_python_interpreter }}'
+                  - '{{ community_iis_extended_directory.path }}\certificate.py'
+                  - remove
+                  - '{{ community_iis_extended_name }}'
+                  - >-
+                    {{ (community_iis_extended_certificate.stdout
+                    | from_json).thumbprint }}
+              when: community_iis_extended_certificate is succeeded
+
+            - name: Remove the owned content and observer files
+              sustainablelobster.legacy_windows.win_file:
+                path: '{{ community_iis_extended_directory.path }}'
+                state: absent

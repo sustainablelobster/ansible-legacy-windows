@@ -1,0 +1,144 @@
+---
+# Copyright 2026 sustainablelobster
+# SPDX-License-Identifier: GPL-3.0-or-later
+- name: Verify public line editing through the legacy Windows runtime
+  hosts: legacy_windows
+  gather_facts: false
+  tasks:
+    - name: Allocate an isolated line editing workspace
+      sustainablelobster.legacy_windows.win_tempfile:
+        state: directory
+        prefix: legacy-community-lineinfile-
+      register: line_workspace
+
+    - name: Exercise creation replacement prediction and recovery
+      vars:
+        line_path: '{{ line_workspace.path }}\settings.ini'
+      block:
+        - name: Predict creation without creating a file
+          sustainablelobster.legacy_community_windows.win_lineinfile:
+            path: '{{ line_path }}'
+            create: true
+            line: name=old
+          check_mode: true
+          register: predicted
+
+        - name: Inspect the predicted destination
+          sustainablelobster.legacy_windows.win_stat:
+            path: '{{ line_path }}'
+          register: before_create
+
+        - name: Create an encoded setting
+          sustainablelobster.legacy_community_windows.win_lineinfile:
+            dest: '{{ line_path }}'
+            create: true
+            line: name=old
+            encoding: utf-16
+          register: created
+
+        - name: Repeat the exact setting
+          sustainablelobster.legacy_community_windows.win_lineinfile:
+            path: '{{ line_path }}'
+            line: name=old
+          register: repeated
+
+        - name: Replace the setting with a captured prefix and retain a backup
+          sustainablelobster.legacy_community_windows.win_lineinfile:
+            path: '{{ line_path }}'
+            regexp: '(^name=).*'
+            line: '$1Café 雪'
+            backrefs: true
+            backup: true
+          diff: true
+          register: replaced
+
+        - name: Read the original backup and edited bytes
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - >-
+                import json,sys; assert sys.version_info[:3] == (3,4,4);
+                values=[open(p,'rb').read().decode('utf-16')
+                for p in sys.argv[1:]]; print(json.dumps(values))
+              - '{{ replaced.backup_file }}'
+              - '{{ line_path }}'
+          register: observed
+          changed_when: false
+
+        - name: Reject a proposed edit with a real failing validator
+          sustainablelobster.legacy_community_windows.win_lineinfile:
+            path: '{{ line_path }}'
+            regex: '^name='
+            line: name=invalid
+            validate: >-
+              "{{ ansible_python_interpreter }}"
+              -c "import sys; sys.exit(7)" "%s"
+          register: invalid
+          failed_when: false
+
+        - name: Confirm validation left the setting unchanged
+          sustainablelobster.legacy_community_windows.win_lineinfile:
+            path: '{{ line_path }}'
+            line: 'name=Café 雪'
+          register: after_invalid
+
+        - name: Remove the matching line
+          sustainablelobster.legacy_community_windows.win_lineinfile:
+            path: '{{ line_path }}'
+            state: absent
+            regex: '^name='
+          register: removed
+
+        - name: Repeat the removal
+          sustainablelobster.legacy_community_windows.win_lineinfile:
+            path: '{{ line_path }}'
+            state: absent
+            regex: '^name='
+          register: absent_again
+
+        - name: Require controller-to-target behavior and exact byte decoding
+          ansible.builtin.assert:
+            that:
+              - predicted is changed
+              - not before_create.stat.exists
+              - created is changed
+              - repeated is not changed
+              - replaced is changed
+              - replaced.encoding == 'utf-16'
+              - (observed.stdout | from_json) == ['name=old', 'name=Café 雪']
+              - invalid is not changed
+              - "'exit 7' in invalid.msg"
+              - after_invalid is not changed
+              - removed is changed
+              - removed.found == 1
+              - absent_again is not changed
+
+        - name: Write a selector precedence fixture
+          sustainablelobster.legacy_windows.win_copy:
+            dest: '{{ line_workspace.path }}\selectors.txt'
+            content: "alpha\nbeta\ngamma"
+
+        - name: Require the before selector to take precedence
+          sustainablelobster.legacy_community_windows.win_lineinfile:
+            path: '{{ line_workspace.path }}\selectors.txt'
+            line: inserted
+            insertbefore: '^beta$'
+            insertafter: '^gamma$'
+
+        - name: Read the actual selector result
+          sustainablelobster.legacy_windows.slurp:
+            src: '{{ line_workspace.path }}\selectors.txt'
+          register: selector_actual
+
+        - name: Require correct insertion position
+          ansible.builtin.assert:
+            that:
+              - >-
+                selector_actual.content | b64decode ==
+                "alpha\r\ninserted\r\nbeta\r\ngamma"
+      always:
+        - name: Remove the workspace and every created backup
+          sustainablelobster.legacy_windows.win_file:
+            path: '{{ line_workspace.path }}'
+            state: absent

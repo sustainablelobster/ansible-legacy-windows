@@ -1,0 +1,105 @@
+---
+# Copyright 2026 sustainablelobster
+# SPDX-License-Identifier: GPL-3.0-or-later
+- name: Verify public archive extraction through Windows Python
+  hosts: legacy_windows
+  gather_facts: false
+  tasks:
+    - name: Allocate an isolated extraction workspace
+      sustainablelobster.legacy_windows.win_tempfile:
+        state: directory
+        prefix: legacy-community-unzip-
+      register: unzip_workspace
+
+    - name: Exercise archive extraction and recovery
+      vars:
+        unzip_output: '{{ unzip_workspace.path }}\output'
+      block:
+        - name: Create nested gzip and traversal fixtures using Python 3.4.4
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - >-
+                import gzip,os,sys,zipfile;
+                assert sys.version_info[:3] == (3,4,4);
+                good=zipfile.ZipFile(os.path.join(sys.argv[1],'outer.zip'),'w');
+                good.writestr('nested/log.gz',gzip.compress(b'payload'));
+                good.close();
+                bad=zipfile.ZipFile(os.path.join(sys.argv[1],'unsafe.zip'),'w');
+                bad.writestr('../outside.txt',b'unsafe'); bad.close()
+              - '{{ unzip_workspace.path }}'
+
+        - name: Predict archive extraction and source deletion
+          sustainablelobster.legacy_community_windows.win_unzip:
+            src: '{{ unzip_workspace.path }}\outer.zip'
+            dest: '{{ unzip_output }}'
+            delete_archive: true
+          check_mode: true
+          register: predicted
+
+        - name: Inspect predicted destination
+          sustainablelobster.legacy_windows.win_stat:
+            path: '{{ unzip_output }}'
+          register: before_extract
+
+        - name: Extract recursively and remove compressed inputs
+          sustainablelobster.legacy_community_windows.win_unzip:
+            src: '{{ unzip_workspace.path }}\outer.zip'
+            dest: '{{ unzip_output }}'
+            recurse: true
+            delete_archive: true
+          register: extracted
+
+        - name: Read decompressed payload and require compressed sources removed
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - >-
+                import json,os,sys;
+                print(json.dumps([open(os.path.join(sys.argv[1],'output','log'),'rb').read().decode(),
+                os.path.exists(os.path.join(sys.argv[1],'outer.zip')),
+                os.path.exists(os.path.join(sys.argv[1],'output','nested','log.gz'))]))
+              - '{{ unzip_workspace.path }}'
+          register: actual
+          changed_when: false
+
+        - name: Use creates before validating the now-absent source
+          sustainablelobster.legacy_community_windows.win_unzip:
+            src: '{{ unzip_workspace.path }}\outer.zip'
+            dest: '{{ unzip_output }}'
+            creates: '{{ unzip_output }}'
+          register: guarded
+
+        - name: Reject an archive escape
+          sustainablelobster.legacy_community_windows.win_unzip:
+            src: '{{ unzip_workspace.path }}\unsafe.zip'
+            dest: '{{ unzip_output }}'
+          register: unsafe
+          failed_when: false
+
+        - name: Inspect the attempted escape destination
+          sustainablelobster.legacy_windows.win_stat:
+            path: '{{ unzip_workspace.path }}\outside.txt'
+          register: outside
+
+        - name: Require archive behavior and safe failure
+          ansible.builtin.assert:
+            that:
+              - predicted is changed
+              - predicted.removed
+              - not before_extract.stat.exists
+              - extracted is changed
+              - extracted.removed
+              - (actual.stdout | from_json) == ['payload', false, false]
+              - guarded is skipped
+              - guarded is not changed
+              - unsafe is not changed
+              - "'outside the destination' in unsafe.msg"
+              - not outside.stat.exists
+      always:
+        - name: Remove every extraction fixture and output
+          sustainablelobster.legacy_windows.win_file:
+            path: '{{ unzip_workspace.path }}'
+            state: absent

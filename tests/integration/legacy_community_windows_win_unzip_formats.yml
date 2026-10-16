@@ -1,0 +1,142 @@
+---
+# Copyright 2026 sustainablelobster
+# SPDX-License-Identifier: GPL-3.0-or-later
+- name: Verify standard archive formats and the installed native CAB extractor
+  hosts: legacy_windows
+  gather_facts: false
+  vars:
+    archive_formats: [tar, tar.gz, tar.bz2, tar.xz, bz2, cab]
+  tasks:
+    - name: Allocate only an owned format-test directory
+      sustainablelobster.legacy_windows.win_tempfile:
+        state: directory
+        prefix: legacy-community-archive-formats-
+      register: archive_workspace
+
+    - name: Verify real extraction and nonmutating preview
+      block:
+        - name: Create independent archive inputs through Python 3.4.4
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - |
+                import bz2,io,os,sys,tarfile
+                assert sys.version_info[:3]==(3,4,4)
+                root=sys.argv[1]; data=b'archive format payload\r\n'
+                for extension,mode in [('tar','w'),('tar.gz','w:gz'),
+                                       ('tar.bz2','w:bz2'),('tar.xz','w:xz')]:
+                    name=os.path.join(root,'input.'+extension)
+                    with tarfile.open(name,mode) as out:
+                        entry=tarfile.TarInfo('data.txt'); entry.size=len(data)
+                        out.addfile(entry,io.BytesIO(data))
+                with open(os.path.join(root,'data.txt'),'wb') as out:
+                    out.write(data)
+                with open(os.path.join(root,'second.txt'),'wb') as out:
+                    out.write(b'second cabinet member')
+                with open(os.path.join(root,'data.txt.bz2'),'wb') as out:
+                    out.write(bz2.compress(data))
+                with open(os.path.join(root,'invalid.cab'),'wb') as out:
+                    out.write(b'not a cabinet')
+                commands=['.OPTION EXPLICIT',
+                          '.Set CabinetNameTemplate=input.cab',
+                          '.Set DiskDirectoryTemplate=.','.Set Cabinet=on',
+                          '.Set Compress=on','data.txt','second.txt']
+                with open(os.path.join(root,'cabinet.ddf'),'w') as out:
+                    out.write('\n'.join(commands)+'\n')
+              - '{{ archive_workspace.path }}'
+
+        - name: Build a real cabinet with the installed Windows utility
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - makecab.exe
+              - /F
+              - cabinet.ddf
+            chdir: '{{ archive_workspace.path }}'
+
+        - name: Preview the native CAB extractor without creating its output
+          sustainablelobster.legacy_community_windows.win_unzip:
+            src: '{{ archive_workspace.path }}\input.cab'
+            dest: '{{ archive_workspace.path }}\preview'
+            delete_archive: true
+          check_mode: true
+          register: cabinet_preview
+
+        - name: Require prediction to preserve source and destination
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - |
+                import os,sys
+                root=sys.argv[1]
+                assert os.path.isfile(os.path.join(root,'input.cab'))
+                assert not os.path.exists(os.path.join(root,'preview'))
+              - '{{ archive_workspace.path }}'
+          changed_when: false
+
+        - name: Extract each real format through its public module
+          sustainablelobster.legacy_community_windows.win_unzip:
+            src: >-
+              {{ archive_workspace.path }}\{{
+              'data.txt.bz2' if item == 'bz2'
+              else 'input.' + item }}
+            dest: '{{ archive_workspace.path }}\out-{{ item }}'
+            delete_archive: true
+          loop: '{{ archive_formats }}'
+          register: extracted_formats
+
+        - name: Verify output bytes and removed archives independently
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - |
+                import os,sys
+                root=sys.argv[1]; data=b'archive format payload\r\n'
+                formats=['tar','tar.gz','tar.bz2','tar.xz','bz2','cab']
+                for extension in formats:
+                    path=os.path.join(root,'out-'+extension,'data.txt')
+                    with open(path,'rb') as source: assert source.read()==data
+                    name=('data.txt.bz2' if extension=='bz2' else
+                          'input.'+extension)
+                    assert not os.path.exists(os.path.join(root,name))
+                path=os.path.join(root,'out-cab','second.txt')
+                with open(path,'rb') as source:
+                    assert source.read()==b'second cabinet member'
+              - '{{ archive_workspace.path }}'
+          changed_when: false
+
+        - name: Require all vendor and standard-library extraction results
+          ansible.builtin.assert:
+            that:
+              - cabinet_preview is changed
+              - cabinet_preview.removed
+              - extracted_formats.results | length == archive_formats | length
+              - extracted_formats.results | selectattr('changed') | length == 6
+              - extracted_formats.results | selectattr('removed') | length == 6
+
+        - name: Reject an invalid cabinet without deleting its source
+          sustainablelobster.legacy_community_windows.win_unzip:
+            src: '{{ archive_workspace.path }}\invalid.cab'
+            dest: '{{ archive_workspace.path }}\invalid-output'
+            delete_archive: true
+          failed_when: false
+          register: invalid_cabinet
+
+        - name: Independently inspect the failed archive's source
+          sustainablelobster.legacy_windows.win_stat:
+            path: '{{ archive_workspace.path }}\invalid.cab'
+          register: invalid_cabinet_source
+
+        - name: Require actionable failure and the original cabinet source
+          ansible.builtin.assert:
+            that:
+              - invalid_cabinet is not changed
+              - invalid_cabinet.msg is search('CAB/MSU extraction failed')
+              - invalid_cabinet_source.stat.exists
+      always:
+        - name: Remove only the owned inputs and extracted outputs
+          sustainablelobster.legacy_windows.win_file:
+            path: '{{ archive_workspace.path }}'
+            state: absent

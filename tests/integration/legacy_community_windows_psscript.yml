@@ -1,0 +1,104 @@
+---
+# Copyright 2026 sustainablelobster
+# SPDX-License-Identifier: GPL-3.0-or-later
+- name: Verify script installation through a real isolated repository fixture
+  hosts: legacy_community_windows_psget
+  gather_facts: false
+  tasks:
+    - name: Require a local repository fixture with two script versions
+      ansible.builtin.assert:
+        that:
+          - community_psscript_fixture_repository is defined
+          - community_psscript_fixture_name is defined
+          - community_psscript_fixture_old_version is defined
+          - community_psscript_fixture_latest_version is defined
+
+    - name: Verify the runner selected a previously uninstalled isolated script
+      sustainablelobster.legacy_community_windows.win_psscript_info:
+        name: '{{ community_psscript_fixture_name }}'
+      register: community_script_initial
+
+    - name: Protect existing script installations
+      ansible.builtin.assert:
+        that: community_script_initial.scripts | length == 0
+
+    - name: Exercise actual script lifecycle and always uninstall the fixture
+      block:
+        - name: Preview installation without installing
+          sustainablelobster.legacy_community_windows.win_psscript:
+            name: '{{ community_psscript_fixture_name }}'
+            repository: '{{ community_psscript_fixture_repository }}'
+            scope: current_user
+            required_version: '{{ community_psscript_fixture_old_version }}'
+          check_mode: true
+          register: community_script_preview
+
+        - name: Verify preview did not install a script
+          sustainablelobster.legacy_community_windows.win_psscript_info:
+            name: '{{ community_psscript_fixture_name }}'
+          register: community_script_after_preview
+
+        - name: Install the older fixture version
+          sustainablelobster.legacy_community_windows.win_psscript:
+            name: '{{ community_psscript_fixture_name }}'
+            repository: '{{ community_psscript_fixture_repository }}'
+            scope: current_user
+            required_version: '{{ community_psscript_fixture_old_version }}'
+          register: community_script_installed
+
+        - name: Repeat the installed version
+          sustainablelobster.legacy_community_windows.win_psscript:
+            name: '{{ community_psscript_fixture_name }}'
+            repository: '{{ community_psscript_fixture_repository }}'
+            scope: current_user
+            required_version: '{{ community_psscript_fixture_old_version }}'
+          register: community_script_repeat
+
+        - name: Upgrade to the latest fixture version
+          sustainablelobster.legacy_community_windows.win_psscript:
+            name: '{{ community_psscript_fixture_name }}'
+            repository: '{{ community_psscript_fixture_repository }}'
+            scope: current_user
+            state: latest
+          register: community_script_latest
+
+        - name: Query nonempty real script metadata
+          sustainablelobster.legacy_community_windows.win_psscript_info:
+            name: '{{ community_psscript_fixture_name }}'
+          register: community_script_metadata
+
+        - name: Verify installation, upgrade and unchanged repeat
+          ansible.builtin.assert:
+            that:
+              - community_script_preview.changed
+              - community_script_after_preview.scripts | length == 0
+              - community_script_installed.changed
+              - not community_script_repeat.changed
+              - community_script_latest.changed
+              - community_script_metadata.scripts | length == 1
+              - >-
+                community_script_metadata.scripts[0].version ==
+                community_psscript_fixture_latest_version
+
+        - name: Remove the fixture script
+          sustainablelobster.legacy_community_windows.win_psscript:
+            name: '{{ community_psscript_fixture_name }}'
+            state: absent
+          register: community_script_removed
+
+        - name: Repeat script removal
+          sustainablelobster.legacy_community_windows.win_psscript:
+            name: '{{ community_psscript_fixture_name }}'
+            state: absent
+          register: community_script_removed_again
+
+        - name: Verify removal idempotence
+          ansible.builtin.assert:
+            that:
+              - community_script_removed.changed
+              - not community_script_removed_again.changed
+      always:
+        - name: Remove only the isolated fixture script
+          sustainablelobster.legacy_community_windows.win_psscript:
+            name: '{{ community_psscript_fixture_name }}'
+            state: absent

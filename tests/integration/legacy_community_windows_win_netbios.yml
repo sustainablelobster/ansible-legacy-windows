@@ -1,0 +1,82 @@
+---
+# Copyright 2026 sustainablelobster
+# SPDX-License-Identifier: GPL-3.0-or-later
+- name: Verify NetBIOS configuration and restore the original adapter setting
+  hosts: legacy_windows
+  gather_facts: false
+  vars:
+    netbios_reader: >-
+      {{ lookup('ansible.builtin.file',
+      playbook_dir ~ '/fixtures/community_netbios_read.py') }}
+    netbios_states: [default, enabled, disabled]
+  tasks:
+    - name: Read the adapter setting independently
+      sustainablelobster.legacy_windows.win_command:
+        argv: ['{{ ansible_python_interpreter }}', -c, '{{ netbios_reader }}']
+      register: initial
+      changed_when: false
+
+    - name: Require an actual configured network adapter
+      ansible.builtin.assert:
+        that: initial.stdout | from_json | length > 0
+
+    - name: Select the isolated setting to change and restore
+      ansible.builtin.set_fact:
+        netbios_original: '{{ (initial.stdout | from_json)[0] }}'
+
+    - name: Exercise prediction mutation and repeat behavior
+      vars:
+        netbios_desired: >-
+          {{ 'enabled' if netbios_original.value != 1 else 'disabled' }}
+      block:
+        - name: Predict the alternate setting
+          sustainablelobster.legacy_community_windows.win_netbios: &netbios
+            adapter_names: ['{{ netbios_original.name }}']
+            state: '{{ netbios_desired }}'
+          check_mode: true
+          register: predicted
+
+        - name: Read the unchanged setting after prediction
+          sustainablelobster.legacy_windows.win_command: &netbios_read
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - '{{ netbios_reader }}'
+          register: preview_actual
+          changed_when: false
+
+        - name: Apply the alternate setting
+          sustainablelobster.legacy_community_windows.win_netbios: *netbios
+          register: applied
+
+        - name: Repeat the desired setting
+          sustainablelobster.legacy_community_windows.win_netbios: *netbios
+          register: repeated
+
+        - name: Read the changed setting independently
+          sustainablelobster.legacy_windows.win_command: *netbios_read
+          register: actual
+          changed_when: false
+
+        - name: Require observable configuration and preview behavior
+          ansible.builtin.assert:
+            that:
+              - predicted is changed
+              - preview_actual.stdout | from_json == initial.stdout | from_json
+              - applied is changed
+              - repeated is not changed
+              - actual.stdout | from_json != initial.stdout | from_json
+      always:
+        - name: Restore the original setting
+          sustainablelobster.legacy_community_windows.win_netbios:
+            adapter_names: ['{{ netbios_original.name }}']
+            state: '{{ netbios_states[netbios_original.value] }}'
+
+        - name: Read the restored native state
+          sustainablelobster.legacy_windows.win_command: *netbios_read
+          register: restored
+          changed_when: false
+
+        - name: Require exact restoration
+          ansible.builtin.assert:
+            that: restored.stdout | from_json == initial.stdout | from_json

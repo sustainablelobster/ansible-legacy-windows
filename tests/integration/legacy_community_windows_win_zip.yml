@@ -1,0 +1,89 @@
+---
+# Copyright 2026 sustainablelobster
+# SPDX-License-Identifier: GPL-3.0-or-later
+- name: Verify public ZIP creation through Windows Python
+  hosts: legacy_windows
+  gather_facts: false
+  tasks:
+    - name: Allocate an isolated ZIP workspace
+      sustainablelobster.legacy_windows.win_tempfile:
+        state: directory
+        prefix: legacy-community-zip-
+      register: zip_workspace
+
+    - name: Exercise ZIP content names and repeat behavior
+      vars:
+        zip_source: '{{ zip_workspace.path }}\source'
+      block:
+        - name: Create a Unicode source and empty directory with Python 3.4.4
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - >-
+                import os,sys; assert sys.version_info[:3] == (3,4,4);
+                os.makedirs(os.path.join(sys.argv[1],'empty'));
+                open(os.path.join(sys.argv[1],sys.argv[2]),'wb').write(b'payload')
+              - '{{ zip_source }}'
+              - Café 雪.txt
+
+        - name: Predict ZIP creation
+          sustainablelobster.legacy_community_windows.win_zip:
+            src: '{{ zip_source }}'
+            dest: '{{ zip_workspace.path }}\predicted.zip'
+          check_mode: true
+          register: predicted
+
+        - name: Inspect predicted ZIP destination
+          sustainablelobster.legacy_windows.win_stat:
+            path: '{{ zip_workspace.path }}\predicted.zip'
+          register: predicted_path
+
+        - name: Create root-including ZIP
+          sustainablelobster.legacy_community_windows.win_zip:
+            src: '{{ zip_source }}'
+            dest: '{{ zip_workspace.path }}\root.zip'
+          register: with_root
+
+        - name: Create contents-only ZIP
+          sustainablelobster.legacy_community_windows.win_zip:
+            src: '{{ zip_source }}\*'
+            dest: '{{ zip_workspace.path }}\contents.zip'
+          register: contents
+
+        - name: Leave existing ZIP unchanged
+          sustainablelobster.legacy_community_windows.win_zip:
+            src: '{{ zip_source }}'
+            dest: '{{ zip_workspace.path }}\root.zip'
+          register: repeated
+
+        - name: Inspect real archive entry names and contents
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - >-
+                import json,sys,zipfile;
+                print(json.dumps([sorted(zipfile.ZipFile(path).namelist())
+                for path in sys.argv[1:]]))
+              - '{{ zip_workspace.path }}\root.zip'
+              - '{{ zip_workspace.path }}\contents.zip'
+          register: names
+          changed_when: false
+
+        - name: Require ZIP behavior and Unicode names
+          ansible.builtin.assert:
+            that:
+              - predicted is changed
+              - not predicted_path.stat.exists
+              - with_root is changed
+              - contents is changed
+              - repeated is not changed
+              - >-
+                (names.stdout | from_json) ==
+                [['source/Café 雪.txt','source/empty/'],['Café 雪.txt','empty/']]
+      always:
+        - name: Remove archives sources and workspace
+          sustainablelobster.legacy_windows.win_file:
+            path: '{{ zip_workspace.path }}'
+            state: absent

@@ -1,0 +1,88 @@
+---
+# Copyright 2026 sustainablelobster
+# SPDX-License-Identifier: GPL-3.0-or-later
+- name: Verify installed NSSM service management with owned resource cleanup
+  hosts: legacy_community_windows_nssm
+  gather_facts: false
+  tasks:
+    - name: Allocate an owned disposable directory
+      sustainablelobster.legacy_windows.win_tempfile:
+        state: directory
+        prefix: legacy-community-nssm-
+      register: community_nssm_directory
+
+    - name: Choose a service name unique to this fixture
+      ansible.builtin.set_fact:
+        community_nssm_name: >-
+          LegacyCommunityNssm{{ community_nssm_directory.path | win_basename |
+          regex_replace('[^A-Za-z0-9]', '') }}
+
+    - name: Check that the selected name does not belong to an existing service
+      sustainablelobster.legacy_windows.win_service_info:
+        name: '{{ community_nssm_name }}'
+      register: community_nssm_existing
+
+    - name: Refuse to replace an existing service
+      ansible.builtin.assert:
+        that: not community_nssm_existing.exists
+
+    - name: Exercise the owned service with unconditional cleanup
+      block:
+        - name: Predict service creation without writing anything
+          sustainablelobster.legacy_community_windows.win_nssm: &nssm
+            name: '{{ community_nssm_name }}'
+            executable: '{{ community_nssm_executable | default("nssm.exe") }}'
+            application: '{{ ansible_python_interpreter }}'
+            arguments: ['-u', '-c', 'import time; time.sleep(120)']
+            start_mode: manual
+            app_environment:
+              LEGACY_NSSM_FIXTURE: native
+          check_mode: true
+          register: community_nssm_preview
+
+        - name: Independently inspect the service after prediction
+          sustainablelobster.legacy_windows.win_service_info:
+            name: '{{ community_nssm_name }}'
+          register: community_nssm_after_preview
+
+        - name: Create the real NSSM service
+          sustainablelobster.legacy_community_windows.win_nssm: *nssm
+          register: community_nssm_created
+
+        - name: Repeat the exact service configuration
+          sustainablelobster.legacy_community_windows.win_nssm: *nssm
+          register: community_nssm_repeated
+
+        - name: Start the configured service
+          sustainablelobster.legacy_community_windows.win_nssm:
+            <<: *nssm
+            state: started
+          register: community_nssm_started
+
+        - name: Read actual SCM state independently
+          sustainablelobster.legacy_windows.win_service_info:
+            name: '{{ community_nssm_name }}'
+          register: community_nssm_observed
+
+        - name: Verify prediction, idempotence and running service state
+          ansible.builtin.assert:
+            that:
+              - community_nssm_preview.changed
+              - not community_nssm_after_preview.exists
+              - community_nssm_created.changed
+              - not community_nssm_repeated.changed
+              - community_nssm_started.changed
+              - community_nssm_observed.exists
+              - community_nssm_observed.services[0].state == 'started'
+              - community_nssm_observed.services[0].start_mode == 'manual'
+      always:
+        - name: Stop and remove the owned NSSM service
+          sustainablelobster.legacy_community_windows.win_nssm:
+            name: '{{ community_nssm_name }}'
+            executable: '{{ community_nssm_executable | default("nssm.exe") }}'
+            state: absent
+
+        - name: Remove the owned disposable directory
+          sustainablelobster.legacy_windows.win_file:
+            path: '{{ community_nssm_directory.path }}'
+            state: absent

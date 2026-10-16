@@ -1,0 +1,197 @@
+---
+# Copyright 2026 sustainablelobster
+# SPDX-License-Identifier: GPL-3.0-or-later
+- name: Verify native IIS lifecycle and exact object ownership
+  hosts: legacy_community_windows_iis
+  gather_facts: false
+  tasks:
+    - name: Allocate a disposable content directory
+      sustainablelobster.legacy_windows.win_tempfile:
+        state: directory
+        prefix: legacy-community-iis-
+      register: community_iis_directory
+
+    - name: Derive unique configuration names from the owned content directory
+      ansible.builtin.set_fact:
+        community_iis_name: >-
+          {{ community_iis_directory.path | regex_replace('^.*\\', '') }}
+
+    - name: Exercise site, pool, binding, application and directory interfaces
+      block:
+        - name: Identify the actual target interpreter
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - >-
+                import json,sys;
+                print(json.dumps(list(sys.version_info[:3])))
+          register: community_iis_interpreter
+          changed_when: false
+
+        - name: Require actual minimum-interpreter execution
+          ansible.builtin.assert:
+            that: community_iis_interpreter.stdout | from_json == [3, 4, 4]
+
+        - name: Predict a new pool without creating it
+          sustainablelobster.legacy_community_windows.win_iis_webapppool:
+            name: '{{ community_iis_name }}'
+            state: present
+          check_mode: true
+          register: community_iis_pool_preview
+
+        - name: Create an isolated application pool
+          sustainablelobster.legacy_community_windows.win_iis_webapppool:
+            <<: &iis_pool
+              name: '{{ community_iis_name }}'
+              state: stopped
+              attributes:
+                queueLength: 1234
+                processModel.idleTimeout: '00:25:00'
+                failure.rapidFailProtectionInterval: '00:05:00'
+                recycling.periodicRestart.requests: 4294967295
+          register: community_iis_pool_created
+
+        - name: Repeat application pool configuration
+          sustainablelobster.legacy_community_windows.win_iis_webapppool:
+            <<: *iis_pool
+          register: community_iis_pool_repeated
+
+        - name: Create a stopped site bound only to loopback
+          sustainablelobster.legacy_community_windows.win_iis_website:
+            <<: &iis_site
+              name: '{{ community_iis_name }}'
+              state: stopped
+              application_pool: '{{ community_iis_name }}'
+              physical_path: '{{ community_iis_directory.path }}'
+              ip: 127.0.0.1
+              port: 18180
+              hostname: '{{ community_iis_name }}.invalid'
+          register: community_iis_site_created
+
+        - name: Repeat site configuration
+          sustainablelobster.legacy_community_windows.win_iis_website:
+            <<: *iis_site
+          register: community_iis_site_repeated
+
+        - name: Predict an additional binding without committing it
+          sustainablelobster.legacy_community_windows.win_iis_webbinding:
+            <<: &iis_binding
+              name: '{{ community_iis_name }}'
+              ip: 127.0.0.1
+              port: 18181
+              host_header: '{{ community_iis_name }}.invalid'
+          check_mode: true
+          register: community_iis_binding_preview
+
+        - name: Add the precise second HTTP binding
+          sustainablelobster.legacy_community_windows.win_iis_webbinding:
+            <<: *iis_binding
+          register: community_iis_binding_created
+
+        - name: Repeat the same precise binding
+          sustainablelobster.legacy_community_windows.win_iis_webbinding:
+            <<: *iis_binding
+          register: community_iis_binding_repeated
+
+        - name: Predict an application without committing it
+          sustainablelobster.legacy_community_windows.win_iis_webapplication:
+            <<: &iis_application
+              name: application
+              site: '{{ community_iis_name }}'
+              physical_path: '{{ community_iis_directory.path }}'
+              application_pool: '{{ community_iis_name }}'
+              connect_as: pass_through
+          check_mode: true
+          register: community_iis_application_preview
+
+        - name: Add an application using the isolated pool
+          sustainablelobster.legacy_community_windows.win_iis_webapplication:
+            <<: *iis_application
+          register: community_iis_application_created
+
+        - name: Repeat application configuration
+          sustainablelobster.legacy_community_windows.win_iis_webapplication:
+            <<: *iis_application
+          register: community_iis_application_repeated
+
+        - name: Add a virtual directory beneath the application
+          sustainablelobster.legacy_community_windows.win_iis_virtualdirectory:
+            <<: &iis_directory
+              name: directory
+              application: application
+              site: '{{ community_iis_name }}'
+              physical_path: '{{ community_iis_directory.path }}'
+              connect_as: pass_through
+          register: community_iis_vdir_created
+
+        - name: Repeat virtual directory configuration
+          sustainablelobster.legacy_community_windows.win_iis_virtualdirectory:
+            <<: *iis_directory
+          register: community_iis_vdir_repeated
+
+        - name: Verify prediction, actual changes, repeat stability and results
+          ansible.builtin.assert:
+            that:
+              - community_iis_pool_preview.changed
+              - community_iis_pool_created.changed
+              - not community_iis_pool_repeated.changed
+              - >-
+                community_iis_pool_repeated.info.processModel.idleTimeout
+                == '00:25:00'
+              - >-
+                community_iis_pool_repeated.info.recycling.periodicRestart.requests
+                == 4294967295
+              - community_iis_site_created.changed
+              - not community_iis_site_repeated.changed
+              - community_iis_site_repeated.site.State == 'Stopped'
+              - community_iis_binding_preview.changed
+              - community_iis_binding_created.changed
+              - not community_iis_binding_repeated.changed
+              - community_iis_binding_repeated.operation_type == 'matched'
+              - community_iis_application_preview.changed
+              - community_iis_application_created.changed
+              - not community_iis_application_repeated.changed
+              - community_iis_application_repeated.connect_as == 'pass_through'
+              - community_iis_vdir_created.changed
+              - not community_iis_vdir_repeated.changed
+
+        - name: Remove only the additional binding
+          sustainablelobster.legacy_community_windows.win_iis_webbinding:
+            name: '{{ community_iis_name }}'
+            ip: 127.0.0.1
+            port: 18181
+            host_header: '{{ community_iis_name }}.invalid'
+            state: absent
+          register: community_iis_binding_removed
+
+        - name: Read the site without requesting changes
+          sustainablelobster.legacy_community_windows.win_iis_website:
+            name: '{{ community_iis_name }}'
+          register: community_iis_site_read
+
+        - name: Verify the sibling binding remained untouched
+          ansible.builtin.assert:
+            that:
+              - community_iis_binding_removed.changed
+              - community_iis_site_read.site.Bindings | length == 1
+              - "':18180:' in community_iis_site_read.site.Bindings[0]"
+      always:
+        - name: Clean owned configuration with independent content cleanup
+          block:
+            - name: Remove the owned site including its child configuration
+              sustainablelobster.legacy_community_windows.win_iis_website:
+                name: '{{ community_iis_name }}'
+                state: absent
+          always:
+            - name: Clean the owned pool even if site inspection fails
+              block:
+                - name: Remove the owned application pool
+                  sustainablelobster.legacy_community_windows.win_iis_webapppool:
+                    name: '{{ community_iis_name }}'
+                    state: absent
+              always:
+                - name: Remove the owned content directory
+                  sustainablelobster.legacy_windows.win_file:
+                    path: '{{ community_iis_directory.path }}'
+                    state: absent

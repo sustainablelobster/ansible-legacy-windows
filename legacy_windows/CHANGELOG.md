@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.2.0
+
+- Read native WMI integer arrays, including storage status and capability
+  fields, without changing existing scalar, string or embedded-object results.
+- Accept bounded native integer and byte-array WMI method inputs for consumers
+  using the shared Python runtime.
+- Let PsExec consumers retain an input-pipe writer until the tool exits so its
+  service-backed child output is captured, without changing ordinary commands'
+  standard-input EOF behavior.
+
 ## 1.1.0
 
 - Expose the shared Python module action as

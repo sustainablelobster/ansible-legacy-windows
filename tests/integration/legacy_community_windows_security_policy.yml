@@ -1,0 +1,147 @@
+---
+# Copyright 2026 sustainablelobster
+# SPDX-License-Identifier: GPL-3.0-or-later
+- name: Verify native local security policy with exact restoration
+  hosts: legacy_windows
+  gather_facts: false
+  vars:
+    export_policy_script: >-
+      import codecs,json,os,re,subprocess,sys;
+      assert sys.version_info[:3] == (3,4,4);
+      path=sys.argv[1];
+      open(path,'wb').write(codecs.BOM_UTF16_LE);
+      command=[os.path.join(os.environ['SystemRoot'],'System32','secedit.exe'),
+      '/export','/cfg',path,'/quiet','/log',path+'.log'];
+      process=subprocess.Popen(command,stdout=subprocess.PIPE,
+      stderr=subprocess.PIPE);
+      output=process.communicate();
+      assert process.returncode == 0, repr(output);
+      text=open(path,'rb').read().decode('utf-16');
+      value=re.search(r'(?im)^MinimumPasswordLength\s*=\s*(\d+)',text).group(1);
+      print(json.dumps({'value':value}))
+  tasks:
+    - name: Allocate isolated native policy export files
+      sustainablelobster.legacy_windows.win_tempfile:
+        state: directory
+        prefix: legacy-community-policy-
+      register: policy_workspace
+
+    - name: Change only an existing policy and restore its original value
+      block:
+        - name: Read the original policy through an independent native export
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - '-c'
+              - '{{ export_policy_script }}'
+              - '{{ policy_workspace.path }}\original.inf'
+          changed_when: false
+          register: original_policy
+
+        - name: Freeze original and alternative minimum password lengths
+          ansible.builtin.set_fact:
+            original_policy_value: >-
+              {{ (original_policy.stdout | from_json).value }}
+            alternative_policy_value: >-
+              {{ '1' if (original_policy.stdout | from_json).value == '0'
+                 else '0' }}
+
+        - name: Predict the policy change without importing
+          sustainablelobster.legacy_community_windows.win_security_policy:
+            section: System Access
+            key: MinimumPasswordLength
+            value: '{{ alternative_policy_value }}'
+          check_mode: true
+          diff: true
+          register: predicted
+
+        - name: Export again to prove prediction preserved the policy
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - '-c'
+              - '{{ export_policy_script }}'
+              - '{{ policy_workspace.path }}\after-preview.inf'
+          changed_when: false
+          register: after_prediction
+
+        - name: Change the selected native security policy
+          sustainablelobster.legacy_community_windows.win_security_policy:
+            section: System Access
+            key: MinimumPasswordLength
+            value: '{{ alternative_policy_value }}'
+          diff: true
+          register: changed_policy
+
+        - name: Repeat the desired policy without importing
+          sustainablelobster.legacy_community_windows.win_security_policy:
+            section: system access
+            key: minimumpasswordlength
+            value: '{{ alternative_policy_value }}'
+          register: repeated
+
+        - name: Independently export the changed native policy
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - '-c'
+              - '{{ export_policy_script }}'
+              - '{{ policy_workspace.path }}\changed.inf'
+          changed_when: false
+          register: actual_policy
+
+        - name: Reject a nonexistent native policy rather than claiming success
+          sustainablelobster.legacy_community_windows.win_security_policy:
+            section: System Access
+            key: LegacyCommunityInvalidPolicy
+            value: '1'
+          failed_when: false
+          register: invalid_policy
+
+        - name: Require native prediction idempotence change and failure
+          ansible.builtin.assert:
+            that:
+              - predicted is changed
+              - >-
+                (after_prediction.stdout | from_json).value
+                == original_policy_value
+              - changed_policy is changed
+              - changed_policy.import_log is defined
+              - repeated is not changed
+              - >-
+                (actual_policy.stdout | from_json).value
+                == alternative_policy_value
+              - >-
+                'not a valid key' in invalid_policy.msg
+                or (invalid_policy.rc | default(0)) != 0
+      always:
+        - name: Restore the exact original minimum password length
+          sustainablelobster.legacy_community_windows.win_security_policy:
+            section: System Access
+            key: MinimumPasswordLength
+            value: '{{ original_policy_value }}'
+          when: original_policy_value is defined
+
+        - name: Independently export the restored native policy
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - '-c'
+              - '{{ export_policy_script }}'
+              - '{{ policy_workspace.path }}\restored.inf'
+          changed_when: false
+          register: restored_policy
+          when: original_policy_value is defined
+
+        - name: Require exact original policy restoration
+          ansible.builtin.assert:
+            that:
+              - >-
+                (restored_policy.stdout | from_json).value
+                == original_policy_value
+          when: original_policy_value is defined
+
+        - name: Remove the owned security policy export workspace
+          sustainablelobster.legacy_windows.win_file:
+            path: '{{ policy_workspace.path }}'
+            state: absent

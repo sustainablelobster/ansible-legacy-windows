@@ -2,7 +2,7 @@
 # Copyright 2026 sustainablelobster
 # SPDX-License-Identifier: GPL-3.0-or-later
 
-"""Read local WMI scalars, string arrays, and embedded-object properties."""
+"""Read local WMI scalars, arrays, and embedded-object properties."""
 
 import ctypes
 import datetime
@@ -117,7 +117,7 @@ def _libraries():
     automation.SafeArrayGetElement.argtypes = [
         _POINTER,
         ctypes.POINTER(_LONG),
-        _POINTER_OUT,
+        _POINTER,
     ]
     automation.SafeArrayGetElement.restype = _LONG
     automation.SafeArrayPutElement.argtypes = [
@@ -280,6 +280,10 @@ def _read_property(instance, automation, name):
             )
         if value.kind == 0x2008:  # VT_ARRAY | VT_BSTR
             return _read_string_array(automation, value.data.array)
+        if value.kind in (0x2011, 0x2012, 0x2003, 0x2013):
+            return _read_numeric_array(
+                automation, value.data.array, value.kind & 0xFFF, cim_type.value
+            )
         if value.kind == 13:  # VT_UNKNOWN owns the embedded object's reference.
             return _read_embedded_object(automation, value.data.bstr)
         if value.kind == 0x200D:  # VT_ARRAY | VT_UNKNOWN
@@ -298,6 +302,39 @@ def _read_property(instance, automation, name):
         )
     finally:
         _check(automation.VariantClear(ctypes.byref(value)), "VariantClear")
+
+
+def _read_numeric_array(automation, array, kind, cim_type):
+    if not array:
+        return []
+    if automation.SafeArrayGetDim(array) != 1:
+        raise ValueError("WMI numeric arrays must have one dimension.")
+    scalar_type = {
+        17: ctypes.c_ubyte,
+        18: ctypes.c_uint16,
+        3: _ULONG if cim_type & 0xFFF == 19 else _LONG,
+        19: _ULONG,
+    }[kind]
+    lower, upper = _LONG(), _LONG()
+    _check(
+        automation.SafeArrayGetLBound(array, 1, ctypes.byref(lower)),
+        "SafeArrayGetLBound",
+    )
+    _check(
+        automation.SafeArrayGetUBound(array, 1, ctypes.byref(upper)),
+        "SafeArrayGetUBound",
+    )
+    values = []
+    for index in range(lower.value, upper.value + 1):
+        position, scalar = _LONG(index), scalar_type()
+        _check(
+            automation.SafeArrayGetElement(
+                array, ctypes.byref(position), ctypes.byref(scalar)
+            ),
+            "SafeArrayGetElement",
+        )
+        values.append(scalar.value)
+    return values
 
 
 def _read_string_array(automation, array):
@@ -538,6 +575,57 @@ def _put_string_array(instance, automation, name, texts):
         _check(automation.VariantClear(ctypes.byref(value)), "VariantClear")
 
 
+def _put_byte_array(instance, automation, name, data):
+    value = _Variant(kind=0x2011)  # VariantClear owns the VT_UI1 SAFEARRAY.
+    try:
+        value.data.array = automation.SafeArrayCreateVector(17, 0, len(data))
+        if not value.data.array:
+            raise MemoryError("Could not allocate the WMI byte array.")
+        for index, number in enumerate(data):
+            position, byte = _LONG(index), ctypes.c_ubyte(number)
+            _check(
+                automation.SafeArrayPutElement(
+                    value.data.array, ctypes.byref(position), ctypes.byref(byte)
+                ),
+                "SafeArrayPutElement",
+            )
+        put_value = _method(
+            instance,
+            5,
+            _LONG,
+            [ctypes.c_wchar_p, _LONG, ctypes.POINTER(_Variant), _LONG],
+        )
+        _check(
+            put_value(instance, name, 0, ctypes.byref(value), 0),
+            "IWbemClassObject.Put({0})".format(name),
+        )
+    finally:
+        _check(automation.VariantClear(ctypes.byref(value)), "VariantClear")
+
+
+def _validate_method_inputs(inputs):
+    for name, value in inputs.items():
+        string_list = isinstance(value, list) and all(
+            isinstance(entry, str) for entry in value
+        )
+        if (
+            value is not None
+            and not isinstance(value, (bool, str, int, bytes))
+            and not string_list
+        ):
+            raise ValueError(
+                (
+                    "WMI input {0} must be boolean, integer, string, "
+                    "a string list, bytes, or None."
+                ).format(name)
+            )
+        if isinstance(value, int) and not isinstance(value, bool):
+            if not -(2**31) <= value < 2**31:
+                raise ValueError(
+                    "WMI input {0} must fit a signed 32-bit integer.".format(name)
+                )
+
+
 def parse_datetime(value, property_name):
     """Parse a complete WMI DMTF timestamp, preserving its UTC offset.
 
@@ -625,7 +713,7 @@ class WmiConnection:
         :param str query: WQL query for the connected namespace.
         :param properties: Sequence of string property names to retrieve.
         :type properties: list
-        :returns: Dictionaries containing scalars, string lists, embedded-object
+        :returns: Dictionaries containing scalars, numeric or string lists, embedded-object
             dictionaries or lists, or None. Embedded dictionaries include
             ``__CLASS`` and the object's non-system properties.
         :rtype: list
@@ -678,18 +766,19 @@ class WmiConnection:
         :param str method_name: Method defined by that object's WMI class.
         :param properties: Sequence of output property names to retrieve.
         :type properties: list
-        :param inputs: Optional dictionary of input names to booleans, strings,
-            string lists, or None. An empty dictionary supplies a default input
-            object; None omits that object entirely.
+        :param inputs: Optional dictionary of input names to booleans, signed
+            32-bit integers, strings, string lists, byte buffers, or None. An
+            empty dictionary supplies a default input object; None omits that
+            object entirely.
         :type inputs: dict or None
         :param bool allow_empty: Permit a successful native call with no output
             object. Streaming DHCP methods use this shape for an empty result.
-        :returns: Scalars, string lists, embedded-object dictionaries or lists,
+        :returns: Scalars, numeric or string lists, embedded-object dictionaries or lists,
             or None from the output object, or an empty dictionary when
             allow_empty permits a successful call without an output object.
         :rtype: dict
         :raises OSError: WMI cannot execute the method or retrieve its output.
-        :raises ValueError: An input is not a supported scalar or string list,
+        :raises ValueError: An input is not a supported scalar or array,
             or an output property is not a supported VARIANT.
         :raises MemoryError: Allocation of a WMI method string fails.
         """
@@ -774,20 +863,7 @@ class WmiConnection:
             _update_instance(self._services, instance)
 
     def _method_inputs(self, cleanup, object_path, method_name, inputs):
-        for name, value in inputs.items():
-            string_list = isinstance(value, list) and all(
-                isinstance(entry, str) for entry in value
-            )
-            if (
-                value is not None
-                and not isinstance(value, (bool, str))
-                and not string_list
-            ):
-                raise ValueError(
-                    "WMI input {0} must be boolean, string, a string list, or None.".format(
-                        name
-                    )
-                )
+        _validate_method_inputs(inputs)
         instance = _get_object(self._services, self._automation, cleanup, object_path)
         class_name = _read_property(instance, self._automation, "__CLASS")
         if not isinstance(class_name, str) or not class_name:
@@ -820,6 +896,10 @@ class WmiConnection:
         for name, value in inputs.items():
             if isinstance(value, bool):
                 _put_boolean(arguments, self._automation, name, value)
+            elif isinstance(value, int):
+                _put_integer(arguments, self._automation, name, value)
+            elif isinstance(value, bytes):
+                _put_byte_array(arguments, self._automation, name, value)
             elif isinstance(value, list):
                 _put_string_array(arguments, self._automation, name, value)
             else:

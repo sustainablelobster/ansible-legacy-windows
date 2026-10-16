@@ -17,7 +17,7 @@ _COLLECTIONS = pytest.StashKey[TemporaryDirectory[str]]()
 
 
 def pytest_configure(config: pytest.Config) -> None:
-    """Expose both source collections before importing controller test modules.
+    """Expose source collections before importing controller test modules.
 
     :param config: Current pytest configuration, owning the disposable namespace.
     """
@@ -32,6 +32,9 @@ def pytest_configure(config: pytest.Config) -> None:
         ROOT / "legacy_windows", target_is_directory=True
     )
     (namespace / "legacy_ad").symlink_to(ROOT / "legacy_ad", target_is_directory=True)
+    (namespace / "legacy_community_windows").symlink_to(
+        ROOT / "legacy_community_windows", target_is_directory=True
+    )
     init_plugin_loader([directory.name])
 
 

@@ -1,0 +1,111 @@
+---
+- name: Verify a Windows-sent magic packet without waking another system
+  hosts: legacy_windows
+  gather_facts: false
+  tasks:
+    - name: Allocate an owned listener workspace
+      sustainablelobster.legacy_windows.win_tempfile:
+        state: directory
+        prefix: legacy-community-wol-
+      register: wol_workspace
+
+    - name: Exercise loopback packet sending and cleanup
+      block:
+        - name: Start a bounded loopback receiver on the Windows guest
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - '-c'
+              - |
+                import binascii, json, os, socket, sys
+                root = sys.argv[1]
+                family = socket.AF_INET
+                with socket.socket(family, socket.SOCK_DGRAM) as receiver:
+                    receiver.bind(('127.0.0.1', 0))
+                    receiver.settimeout(45)
+                    port_file = os.path.join(root, 'port.json')
+                    with open(port_file, 'w') as output:
+                        json.dump(receiver.getsockname()[1], output)
+                    data, address = receiver.recvfrom(1024)
+                    target = binascii.unhexlify(b'00005e005366')
+                    expected = b'\xff' * 6 + target * 16
+                    result_file = os.path.join(root, 'result.json')
+                    with open(result_file, 'w') as output:
+                        result = dict(size=len(data), matches=data == expected)
+                        json.dump(result, output)
+              - '{{ wol_workspace.path }}'
+          async: 60
+          poll: 0
+          register: wol_listener
+
+        - name: Wait until the guest listener owns its socket
+          sustainablelobster.legacy_windows.win_wait_for:
+            path: '{{ wol_workspace.path }}\port.json'
+            timeout: 30
+
+        - name: Read the guest-selected UDP port
+          sustainablelobster.legacy_windows.slurp:
+            src: '{{ wol_workspace.path }}\port.json'
+          register: wol_port
+
+        - name: Preview without sending
+          sustainablelobster.legacy_community_windows.win_wakeonlan:
+            mac: 00:00:5E:00:53:66
+            broadcast: 127.0.0.1
+            port: '{{ wol_port.content | b64decode | from_json }}'
+          check_mode: true
+          register: wol_preview
+
+        - name: Require no packet during check mode
+          sustainablelobster.legacy_windows.win_stat:
+            path: '{{ wol_workspace.path }}\result.json'
+          register: wol_before
+
+        - name: Send the packet to the controlled Windows listener
+          sustainablelobster.legacy_community_windows.win_wakeonlan:
+            mac: 00:00:5E:00:53:66
+            broadcast: 127.0.0.1
+            port: '{{ wol_port.content | b64decode | from_json }}'
+          register: wol_send
+
+        - name: Wait for the receiver to finish
+          sustainablelobster.legacy_windows.async_status:
+            jid: '{{ wol_listener.ansible_job_id }}'
+          register: wol_finished
+          until: wol_finished.finished
+          retries: 15
+          delay: 1
+
+        - name: Read independent packet evidence
+          sustainablelobster.legacy_windows.slurp:
+            src: '{{ wol_workspace.path }}\result.json'
+          register: wol_result
+
+        - name: Require correct public results and packet bytes
+          ansible.builtin.assert:
+            that:
+              - wol_preview.changed
+              - not wol_before.stat.exists
+              - wol_send.changed
+              - (wol_result.content | b64decode | from_json).size == 102
+              - (wol_result.content | b64decode | from_json).matches
+      always:
+        - name: Wait for the bounded receiver before discarding its files
+          sustainablelobster.legacy_windows.async_status:
+            jid: '{{ wol_listener.ansible_job_id }}'
+          register: wol_final_status
+          until: wol_final_status.finished
+          retries: 50
+          delay: 1
+          when: wol_listener.ansible_job_id is defined
+
+        - name: Remove owned completed async state
+          sustainablelobster.legacy_windows.async_status:
+            jid: '{{ wol_listener.ansible_job_id }}'
+            mode: cleanup
+          when: wol_listener.ansible_job_id is defined
+
+        - name: Remove the owned listener workspace
+          sustainablelobster.legacy_windows.win_file:
+            path: '{{ wol_workspace.path }}'
+            state: absent

@@ -1,0 +1,97 @@
+---
+# Copyright 2026 sustainablelobster
+# SPDX-License-Identifier: GPL-3.0-or-later
+- name: Create owned destination-only file and directory fixtures
+  sustainablelobster.legacy_windows.win_command:
+    argv:
+      - '{{ ansible_python_interpreter }}'
+      - -c
+      - |
+        import os, sys
+        root = sys.argv[1]
+        directory = os.path.join(root, 'extra-dir')
+        if not os.path.isdir(directory):
+            os.mkdir(directory)
+        for path in (os.path.join(root, 'extra.txt'),
+                     os.path.join(directory, 'extra-nested.txt')):
+            with open(path, 'wb') as stream:
+                stream.write(b'Owned destination-only fixture')
+      - '{{ community_robocopy_directory.path }}\dest'
+
+- name: Predict deletion-only synchronization without modifying fixtures
+  sustainablelobster.legacy_community_windows.win_robocopy: &robocopy_extras
+    src: '{{ community_robocopy_directory.path }}\source'
+    dest: '{{ community_robocopy_directory.path }}\dest'
+    recurse: true
+    purge: '{{ community_robocopy_case.purge | default(false) }}'
+    flags: '{{ community_robocopy_case.flags | default(omit) }}'
+  check_mode: true
+  register: community_robocopy_extras_preview
+
+- name: Independently inspect destination entries after preview
+  sustainablelobster.legacy_windows.win_command: &robocopy_extras_inspect
+    argv:
+      - '{{ ansible_python_interpreter }}'
+      - -c
+      - |
+        import json, os, sys
+        root = sys.argv[1]
+        with open(os.path.join(root, 'nested', 'data.txt'), 'rb') as stream:
+            copied = stream.read().decode('ascii')
+        print(json.dumps({
+            'extra_file': os.path.isfile(os.path.join(root, 'extra.txt')),
+            'extra_directory': os.path.isdir(os.path.join(root, 'extra-dir')),
+            'extra_nested_file': os.path.isfile(os.path.join(
+                root, 'extra-dir', 'extra-nested.txt')),
+            'copied': copied,
+        }))
+      - '{{ community_robocopy_directory.path }}\dest'
+  register: community_robocopy_extras_after_preview
+  changed_when: false
+
+- name: Apply deletion-only synchronization using the same effective options
+  sustainablelobster.legacy_community_windows.win_robocopy: *robocopy_extras
+  register: community_robocopy_extras_applied
+
+- name: Independently inspect destination entries after apply
+  sustainablelobster.legacy_windows.win_command: *robocopy_extras_inspect
+  register: community_robocopy_extras_after_apply
+  changed_when: false
+
+- name: Repeat deletion-only synchronization
+  sustainablelobster.legacy_community_windows.win_robocopy: *robocopy_extras
+  register: community_robocopy_extras_repeated
+
+- name: Verify preview preservation, actual deletion and unchanged repeats
+  vars:
+    community_robocopy_preview_entries: >-
+      {{ community_robocopy_extras_after_preview.stdout | from_json }}
+    community_robocopy_applied_entries: >-
+      {{ community_robocopy_extras_after_apply.stdout | from_json }}
+  ansible.builtin.assert:
+    that:
+      - >-
+        community_robocopy_extras_preview.changed ==
+        community_robocopy_case.deletes_extras
+      - >-
+        community_robocopy_extras_applied.changed ==
+        community_robocopy_case.deletes_extras
+      - not community_robocopy_extras_repeated.changed
+      - community_robocopy_preview_entries.extra_file
+      - community_robocopy_preview_entries.extra_directory
+      - community_robocopy_preview_entries.extra_nested_file
+      - >-
+        community_robocopy_applied_entries.extra_file ==
+        (not community_robocopy_case.deletes_extras)
+      - >-
+        community_robocopy_applied_entries.extra_directory ==
+        (not community_robocopy_case.deletes_extras)
+      - >-
+        community_robocopy_applied_entries.extra_nested_file ==
+        (not community_robocopy_case.deletes_extras)
+      - >-
+        community_robocopy_preview_entries.copied ==
+        'Native Robocopy fixture'
+      - >-
+        community_robocopy_applied_entries.copied ==
+        'Native Robocopy fixture'

@@ -1,0 +1,37 @@
+---
+# Copyright 2026 sustainablelobster
+# SPDX-License-Identifier: GPL-3.0-or-later
+- name: Verify the installed local Windows session messaging utility
+  hosts: legacy_community_windows_msg
+  gather_facts: false
+  tasks:
+    - name: Predict the one-second fixture message
+      sustainablelobster.legacy_community_windows.win_msg: &message
+        msg: Legacy community Windows test message
+        display_seconds: 1
+        wait: true
+      check_mode: true
+      register: predicted
+
+    - name: Send the bounded fixture message to logged-in sessions
+      sustainablelobster.legacy_community_windows.win_msg: *message
+      register: sent
+
+    - name: Reject an oversized message before sending
+      sustainablelobster.legacy_community_windows.win_msg:
+        msg: '{{ "x" * 256 }}'
+      register: oversized
+      failed_when: false
+
+    - name: Require actual delivery status and input validation
+      ansible.builtin.assert:
+        that:
+          - predicted is changed
+          - predicted.rc == 0
+          - sent is changed
+          - sent.rc == 0
+          - sent.wait
+          - sent.display_seconds == 1
+          - sent.runtime_seconds >= 0
+          - oversized is not changed
+          - "'less than 256' in oversized.msg"

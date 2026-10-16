@@ -29,7 +29,8 @@ from ansible.galaxy.token import GalaxyToken  # type: ignore[import-untyped]
 ROOT = Path(__file__).resolve().parents[1]
 REPOSITORY = "sustainablelobster/ansible-legacy-windows"
 NAMESPACE = "sustainablelobster"
-COLLECTIONS = ("legacy_windows", "legacy_ad")
+# Publication order also defines coordinator priority: the last tagged member owns it.
+COLLECTIONS = ("legacy_windows", "legacy_ad", "legacy_community_windows")
 VERSION = r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)"
 SIDECARS = {"SHA256SUMS", "release-notes.txt", "release-manifest.json"}
 
@@ -58,7 +59,8 @@ def _tag_collection(tag: str) -> tuple[str, str]:
         if tag.startswith(prefix):
             return collection, _version(tag[len(prefix) :])
     raise SystemExit(
-        "Publishing requires a stable legacy_windows/vX.Y.Z or legacy_ad/vX.Y.Z tag"
+        "Publishing requires a stable collection/vX.Y.Z tag for "
+        + ", ".join(COLLECTIONS)
     )
 
 
@@ -90,10 +92,10 @@ def _archive_metadata(
         for name, requirement in dependencies.items()
     ):
         raise SystemExit("Archive collection dependencies must be string requirements")
-    if collection == "legacy_ad" and not dependencies.get(
+    if collection != "legacy_windows" and not dependencies.get(
         NAMESPACE + ".legacy_windows"
     ):
-        raise SystemExit("AD archive must declare its Windows runtime dependency")
+        raise SystemExit("Consumer archive must declare its Windows runtime dependency")
     return version, contents["CHANGELOG.md"], dependencies
 
 
@@ -319,12 +321,16 @@ def _publication_candidate(
     if tag is None:
         tag = origin
     elif tag != origin:
+        owner = _tag_collection(origin)[0]
+        companion = _tag_collection(tag)[0]
         if (
-            _tag_collection(origin)[0] != "legacy_ad"
-            or origin != _source_tag("legacy_ad")
-            or tag != _source_tag("legacy_windows")
+            COLLECTIONS.index(owner) <= COLLECTIONS.index(companion)
+            or origin != _source_tag(owner)
+            or tag != _source_tag(companion)
         ):
-            raise SystemExit("Only an AD tag may publish its exact Windows companion")
+            raise SystemExit(
+                "Only a higher-priority tag may publish its exact source-version companion"
+            )
         _require_tag_commit(origin, _commit())
     artifact, notes = _candidate(package_dir, expected_sha256, tag)
     _require_tag_commit(tag, _commit())
@@ -349,7 +355,7 @@ def _galaxy_api() -> GalaxyAPI:
 
 
 def _require_published_runtime(artifact: Path, collection: str, api: GalaxyAPI) -> None:
-    if collection != "legacy_ad":
+    if collection == "legacy_windows":
         return
     _, _, dependencies = _archive_metadata(artifact, collection)
     requirement = dependencies[NAMESPACE + ".legacy_windows"]
@@ -379,7 +385,8 @@ def _require_published_runtime(artifact: Path, collection: str, api: GalaxyAPI) 
     raise SystemExit(
         "Publish a stable sustainablelobster.legacy_windows version satisfying "
         + requirement
-        + " before publishing legacy_ad"
+        + " before publishing "
+        + collection
     )
 
 
@@ -390,13 +397,13 @@ def preflight(
 
     :param package_dir: Download of the successful package job's four files.
     :param expected_sha256: Digest recorded by that same package job.
-    :param tag: Exact Windows companion tag when invoked by an AD coordinator.
+    :param tag: Exact lower-priority companion tag selected by its coordinator.
     :raises SystemExit: If provenance or the published Windows runtime is invalid.
     :raises AnsibleError: If Galaxy discovery or dependency lookup fails.
     """
     artifact, _, tag = _publication_candidate(package_dir, expected_sha256, tag)
     collection, _ = _tag_collection(tag)
-    if collection == "legacy_ad":
+    if collection != "legacy_windows":
         _require_published_runtime(artifact, collection, _galaxy_api())
     print("Verified publication prerequisites: " + tag)
 
@@ -406,13 +413,13 @@ def publish(package_dir: Path, expected_sha256: str, *, tag: str | None = None) 
 
     :param package_dir: Download of the successful package job's four files.
     :param expected_sha256: Digest recorded by that same package job.
-    :param tag: Exact Windows companion tag when invoked by an AD coordinator.
+    :param tag: Exact lower-priority companion tag selected by its coordinator.
     :raises SystemExit: If provenance, remote tag, assets, or GitHub calls fail.
-    :raises AnsibleError: If AD's published Windows runtime cannot be verified.
+    :raises AnsibleError: If the published Windows runtime cannot be verified.
     """
     artifact, notes, tag = _publication_candidate(package_dir, expected_sha256, tag)
     collection, _ = _tag_collection(tag)
-    if collection == "legacy_ad":
+    if collection != "legacy_windows":
         _require_published_runtime(artifact, collection, _galaxy_api())
     commit = _commit()
     release = _find_release(tag)
@@ -493,7 +500,7 @@ def publish_galaxy(
 
     :param package_dir: Download of the successful package job's four files.
     :param expected_sha256: Digest recorded by that same package job.
-    :param tag: Exact Windows companion tag when invoked by an AD coordinator.
+    :param tag: Exact lower-priority companion tag selected by its coordinator.
     :raises SystemExit: If credentials, provenance or published content disagree.
     :raises AnsibleError: If Galaxy discovery, upload or import fails.
     """
@@ -523,22 +530,20 @@ def publish_galaxy(
     print("Published verified Galaxy version: " + collection + " " + version)
 
 
-def _publish_windows_companion(
-    package_dir: Path, expected_sha256: str, tag: str
-) -> None:
+def _publish_companion(package_dir: Path, expected_sha256: str, tag: str) -> None:
     try:
         publish(package_dir, expected_sha256, tag=tag)
     except SystemExit as error:
         if not str(error).startswith("Existing release asset differs:"):
             raise
         raise SystemExit(
-            "Existing Windows release uses a different candidate; retry its "
-            "original publication run before the AD run"
+            "Existing companion release uses a different candidate; retry its "
+            "original publication run before the coordinator run"
         ) from error
     publish_galaxy(package_dir, expected_sha256, tag=tag)
 
 
-def _matching_windows_release(package_dir: Path, digest: str, tag: str) -> bool:
+def _matching_release(package_dir: Path, digest: str, tag: str) -> bool:
     release = _find_release(tag)
     if release is None:
         return False
@@ -553,67 +558,87 @@ def _matching_windows_release(package_dir: Path, digest: str, tag: str) -> bool:
         raise
 
 
-def publish_tagged(
-    windows_package_dir: Path,
-    windows_sha256: str,
-    ad_package_dir: Path,
-    ad_sha256: str,
+def _validate_tagged_dependencies(
+    artifacts: dict[str, Path], tags: dict[str, str], api: GalaxyAPI
 ) -> None:
-    """Publish same-commit tags together, with AD coordinating Windows first.
+    # Validate all selected consumers before the first publication mutation.
+    for name, artifact in artifacts.items():
+        if name == "legacy_windows":
+            continue
+        dependencies = _archive_metadata(artifact, name)[2]
+        if "legacy_windows" in tags:
+            if not meets_requirements(
+                _tag_collection(tags["legacy_windows"])[1],
+                dependencies[NAMESPACE + ".legacy_windows"],
+            ):
+                raise SystemExit(
+                    "Tagged Windows runtime does not satisfy the "
+                    + name
+                    + " dependency"
+                )
+        else:
+            _require_published_runtime(artifact, name, api)
 
-    :param windows_package_dir: Verified Windows bundle from this workflow run.
-    :param windows_sha256: Windows digest recorded by the package job.
-    :param ad_package_dir: Verified AD bundle from this workflow run.
-    :param ad_sha256: AD digest recorded by the package job.
+
+def publish_tagged(
+    windows: tuple[Path, str],
+    ad: tuple[Path, str],
+    community: tuple[Path, str],
+) -> None:
+    """Publish same-commit tags in Windows, AD, then community order.
+
+    :param windows: Verified Windows directory and package-job digest.
+    :param ad: Verified AD directory and package-job digest.
+    :param community: Verified community directory and package-job digest.
     :raises SystemExit: If provenance, candidates, dependencies or retries conflict.
     :raises AnsibleError: If a Galaxy lookup or publication fails.
     """
     origin = _originating_tag()
     collection = _tag_collection(origin)[0]
-    bundles = {
-        "legacy_windows": (windows_package_dir, windows_sha256),
-        "legacy_ad": (ad_package_dir, ad_sha256),
-    }
+    bundles = dict(zip(COLLECTIONS, (windows, ad, community), strict=True))
     if origin != _source_tag(collection):
         raise SystemExit("Originating tag differs from the tested source version")
     _publication_candidate(*bundles[collection])
     api = _galaxy_api()
-    other = "legacy_ad" if collection == "legacy_windows" else "legacy_windows"
-    companion = _source_tag(other)
-    if _tag_commit(companion, missing_ok=True) != _commit():
+    tags = {
+        name: tag
+        for name in COLLECTIONS
+        if _tag_commit(tag := _source_tag(name), missing_ok=True) == _commit()
+    }
+    if collection not in tags:
+        raise SystemExit("Originating tag no longer identifies the tested commit")
+    _validate_tagged_dependencies(
+        {name: _candidate(*bundles[name], tag)[0] for name, tag in tags.items()},
+        tags,
+        api,
+    )
+    for tag in tags.values():
+        _require_tag_commit(tag, _commit())
+    published = {
+        name: _published_digest(api, name, _tag_collection(tag)[1])
+        for name, tag in tags.items()
+    }
+    coordinator = next(reversed(tags))
+    if collection != coordinator:
+        # The original standalone run may own the only safe retry of partial assets.
+        higher_complete = all(
+            published[name] is not None
+            for name in tags
+            if COLLECTIONS.index(name) > COLLECTIONS.index(collection)
+        )
+        if published[collection] is not None or (
+            not higher_complete
+            and not _matching_release(*bundles[collection], tags[collection])
+        ):
+            print("Same-commit tag coordinates publication: " + tags[coordinator])
+            return
         preflight(*bundles[collection])
         publish(*bundles[collection])
         publish_galaxy(*bundles[collection])
         return
-    tags = {collection: origin, other: companion}
-    artifacts = {
-        name: _candidate(*bundles[name], tags[name])[0] for name in COLLECTIONS
-    }
-    dependencies = _archive_metadata(artifacts["legacy_ad"], "legacy_ad")[2]
-    if not meets_requirements(
-        _tag_collection(tags["legacy_windows"])[1],
-        dependencies[NAMESPACE + ".legacy_windows"],
-    ):
-        raise SystemExit("Tagged Windows runtime does not satisfy the AD dependency")
-    # Both tags and bundles must be valid before the first publication mutation.
-    for tag in tags.values():
-        _require_tag_commit(tag, _commit())
-    windows_published = _published_digest(
-        api, "legacy_windows", _tag_collection(tags["legacy_windows"])[1]
-    )
-    if collection == "legacy_windows":
-        # A retained standalone run may own the only safe retry of its assets.
-        if windows_published is not None or (
-            _published_digest(api, "legacy_ad", _tag_collection(tags["legacy_ad"])[1])
-            is None
-            and not _matching_windows_release(
-                *bundles["legacy_windows"], tags["legacy_windows"]
-            )
-        ):
-            print("Same-commit AD tag coordinates publication: " + companion)
-            return
-    elif windows_published is None:
-        _publish_windows_companion(*bundles["legacy_windows"], tags["legacy_windows"])
+    for name, tag in tags.items():
+        if name != collection and published[name] is None:
+            _publish_companion(*bundles[name], tag)
     preflight(*bundles[collection])
     publish(*bundles[collection])
     publish_galaxy(*bundles[collection])
@@ -644,6 +669,8 @@ def main() -> None:
     tagged.add_argument("--windows-sha256", required=True)
     tagged.add_argument("--ad-package-dir", type=Path, required=True)
     tagged.add_argument("--ad-sha256", required=True)
+    tagged.add_argument("--community-package-dir", type=Path, required=True)
+    tagged.add_argument("--community-sha256", required=True)
     arguments = parser.parse_args()
     try:
         if arguments.command == "package":
@@ -655,10 +682,9 @@ def main() -> None:
             )
         elif arguments.command == "publish-tagged":
             publish_tagged(
-                arguments.windows_package_dir,
-                arguments.windows_sha256,
-                arguments.ad_package_dir,
-                arguments.ad_sha256,
+                (arguments.windows_package_dir, arguments.windows_sha256),
+                (arguments.ad_package_dir, arguments.ad_sha256),
+                (arguments.community_package_dir, arguments.community_sha256),
             )
         elif arguments.command == "publish":
             publish(arguments.package_dir, arguments.sha256)

@@ -61,7 +61,7 @@ def test_ci_runs_checks_on_prs_branches_tags_and_manual_dispatch() -> None:
     assert events["pull_request"] is None  # Includes pull requests from forks.
     assert events["push"] == {
         "branches": ["main", "v1"],
-        "tags": ["legacy_windows/v*", "legacy_ad/v*"],
+        "tags": ["legacy_windows/v*", "legacy_ad/v*", "legacy_community_windows/v*"],
     }
     assert events["workflow_dispatch"] is None
 
@@ -240,17 +240,49 @@ def test_publication_requires_an_origin_tag_push_and_all_checks() -> None:
         "github.repository == 'sustainablelobster/ansible-legacy-windows'",
         "github.event_name == 'push'",
         "(startsWith(github.ref, 'refs/tags/legacy_windows/v') "
-        "|| startsWith(github.ref, 'refs/tags/legacy_ad/v'))",
+        "|| startsWith(github.ref, 'refs/tags/legacy_ad/v') "
+        "|| startsWith(github.ref, 'refs/tags/legacy_community_windows/v'))",
         "needs.lint.result == 'success'",
         "needs.unit.result == 'success'",
         "needs.package.result == 'success'",
     ]
     assert publish["concurrency"]["cancel-in-progress"] is False
+    assert publish["concurrency"]["queue"] == "max"
     assert "${{ github.sha }}" in publish["concurrency"]["group"]
     assert "github.ref" not in publish["concurrency"]["group"]
     assert _workflow()["concurrency"]["cancel-in-progress"] == (
         "${{ !startsWith(github.ref, 'refs/tags/') }}"
     )
+
+
+@pytest.mark.parametrize("queue", ["single", "max", "invalid"])
+@pytest.mark.parametrize("cancel", [False, True])
+def test_locked_workflow_linter_validates_queue_modes_without_ignoring_syntax(
+    queue: str, cancel: bool
+) -> None:
+    workflow = {
+        "on": "push",
+        "jobs": {
+            "release": {
+                "runs-on": "ubuntu-24.04",
+                "concurrency": {
+                    "group": "release",
+                    "queue": queue,
+                    "cancel-in-progress": cancel,
+                },
+                "steps": [{"run": "echo release"}],
+            }
+        },
+    }
+    result = subprocess.run(
+        ["actionlint", "-"],
+        input=yaml.safe_dump(workflow),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    accepted = queue in ("single", "max") and not (queue == "max" and cancel)
+    assert (result.returncode == 0) == accepted, result.stdout + result.stderr
 
 
 def test_only_the_publisher_has_write_permissions_or_a_publish_token() -> None:
@@ -321,15 +353,26 @@ def test_artifact_promotion_uses_this_runs_package_and_its_recorded_digest() -> 
         for step in _steps(jobs[name])
         if step.get("uses", "").startswith("actions/upload-artifact@")
     ]
-    assert len(uploads) == 3
+    assert len(uploads) == 4
     assert uploads[0]["with"]["path"] == "${{ env.CI_OUTPUT_DIR }}/pytest.xml"
     assert " ".join(uploads[0]["if"].split()) == (
         "${{ !cancelled() && steps.report.outputs.available == 'true' }}"
     )
     for upload, collection, step in zip(
-        uploads[1:], ("legacy_windows", "legacy_ad"), ("windows", "ad"), strict=True
+        uploads[1:],
+        ("legacy_windows", "legacy_ad", "legacy_community_windows"),
+        ("windows", "ad", "community"),
+        strict=True,
     ):
-        prefix = "${{ env.CI_OUTPUT_DIR }}/" + collection + "/"
+        prefix = (
+            "${{ env.PACKAGE_DIR }}/"
+            if collection == "legacy_community_windows"
+            else "${{ env.CI_OUTPUT_DIR }}/" + collection + "/"
+        )
+        if collection == "legacy_community_windows":
+            assert upload["env"]["PACKAGE_DIR"] == (
+                "${{ env.CI_OUTPUT_DIR }}/legacy_community_windows"
+            )
         assert upload["with"]["path"].splitlines() == [
             prefix + "${{ env.RELEASE_FILENAME }}",
             prefix + "SHA256SUMS",
@@ -346,8 +389,10 @@ def test_artifact_promotion_uses_this_runs_package_and_its_recorded_digest() -> 
     assert jobs["package"]["outputs"] == {
         "windows-sha256": "${{ steps.windows.outputs.sha256 }}",
         "ad-sha256": "${{ steps.ad.outputs.sha256 }}",
+        "community-sha256": "${{ steps.community.outputs.sha256 }}",
         "windows-artifact-id": "${{ steps.upload-windows.outputs.artifact-id }}",
         "ad-artifact-id": "${{ steps.upload-ad.outputs.artifact-id }}",
+        "community-artifact-id": "${{ steps.upload-community.outputs.artifact-id }}",
     }
     publisher_steps = _steps(jobs["publish"])
     downloads = [
@@ -355,11 +400,11 @@ def test_artifact_promotion_uses_this_runs_package_and_its_recorded_digest() -> 
         for step in publisher_steps
         if step.get("uses", "").startswith("actions/download-artifact@")
     ]
-    assert len(downloads) == 2
+    assert len(downloads) == 3
     for download, collection, output in zip(
         downloads,
-        ("legacy_windows", "legacy_ad"),
-        ("windows", "ad"),
+        ("legacy_windows", "legacy_ad", "legacy_community_windows"),
+        ("windows", "ad", "community"),
         strict=True,
     ):
         assert download["with"] == {
@@ -375,6 +420,9 @@ def test_artifact_promotion_uses_this_runs_package_and_its_recorded_digest() -> 
         "${{ needs.package.outputs.windows-sha256 }}"
     )
     assert publish["env"]["AD_SHA256"] == ("${{ needs.package.outputs.ad-sha256 }}")
+    assert publish["env"]["COMMUNITY_SHA256"] == (
+        "${{ needs.package.outputs.community-sha256 }}"
+    )
     assert "GITHUB_REF_NAME" not in publish["env"]
     assert "GITHUB_SHA" not in publish["env"]
     assert not any(step.get("id") == "selected" for step in publisher_steps)
@@ -382,7 +430,7 @@ def test_artifact_promotion_uses_this_runs_package_and_its_recorded_digest() -> 
 
 
 @pytest.mark.parametrize("token", ["", " \t\n", "private-test-token"])
-def test_publish_step_requires_secret_and_passes_both_exact_candidates(
+def test_publish_step_requires_secret_and_passes_all_exact_candidates(
     tmp_path: Path, token: str
 ) -> None:
     step = next(
@@ -404,6 +452,7 @@ def test_publish_step_requires_secret_and_passes_both_exact_candidates(
     output_directory = tmp_path / "runner temporary storage"
     windows_digest = "a" * 64
     ad_digest = "b" * 64
+    community_digest = "c" * 64
     result = subprocess.run(
         ["bash", "-euo", "pipefail"],
         input=step["run"],
@@ -415,6 +464,7 @@ def test_publish_step_requires_secret_and_passes_both_exact_candidates(
             CI_OUTPUT_DIR=str(output_directory),
             WINDOWS_SHA256=windows_digest,
             AD_SHA256=ad_digest,
+            COMMUNITY_SHA256=community_digest,
             GALAXY_API_KEY=token,
         ),
         capture_output=True,
@@ -440,19 +490,26 @@ def test_publish_step_requires_secret_and_passes_both_exact_candidates(
             str(output_directory / "legacy_ad"),
             "--ad-sha256",
             ad_digest,
+            "--community-package-dir",
+            str(output_directory / "legacy_community_windows"),
+            "--community-sha256",
+            community_digest,
         ]
     ]
     assert token not in command_log.read_text() + result.stdout + result.stderr
 
 
-@pytest.mark.parametrize("collection", ["legacy_windows", "legacy_ad"])
+@pytest.mark.parametrize(
+    "collection", ["legacy_windows", "legacy_ad", "legacy_community_windows"]
+)
 @pytest.mark.parametrize("count", [0, 2])
 def test_package_step_rejects_missing_or_ambiguous_archives(
     tmp_path: Path, collection: str, count: int
 ) -> None:
     (tmp_path / "dist").mkdir()
-    other = "legacy_ad" if collection == "legacy_windows" else "legacy_windows"
-    (tmp_path / "dist" / f"sustainablelobster-{other}-1.0.0.tar.gz").touch()
+    for other in ("legacy_windows", "legacy_ad", "legacy_community_windows"):
+        if other != collection:
+            (tmp_path / "dist" / f"sustainablelobster-{other}-1.0.0.tar.gz").touch()
     for index in range(count):
         (tmp_path / "dist" / f"sustainablelobster-{collection}-{index}.tar.gz").touch()
     command = tmp_path / "nix"
@@ -477,6 +534,8 @@ def test_package_step_checks_the_same_archive_before_preparing_a_release(
     (tmp_path / archive).touch()
     ad_archive = "dist/sustainablelobster-legacy_ad-1.0.0.tar.gz"
     (tmp_path / ad_archive).touch()
+    community_archive = "dist/sustainablelobster-legacy_community_windows-1.0.0.tar.gz"
+    (tmp_path / community_archive).touch()
     command_log = tmp_path / "commands.jsonl"
     command = tmp_path / "nix"
     # Record the real workflow's commands without building or publishing.
@@ -505,15 +564,23 @@ def test_package_step_checks_the_same_archive_before_preparing_a_release(
             archive,
             "--artifact",
             ad_archive,
+            "--artifact",
+            community_archive,
         ],
     ]
     assert (tmp_path / "github-output").read_text() == (
         f"windows-archive={archive}\nad-archive={ad_archive}\n"
+        f"community-archive={community_archive}\n"
     )
 
 
 @pytest.mark.parametrize(
-    "collection,step_id", [("legacy_windows", "windows"), ("legacy_ad", "ad")]
+    "collection,step_id",
+    [
+        ("legacy_windows", "windows"),
+        ("legacy_ad", "ad"),
+        ("legacy_community_windows", "community"),
+    ],
 )
 @pytest.mark.parametrize(
     "context",
@@ -522,6 +589,7 @@ def test_package_step_checks_the_same_archive_before_preparing_a_release(
         ("push", "tag", "legacy_windows/v1.0.0"),
         ("push", "tag", "v1.0.0"),
         ("push", "tag", "legacy_ad/v1.0.0"),
+        ("push", "tag", "legacy_community_windows/v1.0.0"),
         ("workflow_dispatch", "tag", "legacy_windows/v1.0.0"),
         ("pull_request", "branch", "example"),
         ("push", "tag", "legacy_windows/v1.0.0; touch escaped"),

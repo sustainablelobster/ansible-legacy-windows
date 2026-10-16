@@ -1,0 +1,101 @@
+---
+# Copyright 2026 sustainablelobster
+# SPDX-License-Identifier: GPL-3.0-or-later
+- name: Verify installed SNMP configuration with exact native restoration
+  hosts: legacy_community_windows_snmp
+  gather_facts: false
+  vars:
+    snmp_reader: >-
+      {{ lookup('ansible.builtin.file',
+      playbook_dir ~ '/fixtures/community_snmp_registry.py') }}
+  tasks:
+    - name: Require a genuinely installed SNMP service
+      sustainablelobster.legacy_windows.win_service_info:
+        name: SNMP
+      register: snmp_service
+
+    - name: Reject missing service as positive execution evidence
+      ansible.builtin.assert:
+        that: snmp_service.exists
+
+    - name: Allocate the owned registry snapshot directory
+      sustainablelobster.legacy_windows.win_tempfile:
+        state: directory
+        prefix: legacy-community-snmp-
+      register: snmp_workspace
+
+    - name: Save original values on the target without exposing communities
+      sustainablelobster.legacy_windows.win_command:
+        argv:
+          - '{{ ansible_python_interpreter }}'
+          - -c
+          - '{{ snmp_reader }}'
+          - snapshot
+          - '{{ snmp_workspace.path }}\original.json'
+      changed_when: false
+      register: snmp_original
+
+    - name: Exercise configuration and always restore the original values
+      block:
+        - name: Predict an isolated SNMP configuration
+          sustainablelobster.legacy_community_windows.win_snmp: &snmp
+            permitted_managers: [192.0.2.1]
+            community_strings: [legacy-community-fixture]
+            action: set
+          check_mode: true
+          register: snmp_preview
+
+        - name: Read the unchanged native state independently
+          sustainablelobster.legacy_windows.win_command: &snmp_read
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - '{{ snmp_reader }}'
+              - read
+              - '{{ snmp_workspace.path }}\original.json'
+          changed_when: false
+          register: snmp_after_preview
+
+        - name: Apply the isolated SNMP configuration
+          sustainablelobster.legacy_community_windows.win_snmp: *snmp
+          register: snmp_applied
+
+        - name: Repeat the isolated configuration
+          sustainablelobster.legacy_community_windows.win_snmp: *snmp
+          register: snmp_repeated
+
+        - name: Independently read the changed native state
+          sustainablelobster.legacy_windows.win_command: *snmp_read
+          changed_when: false
+          register: snmp_actual
+
+        - name: Require actual configuration and nonmutating preview
+          ansible.builtin.assert:
+            that:
+              - snmp_preview is changed
+              - snmp_after_preview.stdout == snmp_original.stdout
+              - snmp_applied is changed
+              - snmp_repeated is not changed
+              - snmp_actual.stdout != snmp_original.stdout
+              - snmp_repeated.permitted_managers == ['192.0.2.1']
+              - snmp_repeated.community_strings == ['legacy-community-fixture']
+      always:
+        - name: Restore every original manager and community permission
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - '{{ snmp_reader }}'
+              - restore
+              - '{{ snmp_workspace.path }}\original.json'
+          register: snmp_restored
+          changed_when: true
+
+        - name: Require exact original registry configuration
+          ansible.builtin.assert:
+            that: snmp_restored.stdout == snmp_original.stdout
+
+        - name: Remove the owned snapshot and directory
+          sustainablelobster.legacy_windows.win_file:
+            path: '{{ snmp_workspace.path }}'
+            state: absent

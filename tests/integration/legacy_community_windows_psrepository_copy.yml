@@ -1,0 +1,143 @@
+---
+# Copyright 2026 sustainablelobster
+# SPDX-License-Identifier: GPL-3.0-or-later
+- name: Verify native repository copying with an isolated registered profile
+  hosts: legacy_community_windows_targets
+  gather_facts: false
+  tasks:
+    - name: Create an owned profile directory
+      sustainablelobster.legacy_windows.win_tempfile:
+        state: directory
+        prefix: legacy-community-repository-copy-
+      register: community_repository_copy_profile
+
+    - name: Exercise copy and always remove the isolated registry/file fixture
+      block:
+        - name: Name the owned registry entry and profile filter
+          ansible.builtin.set_fact:
+            community_repository_copy_profile_name: >-
+              {{ community_repository_copy_profile.path |
+                 ansible.builtin.win_basename }}
+            community_repository_copy_registry: >-
+              HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\{{
+              community_repository_copy_profile.path |
+              ansible.builtin.win_basename }}
+            community_repository_copy_destination: >-
+              {{ community_repository_copy_profile.path
+              }}\AppData\Local\Microsoft\Windows\PowerShell\PowerShellGet\PSRepositories.xml
+
+        - name: Register only the owned fixture profile path
+          sustainablelobster.legacy_windows.win_regedit:
+            path: '{{ community_repository_copy_registry }}'
+            name: ProfileImagePath
+            data: '{{ community_repository_copy_profile.path }}'
+            type: string
+
+        - name: Stage the released reference repository dictionary
+          sustainablelobster.legacy_windows.win_copy:
+            src: fixtures/community_SampleRepositories.xml
+            dest: '{{ community_repository_copy_profile.path }}\source.xml'
+
+        - name: Preview copying a filtered repository
+          sustainablelobster.legacy_community_windows.win_psrepository_copy:
+            source: '{{ community_repository_copy_profile.path }}\source.xml'
+            profiles: ['{{ community_repository_copy_profile_name }}']
+            name: ['Fake*']
+            exclude: ['*Server']
+          check_mode: true
+          diff: true
+          register: community_repository_copy_preview
+
+        - name: Verify preview did not create the destination
+          sustainablelobster.legacy_windows.win_stat:
+            path: '{{ community_repository_copy_destination }}'
+          register: community_repository_copy_after_preview
+
+        - name: Copy the filtered repository into the real profile directory
+          sustainablelobster.legacy_community_windows.win_psrepository_copy:
+            source: '{{ community_repository_copy_profile.path }}\source.xml'
+            profiles: ['{{ community_repository_copy_profile_name }}']
+            name: ['Fake*']
+            exclude: ['*Server']
+          diff: true
+          register: community_repository_copy_applied
+
+        - name: Repeat the exact copy
+          sustainablelobster.legacy_community_windows.win_psrepository_copy:
+            source: '{{ community_repository_copy_profile.path }}\source.xml'
+            profiles: ['{{ community_repository_copy_profile_name }}']
+            name: ['Fake*']
+            exclude: ['*Server']
+          register: community_repository_copy_repeated
+
+        - name: Require real writes, preview isolation and unchanged repeat
+          ansible.builtin.assert:
+            that:
+              - community_repository_copy_preview.changed
+              - not community_repository_copy_after_preview.stat.exists
+              - community_repository_copy_applied.changed
+              - not community_repository_copy_repeated.changed
+              - >-
+                community_repository_copy_applied.diff.after[
+                community_repository_copy_profile_name].keys() | list ==
+                ['FakeGet']
+
+        - name: Replace the selection with the full source using force
+          sustainablelobster.legacy_community_windows.win_psrepository_copy:
+            source: '{{ community_repository_copy_profile.path }}\source.xml'
+            profiles: ['{{ community_repository_copy_profile_name }}']
+            force: true
+            name: []
+          diff: true
+          register: community_repository_copy_forced
+
+        - name: Verify force preserved all source repositories and type data
+          ansible.builtin.assert:
+            that:
+              - community_repository_copy_forced.changed
+              - >-
+                community_repository_copy_forced.diff.after[
+                community_repository_copy_profile_name].keys() | list | sort ==
+                ['FakeFileServer', 'FakeGet', 'PSGallery']
+
+        - name: Independently import the copied file using installed PowerShell
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - powershell.exe
+              - -NoLogo
+              - -NoProfile
+              - -NonInteractive
+              - -ExecutionPolicy
+              - Bypass
+              - -Command
+              - >-
+                $repos = Import-Clixml -Path
+                ([Management.Automation.WildcardPattern]::Escape(
+                $env:LEGACY_REPOSITORY_FILE));
+                ($repos.Keys | Sort-Object) -join ','
+          environment:
+            LEGACY_REPOSITORY_FILE: >-
+              {{ community_repository_copy_destination }}
+          changed_when: false
+          register: community_repository_copy_vendor_import
+          when: >-
+            community_repository_copy_verify_powershell | default(false) | bool
+
+        - name: Require the installed vendor engine to accept every copied entry
+          ansible.builtin.assert:
+            that: >-
+              community_repository_copy_vendor_import.stdout | trim ==
+              'FakeFileServer,FakeGet,PSGallery'
+          when: >-
+            community_repository_copy_verify_powershell | default(false) | bool
+      always:
+        - name: Remove only the owned profile registry entry
+          sustainablelobster.legacy_windows.win_regedit:
+            path: '{{ community_repository_copy_registry }}'
+            state: absent
+          when: community_repository_copy_registry is defined
+
+        - name: Remove only the owned profile directory
+          sustainablelobster.legacy_windows.win_file:
+            path: '{{ community_repository_copy_profile.path }}'
+            state: absent

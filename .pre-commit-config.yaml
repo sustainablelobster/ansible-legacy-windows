@@ -34,7 +34,8 @@ repos:
         language: unsupported
         # Ansible invokes these through Python, not as standalone executables.
         exclude: >-
-          (?x)^(?:legacy_windows|legacy_ad)/plugins/modules/[^/]+\.py$
+          (?x)^(?:legacy_windows|legacy_ad|legacy_community_windows)
+          /plugins/modules/[^/]+\.py$
           |^legacy_windows/plugins/module_utils/legacy_windows_async_wrapper\.py$
       - id: check-symlinks
         language: unsupported
@@ -58,9 +59,11 @@ repos:
         language: unsupported
         # Preserve the final blank line in the verbatim upstream GPL copies.
         exclude: >-
-          (?x)^(LICENSE|(legacy_windows|legacy_ad)/LICENSE
+          (?x)^(LICENSE
+          |(legacy_windows|legacy_ad|legacy_community_windows)/LICENSE
           |legacy_windows/LICENSES/ansible-windows-GPL-3\.0-or-later\.txt
-          |legacy_ad/LICENSES/microsoft-ad-GPL-3\.0-or-later\.txt)$
+          |legacy_ad/LICENSES/microsoft-ad-GPL-3\.0-or-later\.txt
+          |legacy_community_windows/LICENSES/community-windows-GPL-3\.0-or-later\.txt)$
       - id: mixed-line-ending
         language: unsupported
         args: [--fix=lf]
@@ -86,15 +89,20 @@ repos:
         language: unsupported
         # Windows fixtures, including win_powershell.py, share the target floor.
         files: >-
-          (?x)^((?:legacy_windows|legacy_ad)/plugins/(modules|module_utils)
+          (?x)^((?:legacy_windows|legacy_ad|legacy_community_windows)
+          /plugins/(modules|module_utils)
           |tests/integration/fixtures)/
+        # psexec executes on the controller, with controller-only dependencies.
+        exclude: ^legacy_community_windows/plugins/modules/psexec\.py$
         args: [--target-version, py34]
       - id: black
         alias: black-controller
         name: Format controller Python
         language: unsupported
         files: >-
-          ^(?:legacy_windows|legacy_ad)/plugins/(?!modules/|module_utils/).*\.py$
+          (?x)^(?:legacy_windows|legacy_ad|legacy_community_windows)
+          /plugins/(?!modules/|module_utils/).*\.py$
+          |^legacy_community_windows/plugins/modules/psexec\.py$
         args: [--target-version, py312]
       - id: black
         alias: black-development
@@ -112,8 +120,11 @@ repos:
         entry: env PYTHONPATH=.ansible/collections pylint
         language: unsupported
         files: >-
-          (?x)^((?:legacy_windows|legacy_ad)/plugins/(modules|module_utils)
+          (?x)^((?:legacy_windows|legacy_ad|legacy_community_windows)
+          /plugins/(modules|module_utils)
           |tests/integration/fixtures)/
+        # psexec executes on the controller, with controller-only dependencies.
+        exclude: ^legacy_community_windows/plugins/modules/psexec\.py$
         args: [--py-version, '3.4']
       - id: pylint
         alias: pylint-controller
@@ -121,7 +132,9 @@ repos:
         entry: env PYTHONPATH=.ansible/collections pylint
         language: unsupported
         files: >-
-          ^(?:legacy_windows|legacy_ad)/plugins/(?!modules/|module_utils/).*\.py$
+          (?x)^(?:legacy_windows|legacy_ad|legacy_community_windows)
+          /plugins/(?!modules/|module_utils/).*\.py$
+          |^legacy_community_windows/plugins/modules/psexec\.py$
         args: [--py-version, '3.12']
       - id: pylint
         alias: pylint-development
@@ -140,7 +153,9 @@ repos:
         entry: env MYPYPATH=.ansible/collections mypy
         language: unsupported
         files: >-
-          ^(?:legacy_windows|legacy_ad)/plugins/(?!modules/|module_utils/).*\.py$
+          (?x)^(?:legacy_windows|legacy_ad|legacy_community_windows)
+          /plugins/(?!modules/|module_utils/).*\.py$
+          |^legacy_community_windows/plugins/modules/psexec\.py$
         args: [--python-version, '3.12']
       - id: mypy
         alias: mypy-development
@@ -158,8 +173,11 @@ repos:
         name: Check Windows target Python compatibility
         language: unsupported
         files: >-
-          (?x)^((?:legacy_windows|legacy_ad)/plugins/(modules|module_utils)
+          (?x)^((?:legacy_windows|legacy_ad|legacy_community_windows)
+          /plugins/(modules|module_utils)
           |tests/integration/fixtures)/
+        # psexec executes on the controller, with controller-only dependencies.
+        exclude: ^legacy_community_windows/plugins/modules/psexec\.py$
         args: [-t=3.4-, --violations]
 
   - repo: https://github.com/adrienverge/yamllint
@@ -181,7 +199,9 @@ repos:
         # Documentation and unit-test-only edits do not change
         # Ansible interfaces.
         always_run: false
-        files: '(^((?:legacy_windows|legacy_ad)/plugins)/|\.ya?ml$|^justfile$)'
+        files: >-
+          (?x)(^((?:legacy_windows|legacy_ad|legacy_community_windows)/plugins)/
+          |\.ya?ml$|^justfile$)
         # GitHub workflow YAML is checked by actionlint, not Ansible-lint.
         exclude: ^\.github/workflows/[^/]+\.ya?ml$
         require_serial: true

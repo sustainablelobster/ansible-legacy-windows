@@ -1,0 +1,167 @@
+---
+# Copyright 2026 sustainablelobster
+# SPDX-License-Identifier: GPL-3.0-or-later
+- name: Verify real session endpoint lifecycle and implicit async cleanup
+  hosts: legacy_community_windows_pssession
+  gather_facts: false
+  tasks:
+    - name: Create an owned endpoint-name fixture directory
+      sustainablelobster.legacy_windows.win_tempfile:
+        state: directory
+        prefix: legacy-community-session-
+      register: community_session_directory
+
+    - name: Exercise an isolated endpoint and always remove owned resources
+      block:
+        - name: Choose an isolated endpoint name
+          ansible.builtin.set_fact:
+            community_session_name: >-
+              LegacyCommunity{{ community_session_directory.path |
+              ansible.builtin.win_basename |
+              regex_replace('[^A-Za-z0-9]', '') }}
+
+        - name: Preview a local-only endpoint registration
+          sustainablelobster.legacy_community_windows.win_pssession_configuration:
+            name: '{{ community_session_name }}'
+            access_mode: local
+            processor_architecure: amd64
+          check_mode: true
+          diff: true
+          register: community_session_preview
+
+        - name: Independently query the previewed endpoint
+          sustainablelobster.legacy_windows.win_command: &session_query
+            argv:
+              - powershell.exe
+              - -NoLogo
+              - -NoProfile
+              - -NonInteractive
+              - -Command
+              - >-
+                if (Get-PSSessionConfiguration -Name $env:LEGACY_SESSION_NAME
+                -ErrorAction SilentlyContinue) {'present'} else {'absent'}
+          environment: &session_environment
+            LEGACY_SESSION_NAME: '{{ community_session_name }}'
+          changed_when: false
+          register: community_session_after_preview
+
+        - name: Register the real local-only endpoint
+          sustainablelobster.legacy_community_windows.win_pssession_configuration:
+            name: '{{ community_session_name }}'
+            access_mode: local
+            processor_architecure: amd64
+            async_timeout: 120
+            async_poll: 1
+          register: community_session_created
+
+        - name: Repeat the same local-only endpoint
+          sustainablelobster.legacy_community_windows.win_pssession_configuration:
+            name: '{{ community_session_name }}'
+            access_mode: local
+            processor_architecure: amd64
+          register: community_session_repeat
+
+        - name: Update the actual endpoint with a generated configuration file
+          sustainablelobster.legacy_community_windows.win_pssession_configuration:
+            name: '{{ community_session_name }}'
+            access_mode: local
+            processor_architecure: amd64
+            description: Owned endpoint fixture
+            language_mode: full_language
+          diff: true
+          register: community_session_updated
+
+        - name: Repeat generated configuration without regenerating metadata
+          sustainablelobster.legacy_community_windows.win_pssession_configuration:
+            name: '{{ community_session_name }}'
+            access_mode: local
+            processor_architecure: amd64
+            description: Owned endpoint fixture
+            language_mode: full_language
+          register: community_session_updated_again
+
+        - name: Read the registered configuration using the installed vendor
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - powershell.exe
+              - -NoLogo
+              - -NoProfile
+              - -NonInteractive
+              - -Command
+              - >-
+                $c = Get-PSSessionConfiguration -Name $env:LEGACY_SESSION_NAME;
+                $d = Import-PowerShellDataFile -LiteralPath $c.ConfigFilePath;
+                $d.Description
+          environment: *session_environment
+          changed_when: false
+          register: community_session_readback
+
+        - name: Reject invalid RunAs credentials before removing the endpoint
+          sustainablelobster.legacy_community_windows.win_pssession_configuration:
+            name: '{{ community_session_name }}'
+            description: This update must not replace the existing endpoint
+            run_as_credential_username: LegacyCommunityNoSuchUser
+            run_as_credential_password: not-an-existing-user-password
+          register: community_session_invalid_credential
+          ignore_errors: true
+          no_log: true
+
+        - name: Verify the endpoint survived credential failure
+          sustainablelobster.legacy_windows.win_command: *session_query
+          environment: *session_environment
+          changed_when: false
+          register: community_session_after_failure
+
+        - name: Require registration, idempotence and final module results
+          ansible.builtin.assert:
+            that:
+              - community_session_preview.changed
+              - community_session_after_preview.stdout | trim == 'absent'
+              - community_session_created.changed
+              - not community_session_repeat.changed
+              - community_session_updated.changed
+              - not community_session_updated_again.changed
+              - >-
+                community_session_readback.stdout | trim ==
+                'Owned endpoint fixture'
+              - community_session_invalid_credential is failed
+              - community_session_after_failure.stdout | trim == 'present'
+              - "'ansible_job_id' not in community_session_created"
+              - "'finished' not in community_session_created"
+
+        - name: Preview endpoint removal
+          sustainablelobster.legacy_community_windows.win_pssession_configuration:
+            name: '{{ community_session_name }}'
+            state: absent
+          check_mode: true
+          register: community_session_remove_preview
+
+        - name: Remove the actual endpoint
+          sustainablelobster.legacy_community_windows.win_pssession_configuration:
+            name: '{{ community_session_name }}'
+            state: absent
+          register: community_session_removed
+
+        - name: Repeat removal
+          sustainablelobster.legacy_community_windows.win_pssession_configuration:
+            name: '{{ community_session_name }}'
+            state: absent
+          register: community_session_removed_again
+
+        - name: Verify removal idempotence
+          ansible.builtin.assert:
+            that:
+              - community_session_remove_preview.changed
+              - community_session_removed.changed
+              - not community_session_removed_again.changed
+      always:
+        - name: Remove only the owned endpoint after any failure
+          sustainablelobster.legacy_community_windows.win_pssession_configuration:
+            name: '{{ community_session_name }}'
+            state: absent
+          when: community_session_name is defined
+
+        - name: Remove only the owned fixture directory
+          sustainablelobster.legacy_windows.win_file:
+            path: '{{ community_session_directory.path }}'
+            state: absent

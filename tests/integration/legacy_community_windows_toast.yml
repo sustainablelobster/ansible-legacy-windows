@@ -1,0 +1,66 @@
+---
+# Copyright 2026 sustainablelobster
+# SPDX-License-Identifier: GPL-3.0-or-later
+- name: Verify the actual local native notification path
+  hosts: legacy_community_windows_toast
+  gather_facts: false
+  tasks:
+    - name: Preview a literal native notification without showing it
+      sustainablelobster.legacy_community_windows.win_toast:
+        expire: 1
+        title: Legacy collection native notification preview
+        msg: 'Literal XML text: <message> & supplementary Unicode 🦞'
+        tag: LegacyCommunityPreview
+        group: LegacyCommunityFixture
+        popup: false
+      check_mode: true
+      register: community_toast_preview
+
+    - name: Verify preview does not report delivery or a state change
+      ansible.builtin.assert:
+        that:
+          - not community_toast_preview.toast_sent
+          - not community_toast_preview.changed
+          - community_toast_preview.expire_at_utc | length > 0
+
+    - name: Send and expire an actual native local notification
+      sustainablelobster.legacy_community_windows.win_toast:
+        expire: 1
+        title: Legacy collection native notification fixture
+        msg: 'Disposable notification: <message> & supplementary Unicode 🦞'
+        tag: LegacyCommunityFixture
+        group: LegacyCommunityFixture
+        popup: false
+      async: 30
+      poll: 0
+      register: community_toast_job
+
+    - name: Collect the real native async notification result
+      block:
+        - name: Wait for the owned notification operation to finish
+          sustainablelobster.legacy_windows.async_status:
+            jid: '{{ community_toast_job.ansible_job_id }}'
+          register: community_toast_result
+          until: community_toast_result.finished
+          retries: 15
+          delay: 1
+
+        - name: Verify the real desktop or explicit no-user outcome
+          ansible.builtin.assert:
+            that:
+              - not community_toast_result.changed
+              - community_toast_result.time_taken >= 0
+              - community_toast_result.expire_at_utc | length > 0
+              - community_toast_result.sent_localtime | length > 0
+              - >-
+                community_toast_result.toast_sent ==
+                (community_toast_expect_delivery | default(true) | bool)
+              - >-
+                community_toast_result.toast_sent or
+                community_toast_result.no_toast_sent_reason ==
+                'No logged in users to notify'
+      always:
+        - name: Remove the completed owned async status record
+          sustainablelobster.legacy_windows.async_status:
+            jid: '{{ community_toast_job.ansible_job_id }}'
+            mode: cleanup

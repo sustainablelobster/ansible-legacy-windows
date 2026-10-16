@@ -1,0 +1,97 @@
+---
+# Copyright 2026 sustainablelobster
+# SPDX-License-Identifier: GPL-3.0-or-later
+- name: Verify real installed Pester execution and report output
+  hosts: legacy_community_windows_pester
+  gather_facts: false
+  environment: '{{ community_pester_environment | default({}) }}'
+  tasks:
+    - name: Create an owned Pester fixture directory
+      sustainablelobster.legacy_windows.win_tempfile:
+        state: directory
+        prefix: legacy-community-pester-
+      register: community_pester_directory
+
+    - name: Execute only owned test fixtures and always remove them
+      block:
+        - name: Stage a parameterized passing and deliberately failing test
+          sustainablelobster.legacy_windows.win_copy:
+            dest: '{{ community_pester_directory.path }}\fixture.tests.ps1'
+            content: |
+              param([string]$Value = 'default')
+              Describe 'Owned passing test' -Tag CI {
+                It 'receives its data parameter' {
+                  $Value | Should Be 'supplied'
+                }
+              }
+              Describe 'Owned failing test' -Tag Failure {
+                It 'reports its failing count' { 1 | Should Be 2 }
+              }
+
+        - name: Preview a tagged run and report without executing tests
+          sustainablelobster.legacy_community_windows.win_pester:
+            path: '{{ community_pester_directory.path }}\fixture.tests.ps1'
+            tags: CI
+            test_parameters:
+              Value: supplied
+            output_file: '{{ community_pester_directory.path }}\report.xml'
+            minimum_version: '3.0.0'
+          check_mode: true
+          register: community_pester_preview
+
+        - name: Verify the preview did not create a report
+          sustainablelobster.legacy_windows.win_stat:
+            path: '{{ community_pester_directory.path }}\report.xml'
+          register: community_pester_preview_report
+
+        - name: Execute the tagged passing test with actual supplied parameters
+          sustainablelobster.legacy_community_windows.win_pester:
+            path: '{{ community_pester_directory.path }}\fixture.tests.ps1'
+            tags: [CI]
+            test_parameters:
+              Value: supplied
+            output_file: '{{ community_pester_directory.path }}\report.xml'
+            output_format: NunitXML
+            version: '3.0.0'
+          register: community_pester_passing
+
+        - name: Independently observe the real report file
+          sustainablelobster.legacy_windows.win_stat:
+            path: '{{ community_pester_directory.path }}\report.xml'
+          register: community_pester_report
+
+        - name: Report failing tests without treating them as a task failure
+          sustainablelobster.legacy_community_windows.win_pester:
+            path: '{{ community_pester_directory.path }}\fixture.tests.ps1'
+            tags: [Failure]
+          register: community_pester_failing
+
+        - name: Verify an unavailable version fails rather than running tests
+          sustainablelobster.legacy_community_windows.win_pester:
+            path: '{{ community_pester_directory.path }}\fixture.tests.ps1'
+            minimum_version: '999.0.0'
+          register: community_pester_missing_version
+          ignore_errors: true
+
+        - name: Require real engine counts, report output and check isolation
+          ansible.builtin.assert:
+            that:
+              - community_pester_preview.changed
+              - community_pester_preview.output is string
+              - not community_pester_preview_report.stat.exists
+              - community_pester_passing.changed
+              - community_pester_passing.pester_version is string
+              - community_pester_passing.output.TotalCount == 1
+              - community_pester_passing.output.PassedCount == 1
+              - community_pester_passing.output.FailedCount == 0
+              - community_pester_report.stat.exists
+              - community_pester_report.stat.size > 0
+              - community_pester_failing.changed
+              - community_pester_failing.output.TotalCount == 1
+              - community_pester_failing.output.FailedCount == 1
+              - community_pester_missing_version is failed
+      always:
+        - name: Remove only the owned Pester fixture directory and report
+          sustainablelobster.legacy_windows.win_file:
+            path: '{{ community_pester_directory.path }}'
+            state: absent

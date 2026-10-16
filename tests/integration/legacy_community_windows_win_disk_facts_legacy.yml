@@ -1,0 +1,134 @@
+---
+# Copyright 2026 sustainablelobster
+# SPDX-License-Identifier: GPL-3.0-or-later
+- name: Read real disk facts despite unavailable optional descriptor strings
+  hosts: legacy_community_windows_disk_facts
+  gather_facts: false
+  tasks:
+    - name: Collect default facts through the public interface
+      sustainablelobster.legacy_community_windows.win_disk_facts:
+      register: community_disk_facts_default
+
+    - name: Repeat the read without changing disks
+      sustainablelobster.legacy_community_windows.win_disk_facts:
+      register: community_disk_facts_repeat
+
+    - name: Read default facts in check mode
+      sustainablelobster.legacy_community_windows.win_disk_facts:
+      check_mode: true
+      register: community_disk_facts_preview
+
+    - name: Exercise an explicit empty filter and every individual group
+      sustainablelobster.legacy_community_windows.win_disk_facts:
+        filter: '{{ item }}'
+      loop:
+        - []
+        - [physical_disk]
+        - [virtual_disk]
+        - [win32_disk_drive]
+        - [partitions]
+        - [volumes]
+      register: community_disk_facts_filtered
+
+    - name: Require real base facts and read-only results
+      ansible.builtin.assert:
+        that:
+          - community_disk_facts_default is not changed
+          - community_disk_facts_repeat is not changed
+          - community_disk_facts_preview is not changed
+          - >-
+            community_disk_facts_default.ansible_facts.ansible_disks |
+            length > 0
+          - >-
+            community_disk_facts_repeat.ansible_facts.ansible_disks |
+            map(attribute='number') | list ==
+            community_disk_facts_default.ansible_facts.ansible_disks |
+            map(attribute='number') | list
+          - >-
+            community_disk_facts_preview.ansible_facts.ansible_disks |
+            map(attribute='number') | list ==
+            community_disk_facts_default.ansible_facts.ansible_disks |
+            map(attribute='number') | list
+
+    - name: Require every filter to retain base disk identity and metadata
+      vars:
+        community_disk_baseline: >-
+          {{ community_disk_facts_default.ansible_facts.ansible_disks | first }}
+        community_disk_filtered: >-
+          {{ item.ansible_facts.ansible_disks | first }}
+      ansible.builtin.assert:
+        that:
+          - item is not changed
+          - community_disk_filtered.number == community_disk_baseline.number
+          - community_disk_filtered.size == community_disk_baseline.size
+          - community_disk_filtered.size | int > 0
+          - >-
+            community_disk_filtered.partition_count ==
+            community_disk_baseline.partition_count
+          - >-
+            community_disk_filtered.manufacturer ==
+            community_disk_baseline.manufacturer
+          - community_disk_filtered.model == community_disk_baseline.model
+          - >-
+            community_disk_filtered.firmware_version ==
+            community_disk_baseline.firmware_version
+          - >-
+            community_disk_filtered.serial_number ==
+            community_disk_baseline.serial_number
+          - >-
+            'physical_disk' in item.item or
+            community_disk_filtered.physical_disk is not defined
+          - >-
+            'win32_disk_drive' in item.item or
+            community_disk_filtered.win32_disk_drive is not defined
+          - >-
+            'partitions' in item.item or 'volumes' in item.item or
+            community_disk_filtered.partitions is not defined
+      loop: '{{ community_disk_facts_filtered.results }}'
+      loop_control:
+        label: '{{ item.item }}'
+
+    - name: Query the physical descriptor independently with target Python
+      sustainablelobster.legacy_windows.win_command:
+        argv:
+          - '{{ ansible_python_interpreter }}'
+          - -c
+          - >-
+            {{ lookup('ansible.builtin.file',
+            playbook_dir ~ '/fixtures/community_disk_descriptor_read.py') }}
+          - '\\.\PhysicalDrive0'
+      changed_when: false
+      register: community_disk_descriptor_read
+
+    - name: Require the minimum runtime and a complete native header
+      vars:
+        community_disk_oracle: >-
+          {{ community_disk_descriptor_read.stdout | from_json }}
+      ansible.builtin.assert:
+        that:
+          - community_disk_oracle.python_version == [3, 4, 4]
+          - community_disk_oracle.returned_bytes >= 36
+          - community_disk_oracle.descriptor_size >= 36
+
+    - name: Require valid native fields and malformed legacy field warnings
+      vars:
+        community_disk_oracle: >-
+          {{ community_disk_descriptor_read.stdout | from_json }}
+        community_disk_native: >-
+          {{ community_disk_facts_default.ansible_facts.ansible_disks |
+          selectattr('number', 'equalto', 0) | first }}
+        community_disk_warnings: >-
+          {{ community_disk_facts_default.warnings | default([]) | join(' ') }}
+      ansible.builtin.assert:
+        that:
+          - item.value is none or community_disk_native[item.key] == item.value
+          - >-
+            item.key not in community_disk_oracle.malformed_fields or
+            (item.key in community_disk_warnings and
+             community_disk_native.path in community_disk_warnings)
+      loop: >-
+        {{ (community_disk_descriptor_read.stdout | from_json).fields |
+        dict2items }}
+      when: >-
+        'Modern storage metadata is unavailable.' in
+        (community_disk_facts_default.warnings | default([]) | join(' '))

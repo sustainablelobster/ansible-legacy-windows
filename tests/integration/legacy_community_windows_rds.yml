@@ -1,0 +1,267 @@
+---
+# Copyright 2026 sustainablelobster
+# SPDX-License-Identifier: GPL-3.0-or-later
+- name: Verify native gateway policy lifecycle and restore server settings
+  hosts: legacy_community_windows_rds
+  gather_facts: false
+  vars:
+    rds_bridging: [none, https_http, https_https]
+  tasks:
+    - name: Allocate a unique gateway fixture workspace
+      sustainablelobster.legacy_windows.win_tempfile:
+        state: directory
+        prefix: legacy-community-rds-
+      register: community_rds_directory
+
+    - name: Derive unique policy names from the owned workspace
+      ansible.builtin.set_fact:
+        community_rds_name: >-
+          {{ community_rds_directory.path | ansible.builtin.win_basename }}
+
+    - name: Exercise all three gateway interfaces
+      block:
+        - name: Stage the native WMI observer
+          sustainablelobster.legacy_windows.win_copy:
+            src: >-
+              {{ playbook_dir
+              }}/../../legacy_windows/plugins/module_utils/legacy_windows_wmi.py
+            dest: '{{ community_rds_directory.path }}\legacy_windows_wmi.py'
+
+        - name: Read original settings through an independent native query
+          sustainablelobster.legacy_windows.win_command:
+            chdir: '{{ community_rds_directory.path }}'
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - |
+                import json,sys
+                from legacy_windows_wmi import WmiConnection
+                with WmiConnection(r'ROOT\CIMV2\TerminalServices') as provider:
+                    fields=['MaxConnections','MaximumAllowedConnectionsBySku',
+                            'UnlimitedConnections','SslBridging',
+                            'OnlyConsentCapableClients']
+                    rows=provider.query(
+                        'SELECT * FROM Win32_TSGatewayServerSettings', fields)
+                print(json.dumps({'python':list(sys.version_info[:3]),'settings':rows[0]}))
+          register: community_rds_before
+          changed_when: false
+
+        - name: Require actual minimum-runtime execution
+          ansible.builtin.assert:
+            that: (community_rds_before.stdout | from_json).python == [3, 4, 4]
+
+        - name: Save restoration values
+          ansible.builtin.set_fact:
+            community_rds_original: >-
+              {{ (community_rds_before.stdout | from_json).settings }}
+
+        - name: Preview an isolated connection policy without creating it
+          sustainablelobster.legacy_community_windows.win_rds_cap:
+            name: '{{ community_rds_name }}-cap'
+            user_groups: ['BUILTIN\Users']
+            state: enabled
+          check_mode: true
+          register: community_rds_cap_preview
+
+        - name: Configure authentication timeouts and device redirection
+          sustainablelobster.legacy_community_windows.win_rds_cap:
+            <<: &rds_cap
+              name: '{{ community_rds_name }}-cap'
+              state: enabled
+              user_groups: ['BUILTIN\Users']
+              auth_method: password
+              session_timeout: 30
+              session_timeout_action: reauth
+              idle_timeout: 10
+              allow_only_sdrts_servers: true
+              redirect_clipboard: true
+              redirect_drives: false
+              redirect_printers: false
+              redirect_serial: false
+              redirect_pnp: false
+          register: community_rds_cap_created
+          diff: true
+
+        - name: Repeat the connection policy
+          sustainablelobster.legacy_community_windows.win_rds_cap:
+            <<: *rds_cap
+          register: community_rds_cap_repeated
+
+        - name: Move the owned policy to the effective final position
+          sustainablelobster.legacy_community_windows.win_rds_cap:
+            name: '{{ community_rds_name }}-cap'
+            order: 10000
+
+        - name: Repeat an order beyond the available policy positions
+          sustainablelobster.legacy_community_windows.win_rds_cap:
+            name: '{{ community_rds_name }}-cap'
+            order: 10000
+          register: community_rds_cap_order_repeated
+
+        - name: Preview an isolated resource policy
+          sustainablelobster.legacy_community_windows.win_rds_rap:
+            name: '{{ community_rds_name }}-rap'
+            user_groups: ['BUILTIN\Users']
+            state: enabled
+          check_mode: true
+          register: community_rds_rap_preview
+
+        - name: Configure a resource authorization policy with exact ports
+          sustainablelobster.legacy_community_windows.win_rds_rap:
+            <<: &rds_rap
+              name: '{{ community_rds_name }}-rap'
+              state: enabled
+              description: Owned native gateway integration fixture
+              user_groups: ['BUILTIN\Users']
+              computer_group_type: allow_any
+              allowed_ports: [3389, 3390]
+          register: community_rds_rap_created
+          diff: true
+
+        - name: Repeat the resource policy
+          sustainablelobster.legacy_community_windows.win_rds_rap:
+            <<: *rds_rap
+          register: community_rds_rap_repeated
+
+        - name: Start the same-SKU comparison from unlimited connections
+          sustainablelobster.legacy_community_windows.win_rds_settings:
+            max_connections: -1
+
+        - name: Apply the explicit SKU maximum
+          sustainablelobster.legacy_community_windows.win_rds_settings:
+            max_connections: >-
+              {{ community_rds_original.MaximumAllowedConnectionsBySku }}
+          register: community_rds_maximum_sku
+
+        - name: Repeat the same explicit maximum
+          sustainablelobster.legacy_community_windows.win_rds_settings:
+            max_connections: >-
+              {{ community_rds_original.MaximumAllowedConnectionsBySku }}
+          register: community_rds_maximum_sku_repeated
+
+        - name: Restore unlimited connections without changing the numeric limit
+          sustainablelobster.legacy_community_windows.win_rds_settings:
+            max_connections: -1
+          register: community_rds_unlimited_sku
+
+        - name: Repeat unlimited connections at the same numeric limit
+          sustainablelobster.legacy_community_windows.win_rds_settings:
+            max_connections: -1
+          register: community_rds_unlimited_sku_repeated
+
+        - name: Predict a gateway-wide setting update
+          sustainablelobster.legacy_community_windows.win_rds_settings:
+            max_connections: 37
+          check_mode: true
+          register: community_rds_settings_preview
+
+        - name: Configure bounded connections bridging and messaging
+          sustainablelobster.legacy_community_windows.win_rds_settings:
+            <<: &rds_settings
+              max_connections: 37
+              ssl_bridging: https_http
+              enable_only_messaging_capable_clients: true
+          register: community_rds_settings_updated
+          diff: true
+
+        - name: Repeat the gateway-wide settings
+          sustainablelobster.legacy_community_windows.win_rds_settings:
+            <<: *rds_settings
+          register: community_rds_settings_repeated
+
+        - name: Verify observable change and idempotence contracts
+          ansible.builtin.assert:
+            that:
+              - community_rds_cap_preview.changed
+              - community_rds_cap_created.changed
+              - not community_rds_cap_repeated.changed
+              - not community_rds_cap_order_repeated.changed
+              - community_rds_rap_preview.changed
+              - community_rds_rap_created.changed
+              - not community_rds_rap_repeated.changed
+              - not community_rds_maximum_sku.changed
+              - not community_rds_maximum_sku_repeated.changed
+              - not community_rds_unlimited_sku.changed
+              - not community_rds_unlimited_sku_repeated.changed
+              - community_rds_settings_preview.changed
+              - community_rds_settings_updated.changed
+              - not community_rds_settings_repeated.changed
+
+        - name: Switch the enabled policy to smart card authentication
+          sustainablelobster.legacy_community_windows.win_rds_cap:
+            <<: &rds_smartcard
+              name: '{{ community_rds_name }}-cap'
+              state: enabled
+              auth_method: smartcard
+          register: community_rds_cap_smartcard
+
+        - name: Repeat the enabled smart card policy
+          sustainablelobster.legacy_community_windows.win_rds_cap:
+            <<: *rds_smartcard
+          register: community_rds_cap_smartcard_repeat
+
+        - name: Require idempotent authentication switching
+          ansible.builtin.assert:
+            that:
+              - community_rds_cap_smartcard.changed
+              - not community_rds_cap_smartcard_repeat.changed
+
+        - name: Preview disabling existing policies
+          sustainablelobster.legacy_community_windows.win_rds_cap:
+            name: '{{ community_rds_name }}-cap'
+            state: disabled
+          check_mode: true
+          register: community_rds_cap_disable_preview
+
+        - name: Disable the connection authorization policy
+          sustainablelobster.legacy_community_windows.win_rds_cap:
+            name: '{{ community_rds_name }}-cap'
+            state: disabled
+          register: community_rds_cap_disabled
+
+        - name: Update the resource policy without changing its identity
+          sustainablelobster.legacy_community_windows.win_rds_rap:
+            name: '{{ community_rds_name }}-rap'
+            state: disabled
+            description: Revised owned native fixture
+            allowed_ports: [any]
+          register: community_rds_rap_disabled
+
+        - name: Verify both existing policies were updated
+          ansible.builtin.assert:
+            that:
+              - community_rds_cap_disable_preview.changed
+              - community_rds_cap_disabled.changed
+              - community_rds_rap_disabled.changed
+      always:
+        - name: Restore gateway settings even if policy cleanup fails
+          block:
+            - name: Remove only the uniquely owned connection policy
+              sustainablelobster.legacy_community_windows.win_rds_cap:
+                name: '{{ community_rds_name }}-cap'
+                state: absent
+          always:
+            - name: Remove the resource policy before restoring global settings
+              block:
+                - name: Remove only the uniquely owned resource policy
+                  sustainablelobster.legacy_community_windows.win_rds_rap:
+                    name: '{{ community_rds_name }}-rap'
+                    state: absent
+              always:
+                - name: Restore the original gateway-wide settings
+                  block:
+                    - name: Restore original connection and messaging values
+                      sustainablelobster.legacy_community_windows.win_rds_settings:
+                        max_connections: >-
+                          {{ -1 if community_rds_original.UnlimitedConnections
+                             else community_rds_original.MaxConnections }}
+                        ssl_bridging: >-
+                          {{ rds_bridging[community_rds_original.SslBridging] }}
+                        enable_only_messaging_capable_clients: >-
+                          {{ community_rds_original.OnlyConsentCapableClients }}
+                      when: community_rds_original is defined
+                  always:
+                    - name: Remove the exact owned observer directory
+                      sustainablelobster.legacy_windows.win_file:
+                        path: '{{ community_rds_directory.path }}'
+                        state: absent

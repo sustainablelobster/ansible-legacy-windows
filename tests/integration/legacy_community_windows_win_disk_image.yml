@@ -1,0 +1,104 @@
+---
+# Copyright 2026 sustainablelobster
+# SPDX-License-Identifier: GPL-3.0-or-later
+- name: Verify real virtual image attachment and assigned volume paths
+  hosts: legacy_community_windows_storage
+  gather_facts: false
+  tasks:
+    - name: Require an owned formatted image prepared by the lab runner
+      ansible.builtin.assert:
+        that:
+          - community_disk_image_fixture is defined
+          - community_disk_image_sentinel is defined
+
+    - name: Inspect the initial attachment without changing it
+      sustainablelobster.legacy_community_windows.win_disk_image:
+        image_path: '{{ community_disk_image_fixture }}'
+        state: absent
+      check_mode: true
+      register: community_image_initial
+
+    - name: Protect images already attached by someone else
+      ansible.builtin.assert:
+        that: not community_image_initial.changed
+
+    - name: Exercise the owned image and always detach it
+      block:
+        - name: Preview attachment without assigning a volume
+          sustainablelobster.legacy_community_windows.win_disk_image:
+            image_path: '{{ community_disk_image_fixture }}'
+          check_mode: true
+          register: community_image_preview
+
+        - name: Attach through the installed native image provider
+          sustainablelobster.legacy_community_windows.win_disk_image:
+            image_path: '{{ community_disk_image_fixture }}'
+          register: community_image_attached
+
+        - name: Repeat attachment without creating another device
+          sustainablelobster.legacy_community_windows.win_disk_image:
+            image_path: '{{ community_disk_image_fixture }}'
+          register: community_image_repeated
+
+        - name: Read actual sentinel bytes using the minimum target interpreter
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - >-
+                import os,sys;assert sys.version_info[:3] == (3,4,4);
+                print(open(os.path.join(sys.argv[1],sys.argv[2]),'r').read())
+              - '{{ community_image_attached.mount_paths[0] }}'
+              - '{{ community_disk_image_sentinel }}'
+          changed_when: false
+          register: community_image_bytes
+
+        - name: Preview detachment without unmounting the real volume
+          sustainablelobster.legacy_community_windows.win_disk_image:
+            image_path: '{{ community_disk_image_fixture }}'
+            state: absent
+          check_mode: true
+          register: community_image_remove_preview
+
+        - name: Independently confirm preview preserved the actual file
+          sustainablelobster.legacy_windows.win_stat:
+            path: >-
+              {{ community_image_attached.mount_paths[0] }}{{
+                 community_disk_image_sentinel }}
+          register: community_image_after_preview
+
+        - name: Require real volume data and repeat stability
+          ansible.builtin.assert:
+            that:
+              - community_image_preview.changed
+              - community_image_attached.changed
+              - not community_image_repeated.changed
+              - >-
+                community_image_attached.mount_paths ==
+                community_image_repeated.mount_paths
+              - community_image_bytes.stdout | trim == 'owned image fixture'
+              - community_image_remove_preview.changed
+              - community_image_after_preview.stat.exists
+
+        - name: Detach the owned image
+          sustainablelobster.legacy_community_windows.win_disk_image:
+            image_path: '{{ community_disk_image_fixture }}'
+            state: absent
+          register: community_image_removed
+
+        - name: Repeat detachment
+          sustainablelobster.legacy_community_windows.win_disk_image:
+            image_path: '{{ community_disk_image_fixture }}'
+            state: absent
+          register: community_image_removed_again
+
+        - name: Require detachment idempotence
+          ansible.builtin.assert:
+            that:
+              - community_image_removed.changed
+              - not community_image_removed_again.changed
+      always:
+        - name: Detach only the runner's owned image after any failure
+          sustainablelobster.legacy_community_windows.win_disk_image:
+            image_path: '{{ community_disk_image_fixture }}'
+            state: absent

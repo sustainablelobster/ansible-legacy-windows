@@ -1,0 +1,102 @@
+---
+# Copyright 2026 sustainablelobster
+# SPDX-License-Identifier: GPL-3.0-or-later
+- name: Verify native disk partition and volume facts on an owned image
+  hosts: legacy_community_windows_storage
+  gather_facts: false
+  tasks:
+    - name: Require the runner's independently resolved owned disk and drive
+      ansible.builtin.assert:
+        that:
+          - community_storage_owned_disk_number is defined
+          - community_storage_owned_drive is defined
+          - community_storage_original_label is defined
+
+    - name: Collect all groups from the actual installed providers
+      sustainablelobster.legacy_community_windows.win_disk_facts:
+      register: community_disks_all
+
+    - name: Repeat the same read without changing target state
+      sustainablelobster.legacy_community_windows.win_disk_facts:
+      register: community_disks_repeat
+
+    - name: Read only volumes and their containing partitions in check mode
+      sustainablelobster.legacy_community_windows.win_disk_facts:
+        filter: [volumes]
+      check_mode: true
+      register: community_disks_volumes
+
+    - name: Read base disk fields without optional fact groups
+      sustainablelobster.legacy_community_windows.win_disk_facts:
+        filter: []
+      register: community_disks_base
+
+    - name: Select only the exact runner-owned disk and mounted partition
+      ansible.builtin.set_fact:
+        community_owned_disk_facts: >-
+          {{ community_disks_all.ansible_facts.ansible_disks |
+             selectattr('number', 'equalto',
+                        community_storage_owned_disk_number | int) | first }}
+        community_owned_volume_disk_facts: >-
+          {{ community_disks_volumes.ansible_facts.ansible_disks |
+             selectattr('number', 'equalto',
+                        community_storage_owned_disk_number | int) | first }}
+        community_owned_base_disk_facts: >-
+          {{ community_disks_base.ansible_facts.ansible_disks |
+             selectattr('number', 'equalto',
+                        community_storage_owned_disk_number | int) | first }}
+
+    - name: Independently read real volume bytes label and allocation unit size
+      sustainablelobster.legacy_windows.win_command:
+        argv:
+          - '{{ ansible_python_interpreter }}'
+          - -c
+          - >-
+            import ctypes,json,shutil,sys;
+            assert sys.version_info[:3] == (3,4,4);
+            k=ctypes.WinDLL('kernel32',use_last_error=True);
+            sectors=ctypes.c_uint32();size=ctypes.c_uint32();
+            free=ctypes.c_uint32();total=ctypes.c_uint32();
+            ok=k.GetDiskFreeSpaceW(ctypes.c_wchar_p(sys.argv[1]),
+            ctypes.byref(sectors),ctypes.byref(size),
+            ctypes.byref(free),ctypes.byref(total));
+            assert ok,ctypes.get_last_error();
+            print(json.dumps(dict(size=shutil.disk_usage(sys.argv[1]).total,
+            cluster_size=sectors.value*size.value)))
+          - '{{ community_storage_owned_drive }}'
+      changed_when: false
+      register: community_disk_volume_native
+
+    - name: Require native values filter behavior and read-only results
+      vars:
+        community_native_volume_facts: >-
+          {{ community_owned_disk_facts.partitions[0].volumes[0] }}
+      ansible.builtin.assert:
+        that:
+          - not community_disks_all.changed
+          - not community_disks_repeat.changed
+          - not community_disks_volumes.changed
+          - not community_disks_base.changed
+          - community_owned_disk_facts.size == 67108864
+          - community_owned_disk_facts.partition_style == 'MBR'
+          - community_owned_disk_facts.partition_count == 1
+          - community_owned_disk_facts.partitions | length == 1
+          - community_owned_disk_facts.partitions[0].number == 1
+          - >-
+            community_owned_disk_facts.partitions[0].drive_letter ==
+            community_storage_owned_drive[0]
+          - >-
+            community_native_volume_facts.label ==
+            community_storage_original_label
+          - >-
+            community_native_volume_facts.size ==
+            (community_disk_volume_native.stdout | from_json).size
+          - >-
+            community_native_volume_facts.allocation_unit_size ==
+            (community_disk_volume_native.stdout | from_json).cluster_size
+          - community_owned_disk_facts.win32_disk_drive.index is defined
+          - community_owned_disk_facts.physical_disk is defined
+          - community_owned_volume_disk_facts.partitions[0].volumes is defined
+          - community_owned_volume_disk_facts.physical_disk is not defined
+          - community_owned_base_disk_facts.partitions is not defined
+          - community_owned_base_disk_facts.physical_disk is not defined

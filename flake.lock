@@ -1,5 +1,17 @@
 {
   "nodes": {
+    "actionlint-queue-patch": {
+      "flake": false,
+      "locked": {
+        "narHash": "sha256-iG9hUoW+IgFKWu2BVzvchubcXa0p7MoPhhdclzojDfc=",
+        "type": "file",
+        "url": "https://github.com/rhysd/actionlint/commit/644076a59742c2d1540ebd4686eab3c308f0e562.patch"
+      },
+      "original": {
+        "type": "file",
+        "url": "https://github.com/rhysd/actionlint/commit/644076a59742c2d1540ebd4686eab3c308f0e562.patch"
+      }
+    },
     "nixpkgs": {
       "locked": {
         "lastModified": 1790450978,
@@ -16,9 +28,28 @@
         "type": "github"
       }
     },
+    "pypsexec": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1634848027,
+        "narHash": "sha256-VmQ1rzBqKZnlCMcTJGKjbwaJCyvygex9pxnt/fPJloM=",
+        "owner": "jborean93",
+        "repo": "pypsexec",
+        "rev": "95c312b54b149451e6528becb63014f948a38956",
+        "type": "github"
+      },
+      "original": {
+        "owner": "jborean93",
+        "ref": "v0.3.0",
+        "repo": "pypsexec",
+        "type": "github"
+      }
+    },
     "root": {
       "inputs": {
+        "actionlint-queue-patch": "actionlint-queue-patch",
         "nixpkgs": "nixpkgs",
+        "pypsexec": "pypsexec",
         "sansldap": "sansldap"
       }
     },

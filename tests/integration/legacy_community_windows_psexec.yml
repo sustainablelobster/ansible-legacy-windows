@@ -1,0 +1,84 @@
+---
+# Copyright 2026 sustainablelobster
+# SPDX-License-Identifier: GPL-3.0-or-later
+- name: Verify controller-based PsExec through the actual SMB service
+  hosts: legacy_community_windows_psexec
+  gather_facts: false
+  tasks:
+    - name: Confirm unsupported check mode does not launch a process
+      sustainablelobster.legacy_community_windows.psexec: &psexec
+        hostname: '{{ ansible_host | default(inventory_hostname) }}'
+        connection_username: '{{ ansible_user }}'
+        connection_password: '{{ ansible_password }}'
+        encrypt: '{{ community_psexec_encrypt | default(false) }}'
+        executable: cmd.exe
+        arguments: >-
+          /c "echo legacy-controller-psexec&
+          echo legacy-stderr 1>&2& exit /b 37"
+        process_username: System
+      delegate_to: localhost
+      vars:
+        ansible_python_interpreter: '{{ ansible_playbook_python }}'
+      check_mode: true
+      register: community_psexec_preview
+      no_log: true
+
+    - name: Run the real remote process without target Python or WinRM
+      sustainablelobster.legacy_community_windows.psexec: *psexec
+      delegate_to: localhost
+      vars:
+        ansible_python_interpreter: '{{ ansible_playbook_python }}'
+      register: community_psexec_result
+      no_log: true
+      failed_when: false
+
+    - name: Verify the observable process result
+      ansible.builtin.assert:
+        that:
+          - community_psexec_preview is skipped
+          - community_psexec_result.changed
+          - community_psexec_result.rc == 37
+          - "'legacy-controller-psexec' in community_psexec_result.stdout"
+          - "'legacy-stderr' in community_psexec_result.stderr"
+          - community_psexec_result.pid is not defined
+
+    - name: Repeat through a fresh temporary SMB service
+      sustainablelobster.legacy_community_windows.psexec: *psexec
+      delegate_to: localhost
+      vars:
+        ansible_python_interpreter: '{{ ansible_playbook_python }}'
+      register: community_psexec_repeated
+      no_log: true
+      failed_when: false
+
+    - name: Verify command execution is intentionally non-idempotent
+      ansible.builtin.assert:
+        that:
+          - community_psexec_repeated.changed
+          - community_psexec_repeated.rc == community_psexec_result.rc
+          - community_psexec_repeated.stdout == community_psexec_result.stdout
+
+    - name: Start a short detached process
+      sustainablelobster.legacy_community_windows.psexec:
+        hostname: '{{ ansible_host | default(inventory_hostname) }}'
+        connection_username: '{{ ansible_user }}'
+        connection_password: '{{ ansible_password }}'
+        encrypt: '{{ community_psexec_encrypt | default(false) }}'
+        executable: cmd.exe
+        process_username: System
+        arguments: /c "ping -n 3 127.0.0.1 >nul"
+        asynchronous: true
+      delegate_to: localhost
+      vars:
+        ansible_python_interpreter: '{{ ansible_playbook_python }}'
+      register: community_psexec_detached
+      no_log: true
+
+    - name: Verify detached execution returns only a process identifier
+      ansible.builtin.assert:
+        that:
+          - community_psexec_detached.changed
+          - community_psexec_detached.pid > 0
+          - community_psexec_detached.rc is not defined
+          - community_psexec_detached.stdout is not defined
+          - community_psexec_detached.stderr is not defined

@@ -1,0 +1,62 @@
+---
+# Copyright 2026 sustainablelobster
+# SPDX-License-Identifier: GPL-3.0-or-later
+- name: Verify registry import comparison and cleanup through Windows Python
+  hosts: legacy_windows
+  gather_facts: false
+  vars:
+    regmerge_key: 'HKCU:\Software\LegacyCommunityRegmergeFixture'
+    regmerge_content: |
+      Windows Registry Editor Version 5.00
+
+      [HKEY_CURRENT_USER\Software\LegacyCommunityRegmergeFixture]
+      "Message"="first"
+
+  tasks:
+    - name: Start with an absent owned comparison key
+      sustainablelobster.legacy_windows.win_regedit:
+        path: '{{ regmerge_key }}'
+        state: absent
+
+    - name: Exercise native registry import and comparison
+      block:
+        - name: Import content into the absent key
+          sustainablelobster.legacy_community_windows.win_regmerge:
+            content: '{{ regmerge_content }}'
+            compare_to: '{{ regmerge_key }}'
+          register: created
+
+        - name: Compare matching registry content
+          sustainablelobster.legacy_community_windows.win_regmerge:
+            content: '{{ regmerge_content }}'
+            compare_to: '{{ regmerge_key }}'
+          register: repeated
+
+        - name: Import a changed value
+          sustainablelobster.legacy_community_windows.win_regmerge:
+            content: '{{ regmerge_content | replace(''first'', ''second'') }}'
+            compare_to: '{{ regmerge_key }}'
+          register: updated
+
+        - name: Read the resulting native registry value
+          sustainablelobster.legacy_windows.win_reg_stat:
+            path: '{{ regmerge_key }}'
+            name: Message
+          register: actual
+
+        - name: Require import comparison and actual registry state
+          ansible.builtin.assert:
+            that:
+              - created is changed
+              - not created.compare_to_key_found
+              - repeated is not changed
+              - repeated.compared
+              - repeated.difference_count == 0
+              - updated is changed
+              - updated.difference_count > 0
+              - actual.value == 'second'
+      always:
+        - name: Remove the owned registry fixture
+          sustainablelobster.legacy_windows.win_regedit:
+            path: '{{ regmerge_key }}'
+            state: absent

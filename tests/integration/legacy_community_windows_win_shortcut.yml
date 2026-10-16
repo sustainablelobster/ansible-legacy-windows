@@ -1,0 +1,121 @@
+---
+# Copyright 2026 sustainablelobster
+# SPDX-License-Identifier: GPL-3.0-or-later
+- name: Verify native application and URL shortcuts through Windows Python
+  hosts: legacy_windows
+  gather_facts: false
+  tasks:
+    - name: Allocate an isolated shortcut workspace
+      sustainablelobster.legacy_windows.win_tempfile:
+        state: directory
+        prefix: legacy-community-shortcut-
+      register: shortcut_workspace
+
+    - name: Exercise shortcut properties flags and recovery
+      vars:
+        shortcut_path: '{{ shortcut_workspace.path }}\Application.lnk'
+        shortcut_options: &shortcut_options
+          src: '%SystemRoot%\System32\cmd.exe'
+          dest: '{{ shortcut_path }}'
+          arguments: /k echo ready
+          directory: '{{ shortcut_workspace.path }}'
+          icon: '%SystemRoot%\System32\cmd.exe,0'
+          description: Café 雪
+          hotkey: Ctrl+Alt+F
+          windowstyle: maximized
+      block:
+        - name: Predict application shortcut creation
+          sustainablelobster.legacy_community_windows.win_shortcut:
+            <<: *shortcut_options
+          check_mode: true
+          register: predicted
+
+        - name: Inspect predicted shortcut destination
+          sustainablelobster.legacy_windows.win_stat:
+            path: '{{ shortcut_path }}'
+          register: before_create
+
+        - name: Create an application shortcut
+          sustainablelobster.legacy_community_windows.win_shortcut:
+            <<: *shortcut_options
+          register: created
+
+        - name: Repeat application shortcut properties
+          sustainablelobster.legacy_community_windows.win_shortcut:
+            <<: *shortcut_options
+          register: repeated
+
+        - name: Predict an administrator flag change
+          sustainablelobster.legacy_community_windows.win_shortcut:
+            <<: *shortcut_options
+            run_as_admin: true
+          check_mode: true
+          register: predicted_admin
+
+        - name: Inspect the on-disk shortcut flags independently
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - >-
+                import json,struct,sys; assert sys.version_info[:3] == (3,4,4);
+                data=open(sys.argv[1],'rb').read(24);
+                print(json.dumps([struct.unpack_from('<I',data)[0],bool(struct.unpack_from('<I',data,20)[0]&0x2000)]))
+              - '{{ shortcut_path }}'
+          register: predicted_flags
+          changed_when: false
+
+        - name: Set the administrator flag
+          sustainablelobster.legacy_community_windows.win_shortcut:
+            <<: *shortcut_options
+            run_as_admin: true
+          register: admin
+
+        - name: Repeat the administrator flag
+          sustainablelobster.legacy_community_windows.win_shortcut:
+            <<: *shortcut_options
+            run_as_admin: true
+          register: admin_repeated
+
+        - name: Create a URL shortcut
+          sustainablelobster.legacy_community_windows.win_shortcut:
+            src: https://example.test/
+            dest: '{{ shortcut_workspace.path }}\Website.url'
+          register: url_created
+
+        - name: Repeat the URL shortcut
+          sustainablelobster.legacy_community_windows.win_shortcut:
+            src: https://example.test/
+            dest: '{{ shortcut_workspace.path }}\Website.url'
+          register: url_repeated
+
+        - name: Delete the application shortcut
+          sustainablelobster.legacy_community_windows.win_shortcut:
+            dest: '{{ shortcut_path }}'
+            state: absent
+          register: removed
+
+        - name: Require shortcut state and nonmutating check mode
+          ansible.builtin.assert:
+            that:
+              - predicted is changed
+              - not before_create.stat.exists
+              - created is changed
+              - created.description == 'Café 雪'
+              - created.args == '/k echo ready'
+              - created.hotkey == 'Ctrl+Alt+F'
+              - created.windowstyle == 'maximized'
+              - repeated is not changed
+              - predicted_admin is changed
+              - (predicted_flags.stdout | from_json) == [76, false]
+              - admin is changed
+              - admin_repeated is not changed
+              - url_created is changed
+              - url_repeated is not changed
+              - url_repeated.src == 'https://example.test/'
+              - removed is changed
+      always:
+        - name: Remove shortcut files and workspace
+          sustainablelobster.legacy_windows.win_file:
+            path: '{{ shortcut_workspace.path }}'
+            state: absent

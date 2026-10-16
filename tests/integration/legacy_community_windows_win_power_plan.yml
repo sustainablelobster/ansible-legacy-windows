@@ -1,0 +1,87 @@
+---
+# Copyright 2026 sustainablelobster
+# SPDX-License-Identifier: GPL-3.0-or-later
+- name: Verify native power-plan selection and restore the original plan
+  hosts: legacy_windows
+  gather_facts: false
+  vars:
+    power_reader: >-
+      {{ lookup('ansible.builtin.file',
+      playbook_dir ~ '/fixtures/community_power_read.py') }}
+  tasks:
+    - name: Read the original active identity independently
+      sustainablelobster.legacy_windows.win_command: &power_read
+        argv: ['{{ ansible_python_interpreter }}', -c, '{{ power_reader }}']
+      register: power_original
+      changed_when: false
+
+    - name: Inspect the catalogue through its documented unavailable-plan result
+      sustainablelobster.legacy_community_windows.win_power_plan:
+        name: __legacy_community_unavailable_fixture__
+      register: power_catalogue
+      failed_when: false
+
+    - name: Require real plans and a nonmutating unavailable-name failure
+      ansible.builtin.assert:
+        that:
+          - power_catalogue is not changed
+          - "'not available' in power_catalogue.msg"
+          - power_catalogue.all_available_plans | length > 1
+
+    - name: Select the current and alternate installed names
+      ansible.builtin.set_fact:
+        power_current_name: >-
+          {{ (power_catalogue.all_available_plans | dict2items |
+          selectattr('value', 'equalto', true) | first).key }}
+        power_alternate_name: >-
+          {{ (power_catalogue.all_available_plans | dict2items |
+          selectattr('value', 'equalto', false) | first).key }}
+
+    - name: Exercise native activation and unchanged repetition
+      block:
+        - name: Predict the alternate plan
+          sustainablelobster.legacy_community_windows.win_power_plan: &power
+            name: '{{ power_alternate_name }}'
+          check_mode: true
+          register: power_preview
+
+        - name: Independently inspect preview behavior
+          sustainablelobster.legacy_windows.win_command: *power_read
+          changed_when: false
+          register: power_after_preview
+
+        - name: Activate the alternate plan
+          sustainablelobster.legacy_community_windows.win_power_plan: *power
+          register: power_applied
+
+        - name: Repeat the same plan
+          sustainablelobster.legacy_community_windows.win_power_plan: *power
+          register: power_repeated
+
+        - name: Read the actual active identity independently
+          sustainablelobster.legacy_windows.win_command: *power_read
+          changed_when: false
+          register: power_actual
+
+        - name: Require the requested active state and nonmutating preview
+          ansible.builtin.assert:
+            that:
+              - power_preview is changed
+              - power_preview.power_plan_enabled
+              - power_after_preview.stdout == power_original.stdout
+              - power_applied is changed
+              - power_repeated is not changed
+              - power_actual.stdout != power_original.stdout
+      always:
+        - name: Restore the original power plan
+          sustainablelobster.legacy_community_windows.win_power_plan:
+            name: '{{ power_current_name }}'
+
+        - name: Read the restored active identity independently
+          sustainablelobster.legacy_windows.win_command: *power_read
+          register: power_restored
+          changed_when: false
+
+        - name: Require exact restoration
+          ansible.builtin.assert:
+            that: power_restored.stdout == power_original.stdout

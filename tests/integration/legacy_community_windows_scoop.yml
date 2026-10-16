@@ -1,0 +1,118 @@
+---
+# Copyright 2026 sustainablelobster
+# SPDX-License-Identifier: GPL-3.0-or-later
+- name: Verify installed Scoop using a uniquely owned local bucket and package
+  hosts: legacy_community_windows_scoop
+  gather_facts: false
+  environment: '{{ community_scoop_environment | default({}) }}'
+  tasks:
+    - name: Require a real vendor installation and owned local package fixture
+      ansible.builtin.assert:
+        that:
+          - community_scoop_bucket_name is defined
+          - community_scoop_bucket_repository is defined
+          - community_scoop_package_name is defined
+          - community_scoop_script is defined
+
+    - name: Exercise actual package and bucket operations with cleanup
+      block:
+        - name: Predict adding the local fixture bucket
+          sustainablelobster.legacy_community_windows.win_scoop_bucket:
+            &scoop_bucket
+            name: '{{ community_scoop_bucket_name }}'
+            repo: '{{ community_scoop_bucket_repository }}'
+          check_mode: true
+          register: scoop_bucket_preview
+
+        - name: Add the actual local fixture bucket
+          sustainablelobster.legacy_community_windows.win_scoop_bucket:
+            *scoop_bucket
+          register: scoop_bucket_created
+
+        - name: Repeat the same bucket configuration
+          sustainablelobster.legacy_community_windows.win_scoop_bucket:
+            *scoop_bucket
+          register: scoop_bucket_repeated
+
+        - name: Predict installing the unique package
+          sustainablelobster.legacy_community_windows.win_scoop: &scoop_package
+            name: '{{ community_scoop_package_name }}'
+          check_mode: true
+          register: scoop_package_preview
+
+        - name: Install the actual local fixture package
+          sustainablelobster.legacy_community_windows.win_scoop: *scoop_package
+          register: scoop_package_installed
+
+        - name: Repeat the package install
+          sustainablelobster.legacy_community_windows.win_scoop: *scoop_package
+          register: scoop_package_repeated
+
+        - name: Independently read the installed vendor package manifest
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - powershell.exe
+              - -NoProfile
+              - -NonInteractive
+              - -ExecutionPolicy
+              - Bypass
+              - -File
+              - '{{ community_scoop_script }}'
+              - export
+          register: scoop_export
+          changed_when: false
+
+        - name: Verify predictions, actual state and unchanged repeats
+          ansible.builtin.assert:
+            that:
+              - scoop_bucket_preview.changed
+              - scoop_bucket_created.changed
+              - not scoop_bucket_repeated.changed
+              - scoop_package_preview.changed
+              - scoop_package_installed.changed
+              - not scoop_package_repeated.changed
+              - community_scoop_package_name in scoop_export.stdout
+
+        - name: Remove the actual package
+          sustainablelobster.legacy_community_windows.win_scoop:
+            name: '{{ community_scoop_package_name }}'
+            state: absent
+            purge: true
+          register: scoop_package_removed
+
+        - name: Repeat package removal
+          sustainablelobster.legacy_community_windows.win_scoop:
+            name: '{{ community_scoop_package_name }}'
+            state: absent
+            purge: true
+          register: scoop_package_removed_again
+
+        - name: Verify actual package removal and repeat behavior
+          ansible.builtin.assert:
+            that:
+              - scoop_package_removed.changed
+              - not scoop_package_removed_again.changed
+      always:
+        - name: Remove only the owned package after any failure
+          sustainablelobster.legacy_community_windows.win_scoop:
+            name: '{{ community_scoop_package_name }}'
+            state: absent
+            purge: true
+
+        - name: Remove only the owned local bucket
+          sustainablelobster.legacy_community_windows.win_scoop_bucket:
+            name: '{{ community_scoop_bucket_name }}'
+            state: absent
+          register: scoop_bucket_removed
+
+        - name: Repeat bucket removal
+          sustainablelobster.legacy_community_windows.win_scoop_bucket:
+            name: '{{ community_scoop_bucket_name }}'
+            state: absent
+          register: scoop_bucket_removed_again
+
+        - name: Verify bucket cleanup and idempotence
+          ansible.builtin.assert:
+            that:
+              - scoop_bucket_removed.changed
+              - not scoop_bucket_removed_again.changed

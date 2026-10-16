@@ -33,7 +33,7 @@ Galaxy also installs the compatible Windows runtime dependency. To install
 locally built or downloaded archives without contacting Galaxy, supply both:
 
 ```console
-ansible-galaxy collection install ./sustainablelobster-legacy_windows-1.1.0.tar.gz ./sustainablelobster-legacy_ad-1.0.0.tar.gz --offline
+ansible-galaxy collection install ./sustainablelobster-legacy_windows-1.2.0.tar.gz ./sustainablelobster-legacy_ad-1.0.0.tar.gz --offline
 ```
 
 The repository's

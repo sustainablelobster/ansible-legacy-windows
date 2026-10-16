@@ -154,6 +154,7 @@ class ReleasePair:
 
     windows: tuple[Path, str]
     ad: tuple[Path, str]
+    community: tuple[Path, str]
     github: PairedGithub
     galaxy: PairedGalaxy
     events: list[str]
@@ -185,7 +186,7 @@ def paired_candidates(
         directory.mkdir(parents=True, exist_ok=True)
         dependency = (
             {"sustainablelobster.legacy_windows": ">=1.0.0,<2.0.0"}
-            if collection == "legacy_ad"
+            if collection != "legacy_windows"
             else {}
         )
         (directory / "galaxy.yml").write_text(
@@ -206,13 +207,13 @@ def paired_candidates(
     galaxy = PairedGalaxy(events)
     monkeypatch.setattr(subprocess, "run", github.run)
     monkeypatch.setattr(ci_release, "_galaxy_api", lambda: galaxy)
-    return ReleasePair(bundles[0], bundles[1], github, galaxy, events)
+    return ReleasePair(bundles[0], bundles[1], bundles[2], github, galaxy, events)
 
 
 def test_ad_tag_publishes_windows_and_verifies_import_before_ad(
     pair: ReleasePair,
 ) -> None:
-    ci_release.publish_tagged(*pair.windows, *pair.ad)
+    ci_release.publish_tagged(pair.windows, pair.ad, pair.community)
     assert pair.events == [
         "github:" + WINDOWS_TAG + ":create",
         "github:" + WINDOWS_TAG + ":upload",
@@ -227,13 +228,13 @@ def test_ad_tag_publishes_windows_and_verifies_import_before_ad(
         "galaxy:legacy_ad:upload",
         "galaxy:legacy_ad:import",
     ]
-    assert set(pair.galaxy.metadata) == set(ci_release.COLLECTIONS)
+    assert set(pair.galaxy.metadata) == {"legacy_windows", "legacy_ad"}
 
 
 def test_windows_import_failure_blocks_all_ad_mutations(pair: ReleasePair) -> None:
     pair.galaxy.fail_import = "legacy_windows"
     with pytest.raises(AnsibleError, match="import failed"):
-        ci_release.publish_tagged(*pair.windows, *pair.ad)
+        ci_release.publish_tagged(pair.windows, pair.ad, pair.community)
     assert pair.github.releases[AD_TAG].release is None
     assert "legacy_ad" not in pair.galaxy.pending
 
@@ -243,12 +244,12 @@ def test_ad_retry_resumes_same_retained_windows_release_after_failed_import(
 ) -> None:
     pair.galaxy.fail_import = "legacy_windows"
     with pytest.raises(AnsibleError):
-        ci_release.publish_tagged(*pair.windows, *pair.ad)
+        ci_release.publish_tagged(pair.windows, pair.ad, pair.community)
     pair.galaxy.fail_import = None
     pair.events.clear()
-    ci_release.publish_tagged(*pair.windows, *pair.ad)
+    ci_release.publish_tagged(pair.windows, pair.ad, pair.community)
     assert not any(event.startswith("github:" + WINDOWS_TAG) for event in pair.events)
-    assert set(pair.galaxy.metadata) == set(ci_release.COLLECTIONS)
+    assert set(pair.galaxy.metadata) == {"legacy_windows", "legacy_ad"}
 
 
 def test_ad_retry_rejects_differing_existing_windows_candidate(
@@ -258,7 +259,7 @@ def test_ad_retry_rejects_differing_existing_windows_candidate(
     pair.github.releases[WINDOWS_TAG].assets["SHA256SUMS"] = b"other run"
     pair.events.clear()
     with pytest.raises(SystemExit, match="original publication run"):
-        ci_release.publish_tagged(*pair.windows, *pair.ad)
+        ci_release.publish_tagged(pair.windows, pair.ad, pair.community)
     assert pair.events == []
 
 
@@ -285,26 +286,26 @@ def test_original_windows_run_can_unblock_ad_after_its_tag_is_added(
     del pair.github.tags[AD_TAG]
     pair.galaxy.fail_import = "legacy_windows"
     with pytest.raises(AnsibleError, match="import failed"):
-        ci_release.publish_tagged(*pair.windows, *pair.ad)
+        ci_release.publish_tagged(pair.windows, pair.ad, pair.community)
     assert pair.github.releases[WINDOWS_TAG].release is not None
 
     pair.github.tags[AD_TAG] = COMMIT
     rebuilt = _rebuilt_bundle(pair.windows, tmp_path / "ad-run-windows")
     _origin(monkeypatch, AD_TAG)
     with pytest.raises(SystemExit, match="original publication run"):
-        ci_release.publish_tagged(*rebuilt, *pair.ad)
+        ci_release.publish_tagged(rebuilt, pair.ad, pair.community)
     assert "legacy_ad" not in pair.galaxy.metadata
 
     _origin(monkeypatch, WINDOWS_TAG)
     pair.galaxy.fail_import = None
     pair.events.clear()
-    ci_release.publish_tagged(*pair.windows, *pair.ad)
+    ci_release.publish_tagged(pair.windows, pair.ad, pair.community)
     assert pair.galaxy.metadata["legacy_windows"].artifact_sha256 == pair.windows[1]
     assert not any(event.startswith("github:") for event in pair.events)
 
     _origin(monkeypatch, AD_TAG)
-    ci_release.publish_tagged(*rebuilt, *pair.ad)
-    assert set(pair.galaxy.metadata) == set(ci_release.COLLECTIONS)
+    ci_release.publish_tagged(rebuilt, pair.ad, pair.community)
+    assert set(pair.galaxy.metadata) == {"legacy_windows", "legacy_ad"}
 
 
 def test_secondary_windows_run_defers_if_existing_assets_belong_to_another_bundle(
@@ -314,7 +315,7 @@ def test_secondary_windows_run_defers_if_existing_assets_belong_to_another_bundl
     rebuilt = _rebuilt_bundle(pair.windows, tmp_path / "secondary-windows")
     _origin(monkeypatch, WINDOWS_TAG)
     pair.events.clear()
-    ci_release.publish_tagged(*rebuilt, *pair.ad)
+    ci_release.publish_tagged(rebuilt, pair.ad, pair.community)
     assert pair.events == [] and pair.galaxy.metadata == {}
 
 
@@ -329,7 +330,7 @@ def test_windows_retry_does_not_treat_asset_download_failure_as_a_mismatch(
     _origin(monkeypatch, WINDOWS_TAG)
     pair.events.clear()
     with pytest.raises(SystemExit, match="GitHub command failed.*Forbidden"):
-        ci_release.publish_tagged(*pair.windows, *pair.ad)
+        ci_release.publish_tagged(pair.windows, pair.ad, pair.community)
     assert pair.events == [] and pair.galaxy.metadata == {}
 
 
@@ -343,7 +344,7 @@ def test_windows_secondary_event_never_republishes_a_coordinated_pair(
             collection: _galaxy_metadata("f" * 64, name=collection)
             for collection in ci_release.COLLECTIONS
         }
-    ci_release.publish_tagged(*pair.windows, *pair.ad)
+    ci_release.publish_tagged(pair.windows, pair.ad, pair.community)
     assert pair.events == []
 
 
@@ -352,16 +353,16 @@ def test_windows_event_can_fill_missing_runtime_after_ad_is_already_published(
 ) -> None:
     _origin(monkeypatch, WINDOWS_TAG)
     pair.galaxy.metadata["legacy_ad"] = _galaxy_metadata("f" * 64, name="legacy_ad")
-    ci_release.publish_tagged(*pair.windows, *pair.ad)
+    ci_release.publish_tagged(pair.windows, pair.ad, pair.community)
     assert pair.github.releases[AD_TAG].release is None
-    assert set(pair.galaxy.metadata) == set(ci_release.COLLECTIONS)
+    assert set(pair.galaxy.metadata) == {"legacy_windows", "legacy_ad"}
 
 
 def test_ad_accepts_already_published_runtime_without_recomparing_rebuilt_bytes(
     pair: ReleasePair,
 ) -> None:
     pair.galaxy.metadata["legacy_windows"] = _galaxy_metadata("f" * 64)
-    ci_release.publish_tagged(*pair.windows, *pair.ad)
+    ci_release.publish_tagged(pair.windows, pair.ad, pair.community)
     assert not any(event.startswith("github:" + WINDOWS_TAG) for event in pair.events)
     assert pair.galaxy.metadata["legacy_windows"].artifact_sha256 == "f" * 64
     assert "legacy_ad" in pair.galaxy.metadata
@@ -376,7 +377,7 @@ def test_unpaired_windows_tag_publishes_only_its_own_candidate(
         del pair.github.tags[AD_TAG]
     else:
         pair.github.tags[AD_TAG] = companion_commit
-    ci_release.publish_tagged(*pair.windows, *pair.ad)
+    ci_release.publish_tagged(pair.windows, pair.ad, pair.community)
     assert set(pair.galaxy.metadata) == {"legacy_windows"}
     assert pair.github.releases[AD_TAG].release is None
 
@@ -386,7 +387,7 @@ def test_unpaired_ad_still_requires_an_existing_compatible_runtime(
 ) -> None:
     del pair.github.tags[WINDOWS_TAG]
     with pytest.raises(SystemExit, match="before publishing legacy_ad"):
-        ci_release.publish_tagged(*pair.windows, *pair.ad)
+        ci_release.publish_tagged(pair.windows, pair.ad, pair.community)
     assert pair.events == []
 
 
@@ -397,7 +398,7 @@ def test_invalid_either_bundle_blocks_all_publication(
     directory, _ = getattr(pair, bundle)
     (directory / "SHA256SUMS").write_text("tampered")
     with pytest.raises(SystemExit, match="checksum"):
-        ci_release.publish_tagged(*pair.windows, *pair.ad)
+        ci_release.publish_tagged(pair.windows, pair.ad, pair.community)
     assert pair.events == []
 
 
@@ -405,7 +406,7 @@ def test_invalid_either_bundle_blocks_all_publication(
 def test_moved_either_tag_blocks_all_publication(pair: ReleasePair, tag: str) -> None:
     pair.github.tags[tag] = "b" * 40
     with pytest.raises(SystemExit):
-        ci_release.publish_tagged(*pair.windows, *pair.ad)
+        ci_release.publish_tagged(pair.windows, pair.ad, pair.community)
     assert pair.events == []
 
 
@@ -426,7 +427,7 @@ def test_paired_publication_preserves_originating_event_guards(
 ) -> None:
     monkeypatch.setenv(setting, value)
     with pytest.raises(SystemExit):
-        ci_release.publish_tagged(*pair.windows, *pair.ad)
+        ci_release.publish_tagged(pair.windows, pair.ad, pair.community)
     assert pair.events == [] and pair.github.calls == []
 
 
@@ -446,7 +447,7 @@ def test_incompatible_tagged_runtime_fails_before_publication(
     manifest.write_text(json.dumps(document))
     (pair.ad[0] / "SHA256SUMS").write_text(f"{digest}  {artifact.name}\n")
     with pytest.raises(SystemExit, match="does not satisfy"):
-        ci_release.publish_tagged(*pair.windows, pair.ad[0], digest)
+        ci_release.publish_tagged(pair.windows, (pair.ad[0], digest), pair.community)
     assert pair.events == []
 
 
@@ -454,7 +455,7 @@ def test_explicit_companion_does_not_allow_windows_origin_to_publish_ad(
     pair: ReleasePair, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _origin(monkeypatch, WINDOWS_TAG)
-    with pytest.raises(SystemExit, match="Only an AD tag"):
+    with pytest.raises(SystemExit, match="Only a higher-priority tag"):
         ci_release.publish(*pair.ad, tag=AD_TAG)
     assert pair.events == [] and pair.github.calls == []
 
@@ -462,7 +463,7 @@ def test_explicit_companion_does_not_allow_windows_origin_to_publish_ad(
 def test_explicit_companion_rejects_any_other_windows_version(
     pair: ReleasePair,
 ) -> None:
-    with pytest.raises(SystemExit, match="exact Windows companion"):
+    with pytest.raises(SystemExit, match="exact source-version companion"):
         ci_release.publish(*pair.windows, tag="legacy_windows/v1.0.1")
     assert pair.events == [] and pair.github.calls == []
 
@@ -472,7 +473,7 @@ def test_origin_must_match_current_source_version(
 ) -> None:
     _origin(monkeypatch, "legacy_ad/v1.0.1")
     with pytest.raises(SystemExit, match="tested source version"):
-        ci_release.publish_tagged(*pair.windows, *pair.ad)
+        ci_release.publish_tagged(pair.windows, pair.ad, pair.community)
     assert pair.events == [] and pair.github.calls == []
 
 
@@ -484,7 +485,7 @@ def test_existing_runtime_requires_valid_galaxy_metadata(
     setattr(metadata, field, "invalid")
     pair.galaxy.metadata["legacy_windows"] = metadata
     with pytest.raises(SystemExit):
-        ci_release.publish_tagged(*pair.windows, *pair.ad)
+        ci_release.publish_tagged(pair.windows, pair.ad, pair.community)
     assert pair.events == []
 
 
@@ -496,7 +497,7 @@ def test_paired_galaxy_discovery_failure_blocks_even_github_mutations(
 
     monkeypatch.setattr(ci_release, "_galaxy_api", unavailable)
     with pytest.raises(AnsibleError, match="Galaxy unavailable"):
-        ci_release.publish_tagged(*pair.windows, *pair.ad)
+        ci_release.publish_tagged(pair.windows, pair.ad, pair.community)
     assert pair.events == []
 
 
@@ -516,7 +517,11 @@ def test_paired_cli_dispatches_both_verified_bundles(
             str(pair.ad[0]),
             "--ad-sha256",
             pair.ad[1],
+            "--community-package-dir",
+            str(pair.community[0]),
+            "--community-sha256",
+            pair.community[1],
         ],
     )
     ci_release.main()
-    assert set(pair.galaxy.metadata) == set(ci_release.COLLECTIONS)
+    assert set(pair.galaxy.metadata) == {"legacy_windows", "legacy_ad"}

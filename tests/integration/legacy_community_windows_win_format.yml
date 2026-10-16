@@ -1,0 +1,111 @@
+---
+# Copyright 2026 sustainablelobster
+# SPDX-License-Identifier: GPL-3.0-or-later
+- name: Format only the runner-owned disposable image volume
+  hosts: legacy_community_windows_storage
+  gather_facts: false
+  tasks:
+    - name: Require an explicitly owned disposable volume and unique test label
+      ansible.builtin.assert:
+        that:
+          - community_storage_owned_drive is defined
+          - community_storage_owned_sentinel is defined
+          - community_storage_format_label is defined
+          - community_storage_original_label is defined
+
+    - name: Preserve existing data when the requested label differs only in case
+      sustainablelobster.legacy_community_windows.win_format:
+        drive_letter: '{{ community_storage_owned_drive[0] }}'
+        file_system: ntfs
+        new_label: '{{ community_storage_original_label | lower }}'
+      register: community_format_case_only
+
+    - name: Independently require the case-only request preserved sentinel bytes
+      sustainablelobster.legacy_windows.win_command:
+        argv:
+          - '{{ ansible_python_interpreter }}'
+          - -c
+          - >-
+            import os,sys;assert sys.version_info[:3] == (3,4,4);
+            print(open(os.path.join(sys.argv[1],sys.argv[2]),'r').read())
+          - '{{ community_storage_owned_drive }}'
+          - '{{ community_storage_owned_sentinel }}'
+      changed_when: false
+      register: community_format_case_bytes
+
+    - name: Preview a forced format without deleting the existing sentinel
+      sustainablelobster.legacy_community_windows.win_format:
+        drive_letter: '{{ community_storage_owned_drive[0] }}'
+        file_system: ntfs
+        allocation_unit_size: 4096
+        new_label: '{{ community_storage_format_label }}'
+        force: true
+      check_mode: true
+      register: community_format_preview
+
+    - name: Independently require the preview preserved existing data
+      sustainablelobster.legacy_windows.win_stat:
+        path: >-
+          {{ community_storage_owned_drive }}{{
+             community_storage_owned_sentinel }}
+      register: community_format_after_preview
+
+    - name: Format only the disposable volume through the installed provider
+      sustainablelobster.legacy_community_windows.win_format:
+        drive_letter: '{{ community_storage_owned_drive[0] }}'
+        file_system: ntfs
+        allocation_unit_size: 4096
+        new_label: '{{ community_storage_format_label }}'
+        force: true
+      register: community_format_actual
+
+    - name: Repeat the matching filesystem and label without another format
+      sustainablelobster.legacy_community_windows.win_format:
+        label: '{{ community_storage_format_label }}'
+        file_system: ntfs
+        allocation_unit_size: 4096
+        new_label: '{{ community_storage_format_label }}'
+      register: community_format_repeated
+
+    - name: Independently read the native filesystem label and cluster size
+      sustainablelobster.legacy_windows.win_command:
+        argv:
+          - '{{ ansible_python_interpreter }}'
+          - -c
+          - >-
+            import ctypes,json,os,sys;assert sys.version_info[:3] == (3,4,4);
+            k=ctypes.WinDLL('kernel32',use_last_error=True);
+            label=ctypes.create_unicode_buffer(261);
+            fs=ctypes.create_unicode_buffer(261);
+            ok=k.GetVolumeInformationW(ctypes.c_wchar_p(sys.argv[1]),
+            label,len(label),None,None,None,fs,len(fs));
+            assert ok,ctypes.get_last_error();
+            sectors=ctypes.c_uint32();size=ctypes.c_uint32();
+            free=ctypes.c_uint32();total=ctypes.c_uint32();
+            ok=k.GetDiskFreeSpaceW(ctypes.c_wchar_p(sys.argv[1]),
+            ctypes.byref(sectors),ctypes.byref(size),
+            ctypes.byref(free),ctypes.byref(total));
+            assert ok,ctypes.get_last_error();
+            print(json.dumps(dict(label=label.value,filesystem=fs.value,
+            cluster_size=sectors.value*size.value,
+            old_sentinel_exists=os.path.exists(os.path.join(sys.argv[1],sys.argv[2])))))
+          - '{{ community_storage_owned_drive }}'
+          - '{{ community_storage_owned_sentinel }}'
+      changed_when: false
+      register: community_format_native
+
+    - name: Require native formatting and stable repeat behavior
+      ansible.builtin.assert:
+        that:
+          - not community_format_case_only.changed
+          - community_format_case_bytes.stdout | trim == 'owned image fixture'
+          - community_format_preview.changed
+          - community_format_after_preview.stat.exists
+          - community_format_actual.changed
+          - not community_format_repeated.changed
+          - >-
+            (community_format_native.stdout | from_json).label ==
+            community_storage_format_label
+          - (community_format_native.stdout | from_json).filesystem == 'NTFS'
+          - (community_format_native.stdout | from_json).cluster_size == 4096
+          - not (community_format_native.stdout | from_json).old_sentinel_exists

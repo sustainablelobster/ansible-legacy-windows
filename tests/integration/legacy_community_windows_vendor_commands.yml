@@ -1,0 +1,180 @@
+---
+# Copyright 2026 sustainablelobster
+# SPDX-License-Identifier: GPL-3.0-or-later
+- name: Verify installed NGen operations through the minimum target interpreter
+  hosts: legacy_community_windows_ngen
+  gather_facts: false
+  tags: [win_dotnet_ngen]
+  tasks:
+    - name: Identify the actual target interpreter
+      sustainablelobster.legacy_windows.win_command:
+        argv: ['{{ ansible_python_interpreter }}', -c,
+               'import json,sys; print(json.dumps(list(sys.version_info[:3])))']
+      register: community_ngen_interpreter
+      changed_when: false
+
+    - name: Require actual minimum-interpreter execution
+      ansible.builtin.assert:
+        that: community_ngen_interpreter.stdout | from_json == [3, 4, 4]
+
+    - name: Predict the installed NGen operations
+      sustainablelobster.legacy_community_windows.win_dotnet_ngen:
+      check_mode: true
+      register: community_ngen_preview
+
+    - name: Require an installed executable for a positive vendor fixture
+      ansible.builtin.assert:
+        that:
+          - community_ngen_preview.changed
+          - >-
+            community_ngen_preview.dotnet_ngen_update_output is defined or
+            community_ngen_preview.dotnet_ngen64_update_output is defined
+
+    - name: Run both operations on each installed architecture
+      sustainablelobster.legacy_community_windows.win_dotnet_ngen:
+      register: community_ngen_result
+
+    - name: Verify actual vendor operation results
+      ansible.builtin.assert:
+        that:
+          - community_ngen_result.changed
+          - >-
+            community_ngen_result.dotnet_ngen_update_exit_code is defined or
+            community_ngen_result.dotnet_ngen64_update_exit_code is defined
+          - >-
+            community_ngen_result.dotnet_ngen_eqi_exit_code is defined or
+            community_ngen_result.dotnet_ngen64_eqi_exit_code is defined
+
+- name: Verify real Robocopy prediction, synchronization and idempotence
+  hosts: legacy_community_windows_robocopy
+  gather_facts: false
+  tags: [win_robocopy]
+  tasks:
+    - name: Allocate an owned disposable directory
+      sustainablelobster.legacy_windows.win_tempfile:
+        state: directory
+        prefix: legacy-community-robocopy-
+      register: community_robocopy_directory
+
+    - name: Exercise native synchronization with unconditional fixture cleanup
+      block:
+        - name: Create a nested source fixture
+          sustainablelobster.legacy_windows.win_file:
+            path: '{{ community_robocopy_directory.path }}\source\nested'
+            state: directory
+
+        - name: Write exact source bytes
+          sustainablelobster.legacy_windows.win_copy:
+            dest: >-
+              {{ community_robocopy_directory.path }}\source\nested\data.txt
+            content: Native Robocopy fixture
+
+        - name: Predict synchronization without writing the destination
+          sustainablelobster.legacy_community_windows.win_robocopy: &robocopy
+            src: '{{ community_robocopy_directory.path }}\source'
+            dest: '{{ community_robocopy_directory.path }}\dest'
+            recurse: true
+            flags: /E /R:0 /W:0
+          check_mode: true
+          register: community_robocopy_preview
+
+        - name: Independently verify prediction did not create a destination
+          sustainablelobster.legacy_windows.win_stat:
+            path: '{{ community_robocopy_directory.path }}\dest'
+          register: community_robocopy_predicted_destination
+
+        - name: Synchronize through the installed executable
+          sustainablelobster.legacy_community_windows.win_robocopy: *robocopy
+          register: community_robocopy_applied
+
+        - name: Repeat the same synchronization
+          sustainablelobster.legacy_community_windows.win_robocopy: *robocopy
+          register: community_robocopy_repeated
+
+        - name: Read destination contents independently
+          sustainablelobster.legacy_windows.slurp:
+            src: >-
+              {{ community_robocopy_directory.path }}\dest\nested\data.txt
+          register: community_robocopy_bytes
+
+        - name: Verify prediction, actual bytes and repeat behavior
+          ansible.builtin.assert:
+            that:
+              - community_robocopy_preview.changed
+              - not community_robocopy_predicted_destination.stat.exists
+              - community_robocopy_applied.changed
+              - not community_robocopy_repeated.changed
+              - community_robocopy_repeated.rc == 0
+              - >-
+                community_robocopy_bytes.content | b64decode ==
+                'Native Robocopy fixture'
+
+        - name: Exercise deletion-only reporting and effective option controls
+          ansible.builtin.include_tasks:
+            file: legacy_community_windows_robocopy_extras.yml
+          loop:
+            - name: Boolean purge
+              purge: true
+              deletes_extras: true
+            - name: Explicit case-insensitive purge
+              flags: /e /pUrGe /R:0 /W:0
+              deletes_extras: true
+            - name: Explicit case-insensitive mirror
+              flags: /mIr /R:0 /W:0
+              deletes_extras: true
+            - name: No purge
+              deletes_extras: false
+            - name: Explicit flags override purge boolean
+              purge: true
+              flags: /E /R:0 /W:0
+              deletes_extras: false
+            - name: Exclude extras from purge
+              flags: /E /PURGE /XX /R:0 /W:0
+              deletes_extras: false
+            - name: Exclude extras from mirror
+              flags: /MIR /xX /R:0 /W:0
+              deletes_extras: false
+            - name: Retain explicitly excluded file and directory entries
+              flags: /E /PURGE /XF extra.txt /XD extra-dir /R:0 /W:0
+              deletes_extras: false
+          loop_control:
+            loop_var: community_robocopy_case
+            label: '{{ community_robocopy_case.name }}'
+      always:
+        - name: Remove the owned fixture and destination
+          sustainablelobster.legacy_windows.win_file:
+            path: '{{ community_robocopy_directory.path }}'
+            state: absent
+
+- name: Verify the installed Microsoft PsExec executable
+  hosts: legacy_community_windows_win_psexec
+  gather_facts: false
+  tags: [win_psexec]
+  tasks:
+    - name: Confirm unsupported check mode skips command execution
+      sustainablelobster.legacy_community_windows.win_psexec: &vendor_psexec
+        executable: '{{ community_psexec_executable | default("psexec.exe") }}'
+        # PsExec 2.43 also drops instant-child output with the upstream
+        # launcher, so keep this strict stream fixture alive after flushing.
+        command: >-
+          "{{ ansible_python_interpreter }}" -c
+          "import sys,time; print('legacy-vendor-psexec');
+          sys.stdout.flush(); time.sleep(1); sys.exit(23)"
+        system: true
+        nobanner: true
+      check_mode: true
+      register: community_vendor_psexec_preview
+
+    - name: Execute the real local service-backed process
+      sustainablelobster.legacy_community_windows.win_psexec: *vendor_psexec
+      register: community_vendor_psexec_result
+      failed_when: false
+
+    - name: Verify process output and nonzero exit status are returned
+      ansible.builtin.assert:
+        that:
+          - community_vendor_psexec_preview is skipped
+          - community_vendor_psexec_result.changed
+          - community_vendor_psexec_result.rc == 23
+          - "'legacy-vendor-psexec' in community_vendor_psexec_result.stdout"
+          - community_vendor_psexec_result.pid is not defined

@@ -1,0 +1,145 @@
+---
+- name: Verify native process waiting with an owned bounded child
+  hosts: legacy_windows
+  gather_facts: false
+  tasks:
+    - name: Allocate the child-process workspace
+      sustainablelobster.legacy_windows.win_tempfile:
+        state: directory
+        prefix: legacy-community-process-
+      register: process_workspace
+
+    - name: Exercise process observation and guaranteed child cleanup
+      block:
+        - name: Start a bounded async child with independent pipes
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - '-c'
+              - |
+                import json, os, sys, time
+                with open(os.path.join(sys.argv[1], 'pid.json'), 'w') as output:
+                    json.dump(os.getpid(), output)
+                deadline = time.time() + 90
+                stop = os.path.join(sys.argv[1], 'stop')
+                while not os.path.exists(stop) and time.time() < deadline:
+                    time.sleep(0.05)
+              - '{{ process_workspace.path }}'
+          async: 120
+          poll: 0
+          register: owned_process_job
+
+        - name: Wait for the owned child to publish its own PID
+          sustainablelobster.legacy_windows.win_wait_for:
+            path: '{{ process_workspace.path }}\pid.json'
+            timeout: 30
+
+        - name: Read the child's independent PID observation
+          sustainablelobster.legacy_windows.slurp:
+            src: '{{ process_workspace.path }}\pid.json'
+          register: owned_process_pid_file
+
+        - name: Retain the owned child PID
+          ansible.builtin.set_fact:
+            owned_process_pid: >-
+              {{ owned_process_pid_file.content | b64decode | from_json }}
+
+        - name: Observe the owned PID and account in check mode
+          sustainablelobster.legacy_community_windows.win_wait_for_process:
+            pid: '{{ owned_process_pid }}'
+            state: present
+            owner: '{{ ansible_user }}'
+            timeout: 10
+          check_mode: true
+          register: process_present
+
+        - name: Require presence observation without mutation
+          ansible.builtin.assert:
+            that:
+              - not process_present.changed
+              - process_present.matched_processes | length == 1
+              - process_present.matched_processes[0].pid == owned_process_pid
+              - process_present.matched_processes[0].name | lower == 'python'
+
+        - name: Require a bounded absence timeout without killing the child
+          sustainablelobster.legacy_community_windows.win_wait_for_process:
+            pid: '{{ owned_process_pid }}'
+            state: absent
+            timeout: 0
+          register: process_timeout
+          failed_when: not process_timeout.failed or process_timeout.changed
+
+        - name: Request the child to exit after the native wait begins
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - '-c'
+              - >-
+                import os, sys, time; time.sleep(15);
+                open(os.path.join(sys.argv[1], 'stop'), 'w').close()
+              - '{{ process_workspace.path }}'
+          async: 30
+          poll: 0
+          register: process_stop_job
+
+        - name: Wait for the initial process handle to signal exit
+          sustainablelobster.legacy_community_windows.win_wait_for_process:
+            pid: '{{ owned_process_pid }}'
+            state: absent
+            timeout: 30
+          register: process_absent
+
+        - name: Require a real wait and the original PID result
+          ansible.builtin.assert:
+            that:
+              - not process_absent.changed
+              - process_absent.matched_processes | length == 1
+              - process_absent.matched_processes[0].pid == owned_process_pid
+              - process_absent.elapsed > 0
+      always:
+        - name: Release the child on any test failure
+          sustainablelobster.legacy_windows.win_copy:
+            content: stop
+            dest: '{{ process_workspace.path }}\stop'
+
+        - name: Wait for owned child termination before removing its workspace
+          sustainablelobster.legacy_community_windows.win_wait_for_process:
+            pid: '{{ owned_process_pid }}'
+            state: absent
+            timeout: 30
+          when: owned_process_pid is defined
+
+        - name: Require the owned async child command to finish
+          sustainablelobster.legacy_windows.async_status:
+            jid: '{{ owned_process_job.ansible_job_id }}'
+          register: owned_process_finished
+          until: owned_process_finished.finished
+          retries: 30
+          delay: 1
+          when: owned_process_job.ansible_job_id is defined
+
+        - name: Remove the owned child command's completed async state
+          sustainablelobster.legacy_windows.async_status:
+            jid: '{{ owned_process_job.ansible_job_id }}'
+            mode: cleanup
+          when: owned_process_job.ansible_job_id is defined
+
+        - name: Wait for the delayed stop writer to finish
+          sustainablelobster.legacy_windows.async_status:
+            jid: '{{ process_stop_job.ansible_job_id }}'
+          register: process_stop_finished
+          until: process_stop_finished.finished
+          retries: 35
+          delay: 1
+          when: process_stop_job.ansible_job_id is defined
+
+        - name: Remove completed owned async state
+          sustainablelobster.legacy_windows.async_status:
+            jid: '{{ process_stop_job.ansible_job_id }}'
+            mode: cleanup
+          when: process_stop_job.ansible_job_id is defined
+
+        - name: Remove only the owned process workspace
+          sustainablelobster.legacy_windows.win_file:
+            path: '{{ process_workspace.path }}'
+            state: absent

@@ -1,0 +1,102 @@
+---
+- name: Verify native event writing with an owned classic log
+  hosts: legacy_windows
+  gather_facts: false
+  vars:
+    eventlog_read_code: >-
+      {{ lookup("file", "fixtures/community_eventlog_read.py") }}
+  tasks:
+    - name: Allocate a unique classic-log identity
+      sustainablelobster.legacy_windows.win_command:
+        argv:
+          - '{{ ansible_python_interpreter }}'
+          - '-c'
+          - >-
+            import sys, uuid; assert sys.version_info[:3] == (3, 4, 4);
+            print('LC' + uuid.uuid4().hex[:6])
+      register: eventlog_identity
+      changed_when: false
+
+    - name: Retain the owned log name
+      ansible.builtin.set_fact:
+        eventlog_name: '{{ eventlog_identity.stdout | trim }}'
+
+    - name: Exercise only the uniquely owned log and source
+      block:
+        - name: Create the test registration
+          sustainablelobster.legacy_windows.win_eventlog:
+            name: '{{ eventlog_name }}'
+            sources: ['{{ eventlog_name }}Source']
+            state: present
+
+        - name: Preview a Unicode event without writing
+          sustainablelobster.legacy_community_windows.win_eventlog_entry:
+            log: '{{ eventlog_name }}'
+            source: '{{ eventlog_name }}Source'
+            event_id: 1234
+            message: 'Unicode event: café Δ'
+          check_mode: true
+          register: eventlog_preview
+
+        - name: Independently count events after preview
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - '-c'
+              - '{{ eventlog_read_code }}'
+              - '{{ eventlog_name }}'
+          register: eventlog_before
+          changed_when: false
+
+        - name: Write a Unicode warning with category and raw bytes
+          sustainablelobster.legacy_community_windows.win_eventlog_entry:
+            log: '{{ eventlog_name }}'
+            source: '{{ eventlog_name }}Source'
+            event_id: 1234
+            message: 'Unicode event: café Δ'
+            entry_type: Warning
+            category: 10
+            raw_data: '0,10,255'
+          register: eventlog_written
+
+        - name: Read back the latest native event record
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - '-c'
+              - '{{ eventlog_read_code }}'
+              - '{{ eventlog_name }}'
+          register: eventlog_after
+          changed_when: false
+
+        - name: Require exact event fields and nonmutating preview
+          ansible.builtin.assert:
+            that:
+              - eventlog_preview.changed
+              - (eventlog_before.stdout | from_json).count == 0
+              - eventlog_written.changed
+              - (eventlog_after.stdout | from_json).count == 1
+              - (eventlog_after.stdout | from_json).event_id == 1234
+              - (eventlog_after.stdout | from_json).entry_type == 2
+              - (eventlog_after.stdout | from_json).category == 10
+              - >-
+                (eventlog_after.stdout | from_json).source ==
+                eventlog_name + 'Source'
+              - >-
+                (eventlog_after.stdout | from_json).message ==
+                'Unicode event: café Δ'
+              - (eventlog_after.stdout | from_json).raw_data == '000aff'
+
+        - name: Require missing sources to fail without writing
+          sustainablelobster.legacy_community_windows.win_eventlog_entry:
+            log: '{{ eventlog_name }}'
+            source: '{{ eventlog_name }}Missing'
+            event_id: 1
+            message: This event must not be written
+          register: eventlog_missing
+          failed_when: not eventlog_missing.failed or eventlog_missing.changed
+      always:
+        - name: Remove only the owned test log and its sources
+          sustainablelobster.legacy_windows.win_eventlog:
+            name: '{{ eventlog_name }}'
+            state: absent

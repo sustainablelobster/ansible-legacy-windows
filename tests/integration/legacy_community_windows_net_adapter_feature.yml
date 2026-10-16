@@ -1,0 +1,219 @@
+---
+# Copyright 2026 sustainablelobster
+# SPDX-License-Identifier: GPL-3.0-or-later
+- name: Verify native adapter binding changes and exact state restoration
+  hosts: legacy_windows
+  gather_facts: false
+  vars:
+    collection_root: '{{ playbook_dir }}/../../legacy_community_windows'
+    runtime_root: '{{ playbook_dir }}/../../legacy_windows'
+    native_helper: legacy_community_windows_net_adapter_feature_native.py
+  tasks:
+    - name: Create an owned directory for a read-only native binding reader
+      sustainablelobster.legacy_windows.win_tempfile:
+        state: directory
+        prefix: legacy-community-bindings-
+      register: binding_workspace
+
+    - name: Toggle only a nonessential installed component binding
+      block:
+        - name: Stage the independent reader process and its native closure
+          sustainablelobster.legacy_windows.win_copy:
+            src: '{{ item.source }}'
+            dest: '{{ binding_workspace.path }}\{{ item.name }}'
+          loop:
+            - source: '{{ playbook_dir }}/fixtures/net_adapter_bindings.py'
+              name: reader.py
+            - source: >-
+                {{ collection_root }}/plugins/module_utils/{{ native_helper }}
+              name: '{{ native_helper }}'
+            - source: >-
+                {{ runtime_root }}/plugins/module_utils/legacy_windows_wmi.py
+              name: legacy_windows_wmi.py
+
+        - name: Capture named adapters and original nonessential binding states
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - '{{ binding_workspace.path }}\reader.py'
+          changed_when: false
+          register: before_bindings
+
+        - name: Select an installed binding with a uniform original state
+          ansible.builtin.set_fact:
+            binding_component: >-
+              {{ (before_bindings.stdout | from_json).component_id }}
+            binding_fixture: >-
+              {{ (before_bindings.stdout | from_json).bindings
+                 | selectattr('states') | first }}
+
+        - name: Require a reversible nonessential binding fixture
+          ansible.builtin.assert:
+            that:
+              - binding_fixture.states | length > 0
+              - binding_fixture.states | unique | length == 1
+
+        - name: Predict the inverse state without changing native configuration
+          sustainablelobster.legacy_community_windows.win_net_adapter_feature:
+            interface: '{{ binding_fixture.interface | lower }}'
+            component_id: '{{ binding_component }}'
+            state: >-
+              {{ 'disabled' if binding_fixture.states[0] else 'enabled' }}
+          check_mode: true
+          register: predicted
+
+        - name: Read native paths after check mode
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - '{{ binding_workspace.path }}\reader.py'
+          changed_when: false
+          register: after_prediction
+
+        - name: Apply the inverse binding state using its public module
+          sustainablelobster.legacy_community_windows.win_net_adapter_feature:
+            interface: '{{ binding_fixture.interface }}'
+            component_id: ['{{ binding_component }}']
+            state: >-
+              {{ 'disabled' if binding_fixture.states[0] else 'enabled' }}
+          async: 120
+          poll: 0
+          register: applied_job
+
+        - name: Wait for SSH after native network rebinding
+          ansible.builtin.wait_for:
+            host: '{{ ansible_host }}'
+            port: '{{ ansible_port | default(22) }}'
+            delay: 2
+            timeout: 120
+          delegate_to: localhost
+
+        - name: Reset the connection interrupted by native network rebinding
+          ansible.builtin.meta: reset_connection
+
+        - name: Collect the actual committed native operation result
+          sustainablelobster.legacy_windows.async_status:
+            jid: '{{ applied_job.ansible_job_id }}'
+          register: applied
+          until: applied.finished | default(false)
+          retries: 30
+          delay: 2
+
+        - name: Repeat the inverse state without another change
+          sustainablelobster.legacy_community_windows.win_net_adapter_feature:
+            interface: ['{{ binding_fixture.interface }}']
+            component_id: ['{{ binding_component | upper }}']
+            state: >-
+              {{ 'disabled' if binding_fixture.states[0] else 'enabled' }}
+          register: repeated
+
+        - name: Read committed native paths in a separate Python process
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - '{{ binding_workspace.path }}\reader.py'
+          changed_when: false
+          register: after_bindings
+
+        - name: Reject invalid components before changing a valid binding
+          sustainablelobster.legacy_community_windows.win_net_adapter_feature:
+            interface: '{{ binding_fixture.interface }}'
+            component_id:
+              - '{{ binding_component }}'
+              - legacy_missing_component
+            state: >-
+              {{ 'enabled' if binding_fixture.states[0] else 'disabled' }}
+          failed_when: false
+          register: invalid_component
+
+        - name: Read bindings after rejecting the invalid request
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - '{{ binding_workspace.path }}\reader.py'
+          changed_when: false
+          register: after_invalid
+
+        - name: Require native persistence idempotence and no partial changes
+          ansible.builtin.assert:
+            that:
+              - predicted is changed
+              - applied is changed
+              - repeated is not changed
+              - >-
+                (before_bindings.stdout | from_json)
+                == (after_prediction.stdout | from_json)
+              - >-
+                (after_bindings.stdout | from_json)
+                == (after_invalid.stdout | from_json)
+              - invalid_component.msg is search('Invalid componentID')
+              - >-
+                ((after_bindings.stdout | from_json).bindings
+                 | selectattr('interface', 'equalto', binding_fixture.interface)
+                 | first).states | unique | list
+                == [not binding_fixture.states[0]]
+      always:
+        - name: Restore state and clean up even if restoration checks fail
+          block:
+            - name: Restore the exact original nonessential binding state
+              sustainablelobster.legacy_community_windows.win_net_adapter_feature:
+                interface: '{{ binding_fixture.interface }}'
+                component_id: ['{{ binding_component }}']
+                state: >-
+                  {{ 'enabled' if binding_fixture.states[0] else 'disabled' }}
+              when: binding_fixture is defined
+              async: 120
+              poll: 0
+              register: restored_job
+
+            - name: Wait for SSH after restoring native network bindings
+              ansible.builtin.wait_for:
+                host: '{{ ansible_host }}'
+                port: '{{ ansible_port | default(22) }}'
+                delay: 2
+                timeout: 120
+              delegate_to: localhost
+              when: binding_fixture is defined
+
+            - name: Reset the connection after native binding restoration
+              ansible.builtin.meta: reset_connection
+
+            - name: Collect the completed native restoration result
+              sustainablelobster.legacy_windows.async_status:
+                jid: '{{ restored_job.ansible_job_id }}'
+              register: restoration
+              until: restoration.finished | default(false)
+              retries: 30
+              delay: 2
+              when: binding_fixture is defined
+
+            - name: Read all native binding paths after restoration
+              sustainablelobster.legacy_windows.win_command:
+                argv:
+                  - '{{ ansible_python_interpreter }}'
+                  - '{{ binding_workspace.path }}\reader.py'
+              changed_when: false
+              when: before_bindings is succeeded
+              register: restored_bindings
+
+            - name: Require every captured binding to equal its original state
+              ansible.builtin.assert:
+                that:
+                  - >-
+                    (before_bindings.stdout | from_json)
+                    == (restored_bindings.stdout | from_json)
+              when: before_bindings is succeeded
+          always:
+            - name: Remove only the owned async status records
+              sustainablelobster.legacy_windows.async_status:
+                jid: '{{ item }}'
+                mode: cleanup
+              loop: >-
+                {{ [applied_job.ansible_job_id | default(''),
+                    restored_job.ansible_job_id | default('')]
+                   | reject('equalto', '') | list }}
+
+            - name: Remove only the owned binding-reader directory
+              sustainablelobster.legacy_windows.win_file:
+                path: '{{ binding_workspace.path }}'
+                state: absent

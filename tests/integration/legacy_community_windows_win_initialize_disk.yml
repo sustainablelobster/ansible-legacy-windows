@@ -1,0 +1,210 @@
+---
+# Copyright 2026 sustainablelobster
+# SPDX-License-Identifier: GPL-3.0-or-later
+- name: Initialize only an explicitly owned disposable raw disk
+  hosts: legacy_community_windows_storage
+  gather_facts: false
+  vars:
+    community_initialize_read_header: >-
+      import hashlib,json,sys;assert sys.version_info[:3] == (3,4,4);
+      disk=open(sys.argv[1],'rb');data=disk.read(1024);disk.close();
+      print(json.dumps(dict(mbr=data[510:512]==b'\x55\xaa',
+      gpt=data[512:520]==b'EFI PART',digest=hashlib.sha256(data).hexdigest())))
+  tasks:
+    - name: Require the runner to identify its own raw virtual disk
+      ansible.builtin.assert:
+        that:
+          - community_initialize_disk_fixture is defined
+
+    - name: Independently read the original on-disk partition signatures
+      sustainablelobster.legacy_windows.win_command:
+        argv:
+          - '{{ ansible_python_interpreter }}'
+          - -c
+          - '{{ community_initialize_read_header }}'
+          - '{{ community_initialize_disk_fixture }}'
+      changed_when: false
+      register: community_initialize_original
+
+    - name: Protect an already initialized disk from this raw-disk test
+      ansible.builtin.assert:
+        that:
+          - not (community_initialize_original.stdout | from_json).mbr
+          - not (community_initialize_original.stdout | from_json).gpt
+
+    - name: Preview GPT initialization without writing disk sectors
+      sustainablelobster.legacy_community_windows.win_initialize_disk:
+        path: '{{ community_initialize_disk_fixture }}'
+      check_mode: true
+      register: community_initialize_preview
+
+    - name: Independently read signatures after preview
+      sustainablelobster.legacy_windows.win_command:
+        argv:
+          - '{{ ansible_python_interpreter }}'
+          - -c
+          - '{{ community_initialize_read_header }}'
+          - '{{ community_initialize_disk_fixture }}'
+      changed_when: false
+      register: community_initialize_after_preview
+
+    - name: Initialize the runner-owned disk as GPT
+      sustainablelobster.legacy_community_windows.win_initialize_disk:
+        path: '{{ community_initialize_disk_fixture }}'
+      register: community_initialize_gpt
+
+    - name: Repeat GPT initialization without rewriting its identity
+      sustainablelobster.legacy_community_windows.win_initialize_disk:
+        path: '{{ community_initialize_disk_fixture }}'
+      register: community_initialize_gpt_repeat
+
+    - name: Independently verify the real GPT header
+      sustainablelobster.legacy_windows.win_command:
+        argv:
+          - '{{ ansible_python_interpreter }}'
+          - -c
+          - '{{ community_initialize_read_header }}'
+          - '{{ community_initialize_disk_fixture }}'
+      changed_when: false
+      register: community_initialize_gpt_header
+
+    - name: Set read-only on only the runner-owned initialized disk
+      sustainablelobster.legacy_windows.win_command:
+        argv:
+          - '{{ ansible_python_interpreter }}'
+          - -c
+          - |
+            import ctypes,struct,sys
+            k=ctypes.WinDLL('kernel32',use_last_error=True)
+            p=ctypes.c_void_p;u=ctypes.c_uint32
+            k.CreateFileW.argtypes=[ctypes.c_wchar_p,u,u,p,u,u,p]
+            k.CreateFileW.restype=p
+            k.CloseHandle.argtypes=[p]
+            k.DeviceIoControl.argtypes=[p,u,p,u,p,u,ctypes.POINTER(u),p]
+            h=k.CreateFileW(sys.argv[1],0xc0000000,3,None,3,0,None)
+            assert h!=p(-1).value,ctypes.get_last_error()
+            try:
+              raw=struct.pack('<IB3xQQ4I',40,1,2,2,0,0,0,0)
+              record=ctypes.create_string_buffer(raw,len(raw))
+              used=u()
+              ok=k.DeviceIoControl(
+                h,0x7c0f4,record,len(raw),None,0,ctypes.byref(used),None)
+              assert ok,ctypes.get_last_error()
+            finally:k.CloseHandle(h)
+          - '{{ community_initialize_disk_fixture }}'
+
+    - name: Preserve an already-satisfied read-only layout
+      sustainablelobster.legacy_community_windows.win_initialize_disk:
+        path: '{{ community_initialize_disk_fixture }}'
+        online: false
+      register: community_initialize_readonly_noop
+
+    - name: Preview the already-satisfied read-only layout
+      sustainablelobster.legacy_community_windows.win_initialize_disk:
+        path: '{{ community_initialize_disk_fixture }}'
+        online: false
+      check_mode: true
+      register: community_initialize_readonly_preview
+
+    - name: Independently read the preserved disk identity
+      sustainablelobster.legacy_windows.win_command:
+        argv:
+          - '{{ ansible_python_interpreter }}'
+          - -c
+          - '{{ community_initialize_read_header }}'
+          - '{{ community_initialize_disk_fixture }}'
+      changed_when: false
+      register: community_initialize_readonly_header
+
+    - name: Clear the owned read-only flag without replacing its layout
+      sustainablelobster.legacy_community_windows.win_initialize_disk:
+        path: '{{ community_initialize_disk_fixture }}'
+      register: community_initialize_writable
+
+    - name: Reject fractional and boolean disk selectors in read-only preview
+      sustainablelobster.legacy_community_windows.win_initialize_disk:
+        disk_number: '{{ item }}'
+        force: true
+      check_mode: true
+      loop: [1.9, -0.1, true]
+      register: community_initialize_invalid_selectors
+      failed_when: false
+
+    - name: Require rejection of every unsafe disk selector
+      ansible.builtin.assert:
+        that:
+          - "'nonnegative integer' in item.msg"
+          - not item.changed
+      loop: '{{ community_initialize_invalid_selectors.results }}'
+
+    - name: Reject a different style without explicit force
+      sustainablelobster.legacy_community_windows.win_initialize_disk:
+        path: '{{ community_initialize_disk_fixture }}'
+        style: mbr
+      register: community_initialize_rejected
+      failed_when: false
+
+    - name: Force a new MBR layout on only the disposable disk
+      sustainablelobster.legacy_community_windows.win_initialize_disk:
+        path: '{{ community_initialize_disk_fixture }}'
+        style: mbr
+        force: true
+      register: community_initialize_mbr
+
+    - name: Repeat the matching MBR layout
+      sustainablelobster.legacy_community_windows.win_initialize_disk:
+        path: '{{ community_initialize_disk_fixture }}'
+        style: mbr
+      register: community_initialize_mbr_repeat
+
+    - name: Independently verify the real MBR and removed GPT signature
+      sustainablelobster.legacy_windows.win_command:
+        argv:
+          - '{{ ansible_python_interpreter }}'
+          - -c
+          - '{{ community_initialize_read_header }}'
+          - '{{ community_initialize_disk_fixture }}'
+      changed_when: false
+      register: community_initialize_mbr_header
+
+    - name: Clear the layout without reinitializing it
+      sustainablelobster.legacy_community_windows.win_initialize_disk:
+        path: '{{ community_initialize_disk_fixture }}'
+        force: true
+        online: false
+      register: community_initialize_cleared
+
+    - name: Independently verify both signatures were removed
+      sustainablelobster.legacy_windows.win_command:
+        argv:
+          - '{{ ansible_python_interpreter }}'
+          - -c
+          - '{{ community_initialize_read_header }}'
+          - '{{ community_initialize_disk_fixture }}'
+      changed_when: false
+      register: community_initialize_clear_header
+
+    - name: Require actual layouts preview safety and repeat stability
+      ansible.builtin.assert:
+        that:
+          - community_initialize_preview.changed
+          - >-
+            (community_initialize_after_preview.stdout | from_json) ==
+            (community_initialize_original.stdout | from_json)
+          - community_initialize_gpt.changed
+          - not community_initialize_gpt_repeat.changed
+          - (community_initialize_gpt_header.stdout | from_json).gpt
+          - not community_initialize_readonly_noop.changed
+          - not community_initialize_readonly_preview.changed
+          - >-
+            (community_initialize_readonly_header.stdout | from_json) ==
+            (community_initialize_gpt_header.stdout | from_json)
+          - community_initialize_writable.changed
+          - "'force must be true' in community_initialize_rejected.msg"
+          - community_initialize_mbr.changed
+          - not community_initialize_mbr_repeat.changed
+          - (community_initialize_mbr_header.stdout | from_json).mbr
+          - not (community_initialize_mbr_header.stdout | from_json).gpt
+          - community_initialize_cleared.changed
+          - not (community_initialize_clear_header.stdout | from_json).mbr
+          - not (community_initialize_clear_header.stdout | from_json).gpt

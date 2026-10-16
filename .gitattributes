@@ -4,3 +4,5 @@
 /legacy_windows/LICENSES/ansible-windows-GPL-3.0-or-later.txt whitespace=-blank-at-eof
 /legacy_ad/LICENSE whitespace=-blank-at-eof
 /legacy_ad/LICENSES/microsoft-ad-GPL-3.0-or-later.txt whitespace=-blank-at-eof
+/legacy_community_windows/LICENSE whitespace=-blank-at-eof
+/legacy_community_windows/LICENSES/community-windows-GPL-3.0-or-later.txt whitespace=-blank-at-eof

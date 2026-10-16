@@ -1,0 +1,96 @@
+---
+# Copyright 2026 sustainablelobster
+# SPDX-License-Identifier: GPL-3.0-or-later
+- name: Verify actual RabbitMQ plugin changes and restore the original selection
+  hosts: legacy_community_windows_rabbitmq
+  gather_facts: false
+  environment: '{{ community_rabbitmq_environment | default({}) }}'
+  tasks:
+    - name: Require a real installed RabbitMQ batch CLI fixture
+      ansible.builtin.assert:
+        that:
+          - community_rabbitmq_prefix is defined
+          - community_rabbitmq_cli is defined
+          - >-
+            community_rabbitmq_plugin | default('rabbitmq_management')
+            is match('^[A-Za-z0-9_]+$')
+
+    - name: Choose the installed fixture plugin
+      ansible.builtin.set_fact:
+        community_rabbitmq_selected: >-
+          {{ community_rabbitmq_plugin | default('rabbitmq_management') }}
+
+    - name: Read the initial explicit plugin selection independently
+      sustainablelobster.legacy_windows.win_command: &rabbitmq_list
+        cmd: >-
+          cmd.exe /d /v:off /s /c ""{{ community_rabbitmq_cli }}" list -E -m"
+      register: community_rabbitmq_initial
+      changed_when: false
+
+    - name: Exercise installed plugin management with unconditional restoration
+      block:
+        - name: Establish the selected fixture plugin as disabled
+          sustainablelobster.legacy_community_windows.win_rabbitmq_plugin:
+            names: '{{ community_rabbitmq_selected }}'
+            prefix: '{{ community_rabbitmq_prefix }}'
+            state: disabled
+
+        - name: Predict enabling the selected plugin
+          sustainablelobster.legacy_community_windows.win_rabbitmq_plugin:
+            &rabbitmq_enable
+            names: '{{ community_rabbitmq_selected }}'
+            prefix: '{{ community_rabbitmq_prefix }}'
+            new_only: true
+          check_mode: true
+          diff: true
+          register: community_rabbitmq_preview
+
+        - name: Independently read the selection after prediction
+          sustainablelobster.legacy_windows.win_command: *rabbitmq_list
+          register: community_rabbitmq_after_preview
+          changed_when: false
+
+        - name: Enable the actual fixture plugin
+          sustainablelobster.legacy_community_windows.win_rabbitmq_plugin:
+            *rabbitmq_enable
+          register: community_rabbitmq_enabled
+
+        - name: Repeat the same plugin selection
+          sustainablelobster.legacy_community_windows.win_rabbitmq_plugin:
+            *rabbitmq_enable
+          register: community_rabbitmq_repeated
+
+        - name: Independently observe the enabled selection
+          sustainablelobster.legacy_windows.win_command: *rabbitmq_list
+          register: community_rabbitmq_observed
+          changed_when: false
+
+        - name: Verify prediction, actual state and idempotence
+          ansible.builtin.assert:
+            that:
+              - community_rabbitmq_preview.changed
+              - >-
+                community_rabbitmq_selected not in
+                community_rabbitmq_after_preview.stdout_lines
+              - community_rabbitmq_enabled.changed
+              - not community_rabbitmq_repeated.changed
+              - >-
+                community_rabbitmq_selected in
+                community_rabbitmq_observed.stdout_lines
+      always:
+        - name: Disable the tested plugin before restoring the initial selection
+          sustainablelobster.legacy_community_windows.win_rabbitmq_plugin:
+            names: '{{ community_rabbitmq_selected }}'
+            prefix: '{{ community_rabbitmq_prefix }}'
+            state: disabled
+
+        - name: Restore all originally explicitly enabled plugins
+          sustainablelobster.legacy_community_windows.win_rabbitmq_plugin:
+            names: >-
+              {{ community_rabbitmq_initial.stdout_lines |
+              reject("equalto", "") | join(",") }}
+            prefix: '{{ community_rabbitmq_prefix }}'
+            new_only: true
+          when: >-
+            community_rabbitmq_initial.stdout_lines |
+            reject('equalto', '') | list | length > 0

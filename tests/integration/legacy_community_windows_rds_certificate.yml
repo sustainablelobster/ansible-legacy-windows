@@ -1,0 +1,251 @@
+---
+# Copyright 2026 sustainablelobster
+# SPDX-License-Identifier: GPL-3.0-or-later
+- name: Verify gateway certificate assignment and restore unconfigured HTTPS
+  hosts: legacy_community_windows_rds
+  gather_facts: false
+  vars:
+    rds_iis_helpers: ../../legacy_community_windows/plugins/module_utils
+    rds_windows_helpers: ../../legacy_windows/plugins/module_utils
+  tasks:
+    - name: Allocate uniquely owned certificate and observer files
+      sustainablelobster.legacy_windows.win_tempfile:
+        state: directory
+        prefix: legacy-community-iis-rds-
+      register: community_rds_certificate_directory
+
+    - name: Derive the disposable key container name
+      ansible.builtin.set_fact:
+        community_rds_certificate_name: >-
+          {{ community_rds_certificate_directory.path
+             | ansible.builtin.win_basename }}
+
+    - name: Exercise certificate configuration with unconditional cleanup
+      block:
+        - name: Stage the native certificate fixture
+          sustainablelobster.legacy_windows.win_copy:
+            src: fixtures/community_iis_certificate.py
+            dest: >-
+              {{ community_rds_certificate_directory.path }}\certificate.py
+
+        - name: Stage the HTTP endpoint observer and cleanup API
+          sustainablelobster.legacy_windows.win_copy:
+            src: '{{ rds_iis_helpers }}/legacy_community_windows_iis_ssl.py'
+            dest: >-
+              {{ community_rds_certificate_directory.path
+              }}\legacy_community_windows_iis_ssl.py
+
+        - name: Stage the exact shared WMI helper
+          sustainablelobster.legacy_windows.win_copy:
+            src: '{{ rds_windows_helpers }}/legacy_windows_wmi.py'
+            dest: >-
+              {{ community_rds_certificate_directory.path
+              }}\legacy_windows_wmi.py
+
+        - name: Stage the native payload and test-only recovery dependencies
+          sustainablelobster.legacy_windows.win_copy:
+            src: '{{ item }}'
+            dest: >-
+              {{ community_rds_certificate_directory.path
+              }}\{{ item | ansible.builtin.basename }}
+          loop:
+            - '{{ rds_iis_helpers }}/legacy_community_windows_rds.py'
+            - '{{ rds_windows_helpers }}/legacy_windows_module.py'
+            - '{{ rds_windows_helpers }}/legacy_windows_account.py'
+            - '{{ rds_windows_helpers }}/legacy_windows_certificate_store.py'
+            - fixtures/community_rds_recovery.py
+
+        - name: Require an isolated initially unconfigured HTTPS fixture
+          sustainablelobster.legacy_windows.win_command:
+            chdir: '{{ community_rds_certificate_directory.path }}'
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - |
+                import json,os
+                from legacy_windows_wmi import WmiConnection
+                from legacy_community_windows_iis_ssl import endpoint
+                for address in ('0.0.0.0','::'):
+                    assert not endpoint({'ip':address,'port':443},'',
+                        '', '0',query=True)['_exists']
+                with WmiConnection(r'ROOT\CIMV2\TerminalServices') as provider:
+                    rows=provider.query(
+                        'SELECT * FROM Win32_TSGatewayServerSettings',
+                        ['CertHash'])
+                    assert rows[0]['CertHash'] is None
+                paths=[os.path.join(os.environ['SystemRoot'],directory,
+                    'inetsrv','config','applicationHost.config')
+                    for directory in ('Sysnative','System32')]
+                print(json.dumps(next(path for path in paths
+                    if os.path.isfile(path))))
+          register: community_rds_configuration_path
+          changed_when: false
+
+        - name: Preserve exact IIS configuration before native gateway setup
+          sustainablelobster.legacy_windows.win_copy:
+            src: '{{ community_rds_configuration_path.stdout | from_json }}'
+            dest: >-
+              {{ community_rds_certificate_directory.path
+              }}\applicationHost.original.config
+            remote_src: true
+          register: community_rds_configuration_backup
+
+        - name: Identify the actual gateway certificate DNS name
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - -c
+              - 'import socket; print(socket.getfqdn())'
+          changed_when: false
+          register: community_rds_certificate_dns
+
+        - name: Create the disposable LocalMachine certificate and machine key
+          sustainablelobster.legacy_windows.win_command:
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - '{{ community_rds_certificate_directory.path }}\certificate.py'
+              - create
+              - '{{ community_rds_certificate_name }}'
+              - '{{ community_rds_certificate_dns.stdout | trim }}'
+          register: community_rds_certificate
+
+        - name: Preview assigning the owned certificate without writing
+          sustainablelobster.legacy_community_windows.win_rds_settings:
+            certificate_hash: >-
+              {{ (community_rds_certificate.stdout | from_json).thumbprint }}
+          check_mode: true
+          register: community_rds_certificate_preview
+
+        - name: Recover the persisted certificate after interrupted finalization
+          sustainablelobster.legacy_windows.win_command:
+            chdir: '{{ community_rds_certificate_directory.path }}'
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - community_rds_recovery.py
+              - recover
+              - >-
+                {{ (community_rds_certificate.stdout | from_json).thumbprint }}
+              - '{{ community_rds_configuration_path.stdout | from_json }}'
+          register: community_rds_certificate_interrupted
+
+        - name: Complete configuration after the certificate was persisted
+          sustainablelobster.legacy_community_windows.win_rds_settings:
+            certificate_hash: >-
+              {{ (community_rds_certificate.stdout | from_json).thumbprint }}
+          register: community_rds_certificate_assigned
+
+        - name: Repeat the gateway certificate assignment
+          sustainablelobster.legacy_community_windows.win_rds_settings:
+            certificate_hash: >-
+              {{ (community_rds_certificate.stdout | from_json).thumbprint }}
+          register: community_rds_certificate_repeated
+
+        - name: Read native configuration endpoints and service after repeats
+          sustainablelobster.legacy_windows.win_command:
+            chdir: '{{ community_rds_certificate_directory.path }}'
+            argv:
+              - '{{ ansible_python_interpreter }}'
+              - community_rds_recovery.py
+              - observe
+              - >-
+                {{ (community_rds_certificate.stdout | from_json).thumbprint }}
+              - '{{ community_rds_configuration_path.stdout | from_json }}'
+          changed_when: false
+          register: community_rds_certificate_observed
+
+        - name: Require actual assignment and idempotence
+          ansible.builtin.assert:
+            that:
+              - community_rds_certificate_preview.changed
+              - not community_rds_certificate_assigned.changed
+              - not community_rds_certificate_repeated.changed
+              - >-
+                (community_rds_certificate_observed.stdout | from_json).state ==
+                (community_rds_certificate_interrupted.stdout | from_json).state
+      always:
+        - name: Restore IIS configuration even after a failed certificate test
+          block:
+            - name: Restore the exact original IIS configuration
+              sustainablelobster.legacy_windows.win_copy:
+                src: >-
+                  {{ community_rds_certificate_directory.path
+                  }}\applicationHost.original.config
+                dest: >-
+                  {{ community_rds_configuration_path.stdout | from_json }}
+                remote_src: true
+              when: >-
+                community_rds_configuration_backup is defined and
+                community_rds_configuration_backup is succeeded
+              register: community_rds_configuration_restored
+              until: community_rds_configuration_restored is succeeded
+              retries: 5
+              delay: 2
+          always:
+            - name: Clean certificate endpoints before removing the key
+              block:
+                - name: Remove only the owned HTTP.sys certificate assignments
+                  sustainablelobster.legacy_windows.win_command:
+                    chdir: '{{ community_rds_certificate_directory.path }}'
+                    argv:
+                      - '{{ ansible_python_interpreter }}'
+                      - -c
+                      - |
+                        import sys
+                        from legacy_community_windows_iis_ssl import endpoint
+                        for address in ('0.0.0.0','::'):
+                            params={'ip':address,'port':443}
+                            old=endpoint(params,'','','0',query=True)
+                            if old['_exists']:
+                                assert old['certificateHash']==sys.argv[1]
+                                endpoint(params,'','','0')
+                      - >-
+                        {{ (community_rds_certificate.stdout
+                        | from_json).thumbprint }}
+                  when: >-
+                    community_rds_certificate is defined and
+                    community_rds_certificate is succeeded
+
+                - name: Verify the original unconfigured gateway was restored
+                  sustainablelobster.legacy_windows.win_command:
+                    chdir: '{{ community_rds_certificate_directory.path }}'
+                    argv:
+                      - '{{ ansible_python_interpreter }}'
+                      - -c
+                      - |
+                        from legacy_windows_wmi import WmiConnection
+                        with WmiConnection(
+                            r'ROOT\CIMV2\TerminalServices') as provider:
+                            rows=provider.query(
+                                'SELECT * FROM Win32_TSGatewayServerSettings',
+                                ['CertHash'])
+                            assert rows[0]['CertHash'] is None, rows
+                  changed_when: false
+                  when: >-
+                    community_rds_certificate is defined and
+                    community_rds_certificate is succeeded
+              always:
+                - name: Remove owned certificate keys and observer files
+                  block:
+                    - name: Remove the exact owned certificate and private key
+                      sustainablelobster.legacy_windows.win_command:
+                        argv:
+                          - '{{ ansible_python_interpreter }}'
+                          - >-
+                            {{ community_rds_certificate_directory.path
+                            }}\certificate.py
+                          - remove
+                          - '{{ community_rds_certificate_name }}'
+                          - >-
+                            {{ (community_rds_certificate.stdout
+                            | from_json).thumbprint }}
+                      when: >-
+                        community_rds_certificate is defined and
+                        community_rds_certificate is succeeded
+                  always:
+                    - name: Remove only the owned observer directory
+                      sustainablelobster.legacy_windows.win_file:
+                        path: '{{ community_rds_certificate_directory.path }}'
+                        state: absent
+                      when: >-
+                        community_rds_configuration_restored is not defined or
+                        community_rds_configuration_restored is succeeded
