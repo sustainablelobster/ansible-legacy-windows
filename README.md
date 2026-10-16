@@ -1,27 +1,30 @@
 # Legacy Windows Ansible collections
 
-Manage legacy Windows and Active Directory with Ansible, Python 3.4.4-compatible
-payloads and native Windows APIs. These collections share an execution runtime
-but are packaged and versioned independently:
+Ansible collections for legacy Windows management, Active Directory and
+community Windows integrations, using Python 3.4.4-compatible payloads and native
+Windows APIs. This checkout contains three independently versioned collections:
 
-| Collection                                                                        | Version       | Purpose                      | Upstream reference        |
-| --------------------------------------------------------------------------------- | ------------- | ---------------------------- | ------------------------- |
-| [sustainablelobster.legacy_windows](legacy_windows/README.md)                     | 1.2.0         | Windows management           | `ansible.windows` 3.8.0   |
-| [sustainablelobster.legacy_ad](legacy_ad/README.md)                               | 1.0.0         | Active Directory automation  | `microsoft.ad` 1.12.1     |
-| [sustainablelobster.legacy_community_windows](legacy_community_windows/README.md) | 1.0.0         | Community Windows automation | `community.windows` 3.3.0 |
+| Collection                                                                        | Checkout version | Purpose                      | Upstream reference        |
+| --------------------------------------------------------------------------------- | ---------------- | ---------------------------- | ------------------------- |
+| [sustainablelobster.legacy_windows](legacy_windows/README.md)                     | 1.2.0            | Windows management           | `ansible.windows` 3.8.0   |
+| [sustainablelobster.legacy_ad](legacy_ad/README.md)                               | 1.0.0            | Active Directory automation  | `microsoft.ad` 1.12.1     |
+| [sustainablelobster.legacy_community_windows](legacy_community_windows/README.md) | 1.0.0            | Community Windows automation | `community.windows` 3.3.0 |
 
-Familiar upstream module names and interfaces are retained where practical.
-The AD collection includes all 25 first-party module interfaces, six filters and
-LDAP inventory from its recorded reference release. See each collection's usage
-guide for prerequisites and meaningful differences:
+`legacy_windows` supplies the shared Windows execution runtime; `legacy_ad` and
+`legacy_community_windows` depend on it. Familiar upstream module names and
+interfaces are retained where practical. Each collection's README provides its
+scope and installation examples. Use the guides below for prerequisites,
+meaningful differences and verified workflows:
 
 - [Windows usage](legacy_windows/docs/usage.md)
 - [Active Directory usage](legacy_ad/docs/usage.md) and
   [execution coverage](legacy_ad/docs/coverage.md)
 - [Community Windows usage](legacy_community_windows/docs/usage.md) and
-  [execution coverage](legacy_community_windows/docs/coverage.md).
-  Its Windows payloads use the Windows 1.2.0 runtime. The `psexec` module
-  and LAPS lookup run on the controller.
+  [execution coverage](legacy_community_windows/docs/coverage.md)
+
+Controller-side inventory, lookup and execution integrations have their own
+optional dependencies, documented in those guides. Interface coverage does not
+mean every option has been tested on every Windows environment.
 
 ## Requirements
 
@@ -33,22 +36,37 @@ guide for prerequisites and meaningful differences:
 
 ## Install and get started
 
-For released versions on Ansible Galaxy, install the collection you need:
+For published releases on Ansible Galaxy, install whichever collections you need:
 
 ```console
-ansible-galaxy collection install sustainablelobster.legacy_windows:1.1.0
-ansible-galaxy collection install sustainablelobster.legacy_ad:1.0.0
+ansible-galaxy collection install sustainablelobster.legacy_windows
+ansible-galaxy collection install sustainablelobster.legacy_ad
+ansible-galaxy collection install sustainablelobster.legacy_community_windows
 ```
 
-Installing AD also installs its compatible Windows runtime dependency
-(`>=1.1.0,<2.0.0`). You do not need to install Windows separately when using AD.
-For local archives before publication, follow the
-[build and check instructions](docs/development.md#build-and-check) and each
-collection's installation example.
+Installing AD or Community Windows also installs a compatible Windows runtime;
+you do not need to install it separately. Galaxy installs published versions,
+which may differ from the checkout versions listed above.
 
-Start with the [Windows connection example](legacy_windows/README.md#connect-and-run-a-task)
-or the [AD task example](legacy_ad/README.md#run-a-task). Use fully qualified
-collection names in playbooks.
+To use this checkout before publication, enter the
+[Nix development environment](docs/development.md#environment), then build and
+install the local archives from the repository root:
+
+```console
+just build
+ansible-galaxy collection install ./dist/sustainablelobster-legacy_windows-1.2.0.tar.gz ./dist/sustainablelobster-legacy_ad-1.0.0.tar.gz ./dist/sustainablelobster-legacy_community_windows-1.0.0.tar.gz --offline
+```
+
+See [Build and check](docs/development.md#build-and-check) for verification and
+the collection READMEs for installing only the archives you need.
+
+Start with the [Windows connection example](legacy_windows/README.md#connect-and-run-a-task),
+the [AD task example](legacy_ad/README.md#run-a-task), or
+[Community Windows module help](legacy_community_windows/README.md#module-help).
+Use fully qualified collection names in playbooks.
+
+For development, local checks, Windows integration tests and coordinated tag
+releases, see the [development guide](docs/development.md).
 
 ## License
 

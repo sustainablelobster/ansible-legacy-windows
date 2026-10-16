@@ -71,10 +71,13 @@ encryption and protected reads.
 
 ## Controller LDAP plugins
 
-LDAP inventory requires `sansldap` and `pyspnego` on the controller. DNS-based
-server discovery additionally uses `dnspython`; Kerberos discovery uses `krb5`.
-Certificate and PFX handling uses `cryptography`. These libraries are not sent
-to Windows and do not change its Python 3.4.4 minimum.
+LDAP inventory requires `sansldap` and `pyspnego` 0.8.0 or newer on the
+controller. Kerberos authentication uses the `pyspnego[kerberos]` extras.
+Omitting `server` enables DNS discovery and requires `dnspython`; discovery
+also requires `krb5` when `domain_realm` is omitted, to read the default
+Kerberos realm. Certificate and PFX handling uses `cryptography`. Decrypting
+encrypted Windows LAPS values additionally needs `dpapi-ng`. These libraries
+are not sent to Windows and do not change its Python 3.4.4 minimum.
 
 The inventory plugin and filters use the new collection namespace. Existing
 inventory output variables retain upstream names. Both upstream and new

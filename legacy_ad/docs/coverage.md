@@ -112,12 +112,14 @@ KDS/gMSA schemas and the federation engine. The earlier reviewed workflows above
 remain applicable where their tested behavior and dependencies are unchanged;
 new argument-validation corrections have also passed independent review.
 
-The current controller suite passed 15,419 tests. Two datetime
-cases remain skipped because their reference timezone conversion underflows
-or overflows outside the parser contract; two TLS-fixture deprecation warnings
-also remain. Full lint and offline-package checks passed. Later focused
-correction checks passed without rerunning unchanged workflows. Those results
-complement, rather than replace, actual Python 3.4.4 execution on Windows.
+At the AD 1.0.0 verification checkpoint, the combined controller suite passed
+15,419 tests. Two datetime cases were skipped because their reference timezone
+conversion underflows or overflows outside the parser contract; two TLS-fixture
+deprecation warnings were also recorded. Full lint and offline-package checks
+passed at that checkpoint. Later focused correction checks passed without
+rerunning unchanged workflows. These retained results are not a count of the
+current repository suite and complement, rather than replace, actual
+Python 3.4.4 execution on Windows.
 
 The five upstream actions belong to `debug_ldap_client`, `domain`,
 `domain_child`, `domain_controller`, and `membership`; their public behavior is

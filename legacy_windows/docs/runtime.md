@@ -1,7 +1,7 @@
 # Shared Windows execution runtime
 
-`sustainablelobster.legacy_windows` 1.1.0 introduces a supported controller
-extension for native Python payloads in dependent collections:
+`sustainablelobster.legacy_windows` provides a supported controller extension
+for native Python payloads in dependent collections, available since 1.1.0:
 
 ```python
 from pathlib import Path

@@ -19,6 +19,8 @@ after the original conversation is forgotten.
 `sustainablelobster.legacy_ad` reimplements all first-party `microsoft.ad`
 interfaces using that execution runtime, checking actual directory/service
 capabilities rather than excluding whole modules by Windows version.
+`sustainablelobster.legacy_community_windows` reimplements the released
+`community.windows` interfaces and routing using the same execution runtime.
 The [README](README.md) is
 the user entry point. Keep user-facing prerequisites and meaningful limitations
 in each collection's usage guide, not these instructions.

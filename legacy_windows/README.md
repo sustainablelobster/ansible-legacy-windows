@@ -16,19 +16,20 @@ names with Python 3.4.4-compatible payloads and native Windows APIs.
 
 ## Install
 
-Install a released version from Ansible Galaxy on your Ansible controller:
+To install from Ansible Galaxy on your Ansible controller:
 
 ```console
-ansible-galaxy collection install sustainablelobster.legacy_windows:1.1.0
+ansible-galaxy collection install sustainablelobster.legacy_windows
 ```
 
-Or install a locally built or downloaded collection archive:
+To install an archive built from this checkout, run from the repository root:
 
 ```console
-ansible-galaxy collection install ./sustainablelobster-legacy_windows-1.2.0.tar.gz --offline --no-deps
+ansible-galaxy collection install ./dist/sustainablelobster-legacy_windows-1.2.0.tar.gz --offline --no-deps
 ```
 
-To build an archive from this checkout, see the repository's
+For a downloaded archive, replace the path with its saved location. To build
+an archive from this checkout, see the repository's
 [development guide](https://github.com/sustainablelobster/ansible-legacy-windows/blob/main/docs/development.md).
 
 ## Connect and run a task
@@ -86,8 +87,11 @@ ansible-doc sustainablelobster.legacy_windows.win_file
 ansible-doc -t filter sustainablelobster.legacy_windows.quote
 ```
 
-The interfaces follow `ansible.windows` where practical. They do not reproduce
-every PowerShell or .NET behavior; see each module's arguments and prerequisites.
+The reference is `ansible.windows` 3.8.0, commit
+`ff0ac96011ee196742901f34c0dd134acddbe89a`. Interfaces follow that release where
+practical; see each module's arguments and prerequisites and the
+[usage guide](docs/usage.md#prerequisites-and-known-issues) for meaningful
+differences.
 
 ## License
 

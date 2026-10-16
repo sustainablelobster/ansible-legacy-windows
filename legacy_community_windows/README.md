@@ -25,8 +25,10 @@ to build collection archives. Install both this collection and its compatible
 Windows runtime archive without contacting Galaxy:
 
 ```console
-ansible-galaxy collection install ./sustainablelobster-legacy_windows-1.2.0.tar.gz ./sustainablelobster-legacy_community_windows-1.0.0.tar.gz --offline
+ansible-galaxy collection install ./dist/sustainablelobster-legacy_windows-1.2.0.tar.gz ./dist/sustainablelobster-legacy_community_windows-1.0.0.tar.gz --offline
 ```
+
+Run this command from the repository root after building the archives.
 
 Use the existing
 [Windows connection example](https://github.com/sustainablelobster/ansible-legacy-windows/blob/main/legacy_windows/README.md#connect-and-run-a-task).

@@ -339,7 +339,7 @@ requirements.
   controller lint/type checks, not target Python compatibility checks.
 - Each collection's `plugins/module_utils`: Windows helpers and their
   Python 3.4.4-compatible imports.
-- Each collection's `plugins/action`, `plugins/plugin_utils`, `plugins/filter`
+- Each collection's `plugins/action`, `plugins/plugin_utils`, `plugins/filter`,
   `plugins/inventory` and `plugins/lookup`, where present: controller code.
 - `tests/unit`: local behavior tests.
 - `tests/integration`: explicitly invoked Windows tests.
@@ -357,8 +357,8 @@ The recorded reference releases are:
 Preserve familiar interfaces where practical; use the standard library and
 native Windows APIs rather than recreating PowerShell or .NET internals.
 Windows owns the shared
-[execution runtime](../legacy_windows/docs/runtime.md); both consumers import that
-controller contract and stages its own native helpers alongside Windows
+[execution runtime](../legacy_windows/docs/runtime.md). Each consumer imports
+that controller contract and stages its own native helpers alongside Windows
 helpers. Optional controller LDAP/SMB dependencies must not become Windows
 payload imports; keep controller helpers under `plugin_utils`, not
 `module_utils`. Installing a collection does not install optional Python libraries.

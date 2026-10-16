@@ -23,20 +23,22 @@ Prompt shell. The AD collection does not configure a connection service.
 
 ## Install
 
-Install a released version from Ansible Galaxy:
+To install from Ansible Galaxy:
 
 ```console
-ansible-galaxy collection install sustainablelobster.legacy_ad:1.0.0
+ansible-galaxy collection install sustainablelobster.legacy_ad
 ```
 
 Galaxy also installs the compatible Windows runtime dependency. To install
-locally built or downloaded archives without contacting Galaxy, supply both:
+archives built from this checkout without contacting Galaxy, run from the
+repository root and supply both:
 
 ```console
-ansible-galaxy collection install ./sustainablelobster-legacy_windows-1.2.0.tar.gz ./sustainablelobster-legacy_ad-1.0.0.tar.gz --offline
+ansible-galaxy collection install ./dist/sustainablelobster-legacy_windows-1.2.0.tar.gz ./dist/sustainablelobster-legacy_ad-1.0.0.tar.gz --offline
 ```
 
-The repository's
+For downloaded archives, replace the paths with their saved locations. The
+repository's
 [development guide](https://github.com/sustainablelobster/ansible-legacy-windows/blob/main/docs/development.md)
 describes building the archives from source.
 

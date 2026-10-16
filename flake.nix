@@ -1,5 +1,5 @@
 {
-  description = "Development tools for sustainablelobster.legacy_windows";
+  description = "Development tools for the sustainablelobster legacy Windows collections";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
   inputs.sansldap = {
